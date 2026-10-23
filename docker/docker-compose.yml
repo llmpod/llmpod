@@ -1,0 +1,188 @@
+name: llmpod
+
+# =====================================================================
+# LLMPod 编排 —— manager 全栈
+#
+# 默认 docker compose up 即启动全栈 (PG + Redis + webserver + proxyserver),
+# 无需 --profile。
+#
+#   # 1) 起管理端 + 依赖中间件 + API 网关 (manager 机)
+#   docker compose -f docker/docker-compose.yml --env-file docker/.env up -d --build
+#
+#   # 2) 取节点 token
+#   docker compose -f docker/docker-compose.yml --env-file docker/.env exec webserver cat /app/data/node_token
+#
+#   # 停 manager
+#   docker compose -f docker/docker-compose.yml --env-file docker/.env down
+#
+# 节点接入（另一台机器）走 API 引导脚本：POST /admin/nodes/bootstrap-token
+# 拿 data.command 到目标机执行（见 docs/usage/deployment.md）。
+#
+# 端口约定（唯一定义处）：WEBSERVER_PORT / PROXY_PORT 既是宿主机对外端口、
+# 也是容器内监听端口——映射两端写同一个变量，并回注 LLMPOD_*_PORT 进容器。
+# 应用由此得知对外端口（/api/v1/proxy-endpoint 推导依赖它）；改 .env 一处即全链路生效，
+# 不存在 8889:8090 这类内外不一致映射。固定域名/Nginx 统一接入场景不用改端口，
+# 配 LLMPOD_PROXY_ADVERTISE_URL 完整地址即可（external_url 风格）。
+# =====================================================================
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_TAG:-16.3}
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-llmpod}
+    # ports:
+    #   - ${HOST_IP:-0.0.0.0}:${POSTGRES_PORT:-35432}:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-q", "-U", "${POSTGRES_USER:-postgres}"]
+      start_period: 20s
+      interval: 10s
+      retries: 10
+      timeout: 5s
+    networks: [llmpod_net]
+
+  redis:
+    image: redis:${REDIS_TAG:-7.4.0}
+    restart: always
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
+    # ports:
+    #   - ${HOST_IP:-0.0.0.0}:${REDIS_PORT:-26739}:6379
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      start_period: 10s
+      interval: 10s
+      retries: 10
+      timeout: 5s
+    networks: [llmpod_net]
+
+  webserver:
+    # 官方发布镜像（Makefile push-version 双推 版本tag+latest）；本地 --build
+    # 构建会以此 tag 落地，不与官方发布冲突（pull 时覆盖为远端版本）
+    image: btpanel/llmpod:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        UV_VERSION: ${UV_VERSION:-0.5.11}
+        # OCI label 版本：make docker-build 传真实版本；compose --build 缺省 dev
+        #（本地未发布构建），发版用 make docker-build + push-version 推带版本 tag 的镜像
+        APP_VERSION: ${APP_VERSION:-dev}
+    restart: unless-stopped
+    command: ["webserver"]
+    environment:
+      LLMPOD_PG_HOST: postgres
+      LLMPOD_PG_PORT: "5432"
+      LLMPOD_PG_USER: ${POSTGRES_USER:-postgres}
+      LLMPOD_PG_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      LLMPOD_PG_DATABASE: ${POSTGRES_DB:-llmpod}
+      LLMPOD_REDIS_HOST: redis
+      LLMPOD_REDIS_PORT: "6379"
+      LLMPOD_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      LLMPOD_WEBSERVER_HOST: "0.0.0.0"
+      # 端口约定：对外端口回注进容器，容器内外同值（见文件头注释）
+      LLMPOD_WEBSERVER_PORT: ${WEBSERVER_PORT:-8080}
+      LLMPOD_PROXY_PORT: ${PROXY_PORT:-8090}
+      # 管理端调 API 网关用（在线调试转发）：分容器部署走服务名——回环是 webserver
+      # 自己，够不到 proxyserver。写死不走 .env：只有本 compose 场景存在这个地址，
+      # 应用侧留空才回落 127.0.0.1（dev 两进程同宿主直连）。
+      LLMPOD_PROXY_INTERNAL_URL: "http://proxyserver:${PROXY_PORT:-8090}"
+      LLMPOD_MANAGER_WS_PATH: "/ws/node"
+      # 管理员引导凭据：留空（默认）= 首启随机生成并落 /app/data/admin_credentials；
+      # 配了值 = 用配置值建号。仅首次建库生效，之后改这两项无效（改密走管理后台）。
+      LLMPOD_ADMIN_USER: ${LLMPOD_ADMIN_USER:-}
+      LLMPOD_ADMIN_PASSWORD: ${LLMPOD_ADMIN_PASSWORD:-}
+      LLMPOD_DOCS_ENABLED: ${LLMPOD_DOCS_ENABLED:-false}
+      # 留空 = 同源（SPA 由本服务托管）；跨域直连时显式配来源白名单，不再默认 ["*"]
+      LLMPOD_CORS_ORIGINS: ${LLMPOD_CORS_ORIGINS:-[]}
+      LLMPOD_TOKEN_EXPIRE_SECONDS: "86400"
+      LLMPOD_TOKEN_KEY_PREFIX: "llmpod:token:"
+      LLMPOD_SECRET_KEY: ${LLMPOD_SECRET_KEY:-}
+      LLMPOD_GPU_FLUSH_INTERVAL: "10"
+      LLMPOD_GPU_STALE_TIMEOUT: "120"
+      # 本机对外的 manager 地址（IP 或域名，见 docker/.env.example）。WS 与 HTTP 两处端点
+      # 地址由应用按它拼出；缺省为空 = localhost，仅同机可用，多机集群必填对外可达地址。
+      LLMPOD_NODE_MANAGER_IP: ${LLMPOD_NODE_MANAGER_IP:-}
+      # 内网直连候选（逗号分隔）：bootstrap 引导脚本渲染成回连候选，节点机探活
+      # 优选内网、全不通落上面的对外地址兜底；ws/http 端点仍由上面的地址拼出
+      LLMPOD_NODE_MANAGER_IP_LAN: ${LLMPOD_NODE_MANAGER_IP_LAN:-}
+      # 节点自动升级（默认关）：开 = manager 升级重启后节点重连对账自动跟随；
+      # 关 = 只标 outdated 不下发，升级走 admin 节点页手动触发（手动不受限）
+      LLMPOD_NODE_AUTO_UPGRADE: ${LLMPOD_NODE_AUTO_UPGRADE:-false}
+      LLMPOD_LOG_LEVEL: ${LLMPOD_LOG_LEVEL:-info}
+      # 遥测开关（每日匿名遥测，仅管理端消费）：false = 后台任务不启动
+      LLMPOD_TELEMETRY_ENABLED: ${LLMPOD_TELEMETRY_ENABLED:-true}
+      # API 网关管道指标抓取：服务名 DNS 走 llmpod_net 内网（分容器下 localhost 不可达），
+      # 端口随 PROXY_PORT 联动。token 非用户配置——entrypoint 首启自动生成注入
+      # （webserver 先起生成、proxy 后起读同值，见 entrypoint.sh）。
+      LLMPOD_METRICS_SCRAPE_TARGETS: "http://proxyserver:${PROXY_PORT:-8090}/metrics"
+    ports:
+      - "${HOST_IP:-0.0.0.0}:${WEBSERVER_PORT:-8080}:${WEBSERVER_PORT:-8080}"
+    volumes:
+      - webserver-data:/app/data
+      # 模型仓库（local 源上传/内容指纹/文件服务下发根）。容器内 /data/models 是
+      # 集群级不变量，不作配置；本值只调宿主侧路径（manager 机大盘在别处时改）
+      - ${MODEL_HOST_DIR:-/data/models}:/data/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${LLMPOD_WEBSERVER_PORT:-8080}/health"]
+      start_period: 30s
+      interval: 15s
+      retries: 10
+      timeout: 5s
+    networks: [llmpod_net]
+
+  # API 网关 proxyserver（8090 族端口）：与 webserver 同镜像、command 区分角色；
+  # 跳过 DB init（entrypoint 仅 webserver 角色自举 schema）。
+  # BodyStore 本地内容寻址落在 data/request_logs（相对 /app），与 webserver
+  # 共享 webserver-data 卷保证两进程读写同一路径。
+  proxyserver:
+    image: btpanel/llmpod:latest
+    restart: unless-stopped
+    command: ["proxyserver"]
+    environment:
+      LLMPOD_PG_HOST: postgres
+      LLMPOD_PG_PORT: "5432"
+      LLMPOD_PG_USER: ${POSTGRES_USER:-postgres}
+      LLMPOD_PG_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      LLMPOD_PG_DATABASE: ${POSTGRES_DB:-llmpod}
+      LLMPOD_REDIS_HOST: redis
+      LLMPOD_REDIS_PORT: "6379"
+      LLMPOD_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      LLMPOD_PROXY_HOST: "0.0.0.0"
+      LLMPOD_PROXY_PORT: ${PROXY_PORT:-8090}
+      LLMPOD_TOKEN_KEY_PREFIX: "llmpod:token:"
+      LLMPOD_SECRET_KEY: ${LLMPOD_SECRET_KEY:-}
+      LLMPOD_LOG_LEVEL: ${LLMPOD_LOG_LEVEL:-info}
+    ports:
+      - "${HOST_IP:-0.0.0.0}:${PROXY_PORT:-8090}:${PROXY_PORT:-8090}"
+    volumes:
+      - webserver-data:/app/data
+    depends_on:
+      webserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${LLMPOD_PROXY_PORT:-8090}/health"]
+      start_period: 15s
+      interval: 15s
+      retries: 10
+      timeout: 5s
+    networks: [llmpod_net]
+
+volumes:
+  postgres-data:
+  redis-data:
+  webserver-data:
+
+networks:
+  llmpod_net:
+    driver: bridge

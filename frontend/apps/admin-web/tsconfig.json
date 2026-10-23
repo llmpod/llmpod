@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "preserve",
+    "jsxImportSource": "vue",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "paths": {
+      "@repo/hooks": ["../../packages/hooks/src/index.ts"],
+      "@repo/hooks/*": ["../../packages/hooks/src/*"],
+      "@repo/naive-ui": ["../../packages/naive-ui/src/index.ts"],
+      "@repo/naive-ui/*": ["../../packages/naive-ui/src/*"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue", "src/env.d.ts"]
+}

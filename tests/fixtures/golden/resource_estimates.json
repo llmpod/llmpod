@@ -1,0 +1,69 @@
+{
+  "build_recommendation": {
+    "clamped_to_model_max": {
+      "max_model_len": 4096,
+      "vram_per_gpu_gb": 15.23
+    },
+    "formula_meta": {
+      "vram_per_gpu_gb": 18.5
+    },
+    "small_ctx8k": {
+      "max_model_len": 8192,
+      "tp": 1,
+      "vram_per_gpu_gb": 15.95
+    }
+  },
+  "estimate_required_vram": {
+    "ctx_unknown_bare_weight": 14.5,
+    "formula_meta_8k": 18.5,
+    "formula_meta_fp8": 16.5,
+    "tp1_heuristic_8k": 15.95
+  },
+  "kv_cache_gb": {
+    "formula_gqa_32k_fp8_n16": 32.0,
+    "formula_gqa_8k_f16_n4": 4.0,
+    "formula_gqa_8k_f16_n64": 64.0,
+    "heuristic_128k_f16": 23.2,
+    "heuristic_128k_fp8": 11.6,
+    "heuristic_8k_f16": 1.45,
+    "no_autoregressive_zero": 0.0,
+    "unknown_context_zero": 0.0
+  },
+  "lane_solve": {
+    "big_vram_gpu_only": {
+      "kv_gb": 1.45,
+      "recommended_tier": 32,
+      "scenario": "gpu_only",
+      "tier0_ram_vram": [
+        15.95,
+        0.0
+      ],
+      "tier_full_ram_vram": [
+        0.0,
+        15.95
+      ]
+    },
+    "both_pools_short_none": false,
+    "tiny_vram_cpu_only": {
+      "kv_gb": 1.45,
+      "recommended_tier": 0,
+      "scenario": "cpu_only",
+      "tier0_ram_vram": [
+        15.95,
+        0.0
+      ],
+      "tier_full_ram_vram": [
+        0.0,
+        15.95
+      ]
+    }
+  },
+  "per_card_estimate": {
+    "embedding_no_kv": 14.5,
+    "formula_meta_tp2": 9.25,
+    "tp1": 15.95,
+    "tp2": 7.97,
+    "tp2_pp2": 3.99,
+    "tp4_128k": 9.43
+  }
+}

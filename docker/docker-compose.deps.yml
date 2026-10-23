@@ -1,0 +1,58 @@
+name: llmpod-dev
+
+# =====================================================================
+# LLMPod 本地开发依赖栈 (PG + Redis)
+#
+# 仅起依赖容器; FastAPI 管理端在宿主机用 uv 本地跑以便 --reload:
+#   make setup       # 首次一键: 装依赖 + 起 PG/Redis + 建表 (幂等)
+#   make deps-up     # 只起 PG/Redis (不建表), 之后 make dev
+#   make dev         # uv run uvicorn llmpod.app:app --reload  (宿主机)
+#
+# 端口/凭据: docker/.env.deps (make 首次自动从 .env.deps.example 拷贝, 不存在才拷)。
+#   必须与根 .env 的 LLMPOD_PG_*/LLMPOD_REDIS_* 一致, 否则宿主机 app 连不上。
+# 卷/网络独立命名, 与 manager 栈 (name: llmpod) / test 栈 (name: llmpod-test) 互不干扰。
+# =====================================================================
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_TAG:-16.3}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in docker/.env.deps}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in docker/.env.deps}
+      POSTGRES_DB: ${POSTGRES_DB:-llmpod}
+    ports:
+      - "0.0.0.0:${POSTGRES_PORT:-35432}:5432"
+    volumes:
+      - llmpod-dev-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "0.0.0.0", "-p", "5432", "-q", "-U", "${POSTGRES_USER:-postgres}"]
+      start_period: 20s
+      interval: 5s
+      retries: 20
+      timeout: 3s
+    networks: [llmpod-dev-net]
+
+  redis:
+    image: redis:${REDIS_TAG:-7.4.0}
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set in docker/.env.deps}"]
+    ports:
+      - "0.0.0.0:${REDIS_PORT:-26739}:6379"
+    volumes:
+      - llmpod-dev-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      start_period: 10s
+      interval: 5s
+      retries: 20
+      timeout: 3s
+    networks: [llmpod-dev-net]
+
+volumes:
+  llmpod-dev-pg:
+  llmpod-dev-redis:
+
+networks:
+  llmpod-dev-net:
+    driver: bridge

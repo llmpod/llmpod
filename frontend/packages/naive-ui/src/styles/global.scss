@@ -1,0 +1,31 @@
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+/* === 窄屏(≤767px)全局兜底 === */
+
+/* 详情抽屉:页面写死 :width="560|640|680" 被 max-width 钳制不超 92vw
+ * (max-width 对内联 width 的钳制按 CSS 规范生效,无需 important;
+ *  仅 left/right 抽屉,top/bottom 拉伸布局不受影响) */
+@media (max-width: 767px) {
+  .n-drawer--left-placement,
+  .n-drawer--right-placement {
+    max-width: 92vw;
+  }
+
+  /* 描述列表固定宽标签(label-class="w-[10rem]" / "w-[16rem]")窄屏退化:
+   * 标签列宽自动收缩,值列换行;高特异性选择器压过单类 w-[Nrem] */
+  .n-descriptions .n-descriptions-table-header {
+    width: auto;
+  }
+}

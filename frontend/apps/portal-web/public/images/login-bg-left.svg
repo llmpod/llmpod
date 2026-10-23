@@ -1,0 +1,258 @@
+<svg viewBox="0 0 366 384" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="366.000000" height="384.000000" fill="none" customFrame="#000000">
+	<defs>
+		<filter id="pixso_custom_mask_type_alpha">
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0 " />
+		</filter>
+		<g id="pixso_custom_effect_0">
+			<effect x="0.000000" y="0.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.120000005" effectType="dropShadow" stdDeviation="0" radius="0" />
+			<effect x="-2.000000" y="1.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.120000005" effectType="dropShadow" stdDeviation="6" radius="0" />
+			<effect x="-9.000000" y="6.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.100000001" effectType="dropShadow" stdDeviation="11" radius="0" />
+			<effect x="-21.000000" y="13.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.0600000024" effectType="dropShadow" stdDeviation="15" radius="0" />
+			<effect x="-37.000000" y="23.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.0199999996" effectType="dropShadow" stdDeviation="17" radius="0" />
+			<effect x="-58.000000" y="36.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0" effectType="dropShadow" stdDeviation="19" radius="0" />
+		</g>
+		<filter id="filter_0" width="262.000000" height="158.000000" x="0.000000" y="129.000000" filterUnits="userSpaceOnUse" customEffect="url(#pixso_custom_effect_0)" color-interpolation-filters="sRGB">
+			<feFlood flood-opacity="0" result="BackgroundImageFix" />
+			<feOffset dx="0.000000" dy="0.000000" in="SourceAlpha" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0 " />
+			<feBlend result="effect_dropShadow_1" in2="BackgroundImageFix" mode="normal" />
+			<feOffset dx="-2.000000" dy="1.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="2" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0 " />
+			<feBlend result="effect_dropShadow_2" in2="effect_dropShadow_1" mode="normal" />
+			<feOffset dx="-9.000000" dy="6.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="3.66666675" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.1 0 " />
+			<feBlend result="effect_dropShadow_3" in2="effect_dropShadow_2" mode="normal" />
+			<feOffset dx="-21.000000" dy="13.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="5" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.06 0 " />
+			<feBlend result="effect_dropShadow_4" in2="effect_dropShadow_3" mode="normal" />
+			<feOffset dx="-37.000000" dy="23.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="5.66666651" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.02 0 " />
+			<feBlend result="effect_dropShadow_5" in2="effect_dropShadow_4" mode="normal" />
+			<feOffset dx="-58.000000" dy="36.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="6.33333349" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 " />
+			<feBlend result="effect_dropShadow_6" in2="effect_dropShadow_5" mode="normal" />
+			<feBlend result="shape" in="SourceGraphic" in2="effect_dropShadow_6" mode="normal" />
+		</filter>
+		<g id="pixso_custom_effect_1">
+			<effect x="0.000000" y="0.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.120000005" effectType="dropShadow" stdDeviation="0" radius="0" />
+			<effect x="-2.000000" y="1.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.120000005" effectType="dropShadow" stdDeviation="6" radius="0" />
+			<effect x="-9.000000" y="6.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.100000001" effectType="dropShadow" stdDeviation="11" radius="0" />
+			<effect x="-21.000000" y="13.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.0600000024" effectType="dropShadow" stdDeviation="15" radius="0" />
+			<effect x="-37.000000" y="23.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.0199999996" effectType="dropShadow" stdDeviation="17" radius="0" />
+			<effect x="-58.000000" y="36.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0" effectType="dropShadow" stdDeviation="19" radius="0" />
+		</g>
+		<filter id="filter_1" width="274.000000" height="85.000000" x="83.000000" y="279.000000" filterUnits="userSpaceOnUse" customEffect="url(#pixso_custom_effect_1)" color-interpolation-filters="sRGB">
+			<feFlood flood-opacity="0" result="BackgroundImageFix" />
+			<feOffset dx="0.000000" dy="0.000000" in="SourceAlpha" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0 " />
+			<feBlend result="effect_dropShadow_1" in2="BackgroundImageFix" mode="normal" />
+			<feOffset dx="-2.000000" dy="1.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="2" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0 " />
+			<feBlend result="effect_dropShadow_2" in2="effect_dropShadow_1" mode="normal" />
+			<feOffset dx="-9.000000" dy="6.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="3.66666675" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.1 0 " />
+			<feBlend result="effect_dropShadow_3" in2="effect_dropShadow_2" mode="normal" />
+			<feOffset dx="-21.000000" dy="13.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="5" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.06 0 " />
+			<feBlend result="effect_dropShadow_4" in2="effect_dropShadow_3" mode="normal" />
+			<feOffset dx="-37.000000" dy="23.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="5.66666651" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.02 0 " />
+			<feBlend result="effect_dropShadow_5" in2="effect_dropShadow_4" mode="normal" />
+			<feOffset dx="-58.000000" dy="36.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="6.33333349" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 " />
+			<feBlend result="effect_dropShadow_6" in2="effect_dropShadow_5" mode="normal" />
+			<feBlend result="shape" in="SourceGraphic" in2="effect_dropShadow_6" mode="normal" />
+		</filter>
+		<g id="pixso_custom_effect_2">
+			<effect x="0.000000" y="0.000000" visibility="visible" fill="rgb(79,79,79)" fill-opacity="0.100000001" effectType="dropShadow" stdDeviation="0" radius="0" />
+			<effect x="-2.000000" y="2.000000" visibility="visible" fill="rgb(79,79,79)" fill-opacity="0.100000001" effectType="dropShadow" stdDeviation="7" radius="0" />
+			<effect x="-8.000000" y="9.000000" visibility="visible" fill="rgb(79,79,79)" fill-opacity="0.0900000036" effectType="dropShadow" stdDeviation="13" radius="0" />
+			<effect x="-19.000000" y="21.000000" visibility="visible" fill="rgb(79,79,79)" fill-opacity="0.0500000007" effectType="dropShadow" stdDeviation="17" radius="0" />
+			<effect x="-34.000000" y="37.000000" visibility="visible" fill="rgb(79,79,79)" fill-opacity="0.00999999978" effectType="dropShadow" stdDeviation="20" radius="0" />
+			<effect x="-53.000000" y="59.000000" visibility="visible" fill="rgb(79,79,79)" fill-opacity="0" effectType="dropShadow" stdDeviation="22" radius="0" />
+		</g>
+		<filter id="filter_2" width="186.000000" height="129.000000" x="150.000000" y="78.000000" filterUnits="userSpaceOnUse" customEffect="url(#pixso_custom_effect_2)" color-interpolation-filters="sRGB">
+			<feFlood flood-opacity="0" result="BackgroundImageFix" />
+			<feOffset dx="0.000000" dy="0.000000" in="SourceAlpha" />
+			<feColorMatrix type="matrix" values="0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0.1 0 " />
+			<feBlend result="effect_dropShadow_1" in2="BackgroundImageFix" mode="normal" />
+			<feOffset dx="-2.000000" dy="2.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="2.33333325" />
+			<feColorMatrix type="matrix" values="0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0.1 0 " />
+			<feBlend result="effect_dropShadow_2" in2="effect_dropShadow_1" mode="normal" />
+			<feOffset dx="-8.000000" dy="9.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="4.33333349" />
+			<feColorMatrix type="matrix" values="0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0.09 0 " />
+			<feBlend result="effect_dropShadow_3" in2="effect_dropShadow_2" mode="normal" />
+			<feOffset dx="-19.000000" dy="21.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="5.66666651" />
+			<feColorMatrix type="matrix" values="0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0.05 0 " />
+			<feBlend result="effect_dropShadow_4" in2="effect_dropShadow_3" mode="normal" />
+			<feOffset dx="-34.000000" dy="37.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="6.66666651" />
+			<feColorMatrix type="matrix" values="0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0.01 0 " />
+			<feBlend result="effect_dropShadow_5" in2="effect_dropShadow_4" mode="normal" />
+			<feOffset dx="-53.000000" dy="59.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="7.33333349" />
+			<feColorMatrix type="matrix" values="0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0 0.309804 0 0 0 0 0 " />
+			<feBlend result="effect_dropShadow_6" in2="effect_dropShadow_5" mode="normal" />
+			<feBlend result="shape" in="SourceGraphic" in2="effect_dropShadow_6" mode="normal" />
+		</filter>
+		<clipPath id="clipPath_0">
+			<rect width="191.000000" height="7.000000" x="150.000000" y="294.000000" fill="rgb(255,255,255)" />
+		</clipPath>
+		<clipPath id="clipPath_1">
+			<rect width="49.000000" height="7.000000" x="150.000000" y="294.000000" fill="rgb(255,255,255)" />
+		</clipPath>
+		<clipPath id="clipPath_2">
+			<rect width="170.000000" height="4.000000" x="150.000000" y="309.000000" rx="2.000000" fill="rgb(255,255,255)" />
+		</clipPath>
+		<g id="pixso_custom_effect_3">
+			<effect x="0.000000" y="0.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.120000005" effectType="dropShadow" stdDeviation="0" radius="0" />
+			<effect x="-2.000000" y="1.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.120000005" effectType="dropShadow" stdDeviation="6" radius="0" />
+			<effect x="-9.000000" y="6.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.100000001" effectType="dropShadow" stdDeviation="11" radius="0" />
+			<effect x="-21.000000" y="13.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.0600000024" effectType="dropShadow" stdDeviation="15" radius="0" />
+			<effect x="-37.000000" y="23.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0.0199999996" effectType="dropShadow" stdDeviation="17" radius="0" />
+			<effect x="-58.000000" y="36.000000" visibility="visible" fill="rgb(255,255,255)" fill-opacity="0" effectType="dropShadow" stdDeviation="19" radius="0" />
+		</g>
+		<filter id="filter_3" width="98.000000" height="85.000000" x="34.000000" y="72.000000" filterUnits="userSpaceOnUse" customEffect="url(#pixso_custom_effect_3)" color-interpolation-filters="sRGB">
+			<feFlood flood-opacity="0" result="BackgroundImageFix" />
+			<feOffset dx="0.000000" dy="0.000000" in="SourceAlpha" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0 " />
+			<feBlend result="effect_dropShadow_1" in2="BackgroundImageFix" mode="normal" />
+			<feOffset dx="-2.000000" dy="1.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="2" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.12 0 " />
+			<feBlend result="effect_dropShadow_2" in2="effect_dropShadow_1" mode="normal" />
+			<feOffset dx="-9.000000" dy="6.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="3.66666675" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.1 0 " />
+			<feBlend result="effect_dropShadow_3" in2="effect_dropShadow_2" mode="normal" />
+			<feOffset dx="-21.000000" dy="13.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="5" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.06 0 " />
+			<feBlend result="effect_dropShadow_4" in2="effect_dropShadow_3" mode="normal" />
+			<feOffset dx="-37.000000" dy="23.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="5.66666651" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.02 0 " />
+			<feBlend result="effect_dropShadow_5" in2="effect_dropShadow_4" mode="normal" />
+			<feOffset dx="-58.000000" dy="36.000000" in="SourceAlpha" />
+			<feGaussianBlur stdDeviation="6.33333349" />
+			<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 " />
+			<feBlend result="effect_dropShadow_6" in2="effect_dropShadow_5" mode="normal" />
+			<feBlend result="shape" in="SourceGraphic" in2="effect_dropShadow_6" mode="normal" />
+		</filter>
+	</defs>
+	<mask id="mask_0" width="361.000000" height="384.000000" x="5.000000" y="0.000000" maskUnits="userSpaceOnUse">
+		<g filter="url(#pixso_custom_mask_type_alpha)">
+			<path id="矩形 749" d="M366 0L366 384L9 384C6.79086 384 5 382.209 5 380L5 4C5 1.79086 6.79086 0 9 0L366 0Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		</g>
+	</mask>
+	<g id="组合 100">
+		<path id="矩形 744" d="M366 0L366 384L9 384C6.79086 384 5 382.209 5 380L5 4C5 1.79086 6.79086 0 9 0L366 0Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		<g id="蒙版" mask="url(#mask_0)">
+			<path id="减去顶层" d="M223 332.5C223 382.482 263.518 423 313.5 423C363.482 423 404 382.482 404 332.5C404 282.518 363.482 242 313.5 242C263.518 242 223 282.518 223 332.5ZM255 333C255 365.033 280.967 391 313 391C345.033 391 371 365.033 371 333C371 300.967 345.033 275 313 275C280.967 275 255 300.967 255 333Z" fill="rgb(255,255,255)" fill-opacity="0.100000001" fill-rule="evenodd" />
+			<rect id="矩形 750" width="28.000000" height="28.000000" x="33.000000" y="284.000000" rx="4.000000" fill="rgb(255,255,255)" fill-opacity="0.100000001" />
+			<rect id="矩形 751" width="28.000000" height="28.000000" x="281.000000" y="21.000000" rx="4.000000" fill="rgb(255,255,255)" fill-opacity="0.100000001" />
+			<path id="星形 1" d="M98.9014 53.5492C99.437 55.1972 100.973 56.3129 102.705 56.3129L146.702 56.3151C150.577 56.3153 152.188 61.273 149.053 63.5506L113.46 89.4125C112.058 90.431 111.472 92.2364 112.007 93.8844L125.601 135.728C126.798 139.413 122.581 142.478 119.446 140.2L83.851 114.341C82.4491 113.323 80.5509 113.323 79.149 114.341L43.5541 140.2C40.4193 142.478 36.2016 139.413 37.3988 135.728L50.9929 93.8844C51.5283 92.2364 50.9417 90.431 49.5399 89.4125L13.9469 63.5506C10.8123 61.273 12.4233 56.3153 16.298 56.3151L60.2945 56.3129C62.0273 56.3129 63.563 55.1972 64.0986 53.5492L77.6958 11.7066C78.8933 8.0215 84.1067 8.0215 85.3042 11.7066L98.9014 53.5492Z" fill="rgb(255,255,255)" fill-opacity="0.0900000036" fill-rule="evenodd" transform="matrix(0.979265,-0.202581,0.202581,0.979265,-35.8203,-6.7998)" />
+		</g>
+		<g filter="url(#filter_0)">
+			<rect id="矩形 746" width="204.000000" height="113.000000" x="54.000000" y="134.000000" rx="4.000000" fill="rgb(255,255,255)" />
+		</g>
+		<g filter="url(#filter_1)">
+			<rect id="矩形 747" width="216.000000" height="40.000000" x="137.000000" y="284.000000" rx="4.000000" fill="rgb(255,255,255)" />
+		</g>
+		<g id="Chart Lines">
+			<line id="Line 5" x1="70" x2="242" y1="226" y2="226" stroke="rgb(233,233,233)" stroke-linecap="round" stroke-width="0.500000" />
+			<line id="Line 4" x1="70" x2="241.999985" y1="212.199951" y2="212.199951" stroke="rgb(233,233,233)" stroke-linecap="butt" stroke-dasharray="4 7 " stroke-width="0.500000" />
+			<line id="Line 3" x1="70" x2="242" y1="198.400024" y2="198.400024" stroke="rgb(233,233,233)" stroke-linecap="butt" stroke-dasharray="4 7 " stroke-width="0.500000" />
+			<line id="Line 2" x1="70" x2="241.999985" y1="184.599976" y2="184.599976" stroke="rgb(233,233,233)" stroke-linecap="butt" stroke-dasharray="4 7 " stroke-width="0.500000" />
+			<line id="Line 6" x1="70" x2="242" y1="157" y2="157" stroke="rgb(233,233,233)" stroke-linecap="butt" stroke-dasharray="4 7 " stroke-width="0.500000" />
+			<line id="Line 1" x1="70" x2="241.999985" y1="170.800049" y2="170.800049" stroke="rgb(233,233,233)" stroke-linecap="butt" stroke-dasharray="4 7 " stroke-width="0.500000" />
+		</g>
+		<path id="Blue Bar 1" d="M89 184C90.1046 184 91 184.895 91 186L91 226L74 226L74 186C74 184.895 74.8954 184 76 184L89 184Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		<path id="Blue Bar 2" d="M118 170C119.105 170 120 170.895 120 172L120 226L103 226L103 172C103 170.895 103.895 170 105 170L118 170Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		<path id="Blue Bar 3" d="M147 152C148.105 152 149 152.895 149 154L149 226L132 226L132 154C132 152.895 132.895 152 134 152L147 152Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		<path id="Blue Bar 4" d="M176 174C177.105 174 178 174.895 178 176L178 226L161 226L161 176C161 174.895 161.895 174 163 174L176 174Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		<path id="Blue Bar 5" d="M205 184C206.105 184 207 184.895 207 186L207 226L190 226L190 186C190 184.895 190.895 184 192 184L205 184Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		<path id="Blue Bar 6" d="M234 170C235.105 170 236 170.895 236 172L236 226L219 226L219 172C219 170.895 219.895 170 221 170L234 170Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		<path id="直线 14" d="M0 6.29965C0 6.29965 5.42447 1.65793 11.1728 2.30925C16.9212 2.96058 17.2451 8.15468 22.9934 8.90494C28.7418 9.65521 28.4989 5.73077 34.1663 5.3103C39.8337 4.88982 39.9956 8.12171 45.663 7.22305C51.3304 6.32438 51.1685 3.52121 56.8359 1.71563C62.5033 -0.0899379 66.2276 0.000755529 68.3326 0.000756146C70.4377 0.000756764 74.2834 0.371766 79.9912 2.30925C85.6991 4.24674 85.6182 7.7507 91.1641 7.7507C96.7101 7.7507 96.5076 2.78744 102.175 2.30925C107.842 1.83106 112.214 5.37626 113.834 5.83795C115.453 6.29964 121.201 8.74006 125.33 8.08049C129.459 7.42091 130.998 3.11723 136.665 2.67202C142.333 2.22681 148 6.29965 148 6.29965" stroke="rgb(255,85,85)" stroke-width="1.500000" transform="matrix(1,0,0,-1,81,202)" />
+		<g filter="url(#filter_2)">
+			<rect id="矩形 745" width="127.000000" height="67.000000" x="204.000000" y="83.000000" rx="4.000000" fill="rgb(255,255,255)" />
+		</g>
+		<g id="Pie">
+			<path id="Section 5" d="M245.696 104.948C247.147 102.151 249.135 99.6663 251.547 97.637C253.958 95.6077 256.746 94.0732 259.75 93.1211C262.755 92.1691 265.917 91.8182 269.058 92.0884L267 116L243.088 113.942C243.359 110.802 244.245 107.746 245.696 104.948Z" fill="rgb(243,248,255)" fill-rule="evenodd" />
+			<path id="Section 3" d="M245.55 126.766C243.434 122.551 242.608 117.805 243.173 113.122L267 116L255.071 136.825C250.978 134.481 247.666 130.982 245.55 126.766Z" fill="rgb(68,127,254)" fill-rule="evenodd" />
+			<path id="Section 1" d="M264.784 139.897C268.481 140.24 272.207 139.721 275.668 138.38C279.13 137.039 282.234 134.913 284.735 132.17C287.237 129.426 289.067 126.14 290.084 122.569C291.1 118.998 291.274 115.24 290.591 111.591C289.909 107.941 288.39 104.5 286.153 101.537C283.915 98.5744 281.021 96.1711 277.698 94.5162C274.375 92.8613 270.713 92 267 92L267 116L254.364 136.404C257.52 138.359 261.087 139.555 264.784 139.897Z" fill="rgb(74,58,255)" fill-rule="evenodd" />
+		</g>
+		<circle id="椭圆 24" cx="267" cy="116" r="15" fill="rgb(255,255,255)" />
+		<path id="直线 28" d="M0 4L8.24039 0L13 1.65509" stroke="rgb(243,248,255)" stroke-width="1.000000" transform="matrix(0.894874,0.446319,-0.448109,0.893979,239,93)" />
+		<path id="直线 29" d="M0 0L9.58009 2L16 0.184642" stroke="rgb(68,127,254)" stroke-width="1.000000" transform="matrix(0.987502,-0.157605,0.158376,0.987379,234,129)" />
+		<path id="直线 27" d="M0 2.48623L4.24586 0L15.7461 2.48623" stroke="rgb(74,58,255)" stroke-width="1.000000" transform="matrix(0.984204,-0.177036,0.177896,0.984049,290.046,112.253)" />
+		<rect id="矩形 752" width="12.000000" height="4.000000" x="309.000000" y="110.000000" rx="2.000000" fill="rgb(238,238,238)" />
+		<rect id="矩形 753" width="15.000000" height="4.000000" x="309.000000" y="116.000000" rx="2.000000" fill="rgb(238,238,238)" />
+		<rect id="矩形 754" width="15.000000" height="4.000000" x="0.000000" y="0.000000" rx="2.000000" fill="rgb(238,238,238)" transform="matrix(-1,0,0,1,231,128)" />
+		<rect id="矩形 757" width="167.000000" height="4.000000" x="0.000000" y="0.000000" rx="2.000000" fill="rgb(238,238,238)" transform="matrix(-1,0,0,1,241,234)" />
+		<rect id="矩形 756" width="16.000000" height="6.000000" x="0.000000" y="0.000000" rx="2.000000" fill="rgb(238,238,238)" transform="matrix(-1,0,0,1,233,95)" />
+		<rect id="矩形 755" width="18.000000" height="4.000000" x="0.000000" y="0.000000" rx="2.000000" fill="rgb(238,238,238)" transform="matrix(-1,0,0,1,231,134)" />
+		<g id="容器 1242" customFrame="url(#clipPath_0)">
+			<rect id="容器 1242" width="191.000000" height="7.000000" x="150.000000" y="294.000000" />
+			<g id="容器 1184" customFrame="url(#clipPath_1)">
+				<rect id="容器 1184" width="49.000000" height="7.000000" x="150.000000" y="294.000000" />
+				<rect id="矩形 752" width="7.000000" height="7.000000" x="150.000000" y="294.000000" rx="2.000000" fill="rgb(238,238,238)" />
+				<rect id="矩形 753" width="39.000000" height="7.000000" x="160.000000" y="294.000000" rx="2.000000" fill="rgb(238,238,238)" />
+			</g>
+			<rect id="矩形 754" width="9.000000" height="7.000000" x="332.000000" y="294.000000" rx="2.000000" fill="rgb(238,238,238)" />
+		</g>
+		<g id="组合 7">
+			<g id="容器 1241" customFrame="url(#clipPath_2)">
+				<rect id="容器 1241" width="170.000000" height="4.000000" x="150.000000" y="309.000000" rx="2.000000" />
+				<rect id="矩形 632" width="69.000000" height="4.000000" x="150.000000" y="309.000000" rx="2.000000" fill="rgb(74,58,255)" />
+				<rect id="矩形 633" width="72.018761" height="4.000000" x="220.990723" y="309.000000" rx="2.000000" fill="rgb(7,193,96)" />
+				<rect id="矩形 631" width="25.000000" height="4.000000" x="295.000000" y="309.000000" rx="2.000000" fill="rgb(68,127,254)" />
+			</g>
+		</g>
+		<rect id="矩形 752" width="18.000000" height="4.000000" x="323.000000" y="309.000000" rx="2.000000" fill="rgb(238,238,238)" />
+		<circle id="椭圆 41" cx="81.5" cy="196.5" r="1.5" fill="rgb(255,255,255)" />
+		<circle id="椭圆 41" cx="81.5" cy="196.5" r="1.5" stroke="rgb(255,85,85)" stroke-width="1.000000" />
+		<circle id="椭圆 42" cx="141.5" cy="201.5" r="1.5" fill="rgb(255,255,255)" />
+		<circle id="椭圆 42" cx="141.5" cy="201.5" r="1.5" stroke="rgb(255,85,85)" stroke-width="1.000000" />
+		<circle id="椭圆 44" cx="198.5" cy="194.5" r="1.5" fill="rgb(255,255,255)" />
+		<circle id="椭圆 44" cx="198.5" cy="194.5" r="1.5" stroke="rgb(255,85,85)" stroke-width="1.000000" />
+		<circle id="椭圆 45" cx="228.5" cy="196.5" r="1.5" fill="rgb(255,255,255)" />
+		<circle id="椭圆 45" cx="228.5" cy="196.5" r="1.5" stroke="rgb(255,85,85)" stroke-width="1.000000" />
+		<path id="星形 2" d="M72.8327 298.771C73.3164 299.638 74.3634 300.019 75.2916 299.666L80.2536 297.775C81.7173 297.217 83.2249 298.482 82.9299 300.021L81.9297 305.236C81.7426 306.211 82.2997 307.176 83.2381 307.502L88.2544 309.243C89.7341 309.757 90.0758 311.695 88.861 312.684L84.7428 316.036C83.9725 316.663 83.779 317.76 84.2884 318.612L87.0119 323.171C87.8152 324.515 86.8312 326.22 85.265 326.196L79.9557 326.117C78.9626 326.102 78.109 326.818 77.9512 327.799L77.1074 333.041C76.8586 334.588 75.0092 335.261 73.8245 334.236L69.8083 330.763C69.0571 330.113 67.9429 330.113 67.1917 330.763L63.1755 334.236C61.9908 335.261 60.1415 334.588 59.8926 333.041L59.0488 327.799C58.891 326.818 58.0374 326.102 57.0443 326.117L51.735 326.196C50.1688 326.22 49.1848 324.515 49.9881 323.171L52.7116 318.612C53.221 317.76 53.0275 316.663 52.2572 316.036L48.139 312.684C46.9242 311.695 47.2659 309.757 48.7456 309.243L53.7619 307.502C54.7003 307.176 55.2574 306.211 55.0703 305.236L54.0701 300.021C53.7751 298.482 55.2827 297.217 56.7464 297.775L61.7084 299.666C62.6365 300.019 63.6836 299.638 64.1673 298.771L66.7532 294.133C67.516 292.765 69.484 292.765 70.2468 294.133L72.8327 298.771Z" fill="rgb(255,255,255)" fill-rule="evenodd" />
+		<path id="星形 3" d="M296.411 225.589L305 227L296.411 228.411L295 237L293.589 228.411L285 227L293.589 225.589L295 217L296.411 225.589Z" fill="rgb(255,255,255)" fill-rule="evenodd" />
+		<path id="星形 5" d="M169.705 54.2946L174 55L169.705 55.7054L169 60L168.295 55.7054L164 55L168.295 54.2946L169 50L169.705 54.2946Z" fill="rgb(255,255,255)" fill-rule="evenodd" />
+		<path id="星形 4" d="M315.049 203.55L319.263 201.75L315.597 204.5L319.263 207.25L315.049 205.45L314.5 210L313.951 205.45L309.737 207.25L313.403 204.5L309.737 201.75L313.951 203.55L314.5 199L315.049 203.55Z" fill="rgb(255,255,255)" fill-rule="evenodd" />
+		<path id="星形 6" d="M29.0487 172.55L33.2631 170.75L29.5973 173.5L33.2631 176.25L29.0487 174.45L28.5 179L27.9513 174.45L23.7369 176.25L27.4027 173.5L23.7369 170.75L27.9513 172.55L28.5 168L29.0487 172.55Z" fill="rgb(255,255,255)" fill-rule="evenodd" />
+		<g filter="url(#filter_3)">
+			<rect id="矩形 748" width="40.000000" height="40.000000" x="88.000000" y="77.000000" rx="4.000000" fill="rgb(255,255,255)" />
+		</g>
+		<path id="" d="M101.985 104L103.065 100.685L108.314 100.685L109.393 104L112.689 104L107.674 89.4541L103.714 89.4541L98.6895 104L101.985 104ZM103.846 98.2822L105.638 92.7793L105.75 92.7793L107.542 98.2822L103.846 98.2822ZM117.514 89.4541L114.438 89.4541L114.438 104L117.514 104L117.514 89.4541Z" fill="rgb(74,58,255)" fill-rule="nonzero" />
+		<line id="直线 36" x1="0" x2="200.731171" y1="0" y2="0" stroke="rgb(235,204,255)" stroke-linecap="butt" stroke-dasharray="3 3 " stroke-width="1.000000" transform="matrix(0.986394,0.164399,-0.164399,0.986394,123,112)" />
+		<line id="直线 37" x1="0" x2="258.118195" y1="0" y2="0" stroke="rgb(235,204,255)" stroke-linecap="butt" stroke-dasharray="3 3 " stroke-width="1.000000" transform="matrix(-0.995668,0.0929807,-0.0929807,-0.995668,322,145)" />
+		<line id="直线 38" x1="0" x2="143.961807" y1="0" y2="0" stroke="rgb(235,204,255)" stroke-linecap="butt" stroke-dasharray="3 3 " stroke-width="1.000000" transform="matrix(0.54181,0.840501,-0.840501,0.54181,65,169)" />
+		<line id="直线 39" x1="0" x2="78.2943192" y1="0" y2="0" stroke="rgb(235,204,255)" stroke-linecap="butt" stroke-dasharray="3 3 " stroke-width="1.000000" transform="matrix(-0.906835,0.421486,-0.421486,-0.906835,143,291)" />
+		<circle id="椭圆 49" cx="142" cy="290" r="2" fill="rgb(255,255,255)" />
+		<circle id="椭圆 49" cx="142" cy="290" r="2" stroke="rgb(235,204,255)" stroke-width="1.000000" />
+		<circle id="椭圆 48" cx="65" cy="169" r="2" fill="rgb(255,255,255)" />
+		<circle id="椭圆 48" cx="65" cy="169" r="2" stroke="rgb(235,204,255)" stroke-width="1.000000" />
+		<circle id="椭圆 50" cx="72" cy="324" r="2" fill="rgb(255,255,255)" />
+		<circle id="椭圆 50" cx="72" cy="324" r="2" stroke="rgb(235,204,255)" stroke-width="1.000000" />
+		<circle id="椭圆 47" cx="322" cy="145" r="2" fill="rgb(255,255,255)" />
+		<circle id="椭圆 47" cx="322" cy="145" r="2" stroke="rgb(235,204,255)" stroke-width="1.000000" />
+		<circle id="椭圆 46" cx="123" cy="112" r="2" fill="rgb(255,255,255)" />
+		<circle id="椭圆 46" cx="123" cy="112" r="2" stroke="rgb(235,204,255)" stroke-width="1.000000" />
+	</g>
+</svg>

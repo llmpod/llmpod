@@ -1,0 +1,39 @@
+{
+  "name": "@repo/hooks",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./theme": "./src/theme/index.ts",
+    "./tools": "./src/tools/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint --config ../../eslint.config.js src",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@ant-design/colors": "catalog:",
+    "@repo/naive-ui": "workspace:*",
+    "@vueuse/core": "catalog:",
+    "colord": "catalog:",
+    "lodash-es": "catalog:",
+    "naive-ui": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
+  },
+  "devDependencies": {
+    "@types/lodash-es": "catalog:",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vue/test-utils": "catalog:",
+    "happy-dom": "catalog:",
+    "jsdom": "catalog:",
+    "naive-ui": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vue-tsc": "catalog:"
+  }
+}

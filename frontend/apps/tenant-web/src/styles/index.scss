@@ -1,0 +1,25 @@
+// 租户端特有全局样式,按需补充
+
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+// body 跟随共享主题的明暗背景与文字色,避免非 Naive 区域在暗色下残留白底
+body {
+  background-color: rgb(var(--n-body-color, 255, 255, 255));
+  color: rgb(var(--n-text-color, 19, 25, 31));
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+// 模型品牌图标:黑白系品牌(如 KIMI)按明暗模式切换黑/白填充
+.brand-icon-dark-aware {
+  fill: #000000;
+}
+
+html.dark .brand-icon-dark-aware {
+  fill: #ffffff;
+}

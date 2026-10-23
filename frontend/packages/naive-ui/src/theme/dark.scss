@@ -1,0 +1,24 @@
+html.dark {
+  --n-text-color: rgba(255, 255, 255, 0.9);
+  --n-bg-color: #18181c;
+  // 下拉菜单样式
+  .n-base-select-menu {
+    background-color: #1d1e1f;
+  }
+  .n-base-selection .n-base-selection-label,
+  .n-base-selection .n-base-selection-tags {
+    background-color: transparent;
+    border: 1px solid var(--c-line);
+  }
+  .n-base-select-menu .n-base-select-option.n-base-select-option--pending::before {
+    background-color: #18181c;
+  }
+  .n-base-selection:not(.n-base-selection--disabled).n-base-selection--active
+    .n-base-selection-label {
+    background-color: transparent;
+  }
+  // tabs样式
+  .n-tabs-nav--line-type.n-tabs-nav--top.n-tabs-nav {
+    background-color: var(--n-bg-color);
+  }
+}

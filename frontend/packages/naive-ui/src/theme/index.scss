@@ -1,0 +1,15 @@
+:root {
+  --n-color-primary: #2080f0;
+  --n-color-success: #18a058;
+  --n-color-warning: #f0a020;
+  --n-color-error: #d03050;
+  --n-text-color: #1f2329;
+  --n-bg-color: #ffffff;
+  // 主题色 RGB 串 fallback(与 packages/hooks/src/theme/useTheme.ts DEFAULT_THEME_CONFIG 一致)
+  // 运行时由 helper.ts addCssVarsToHtml 覆盖;此处保证首屏/SSR 不失效
+  --n-primary-color: 74, 58, 255;
+  --n-info-color: 74, 58, 255;
+  --n-success-color: 32, 165, 58;
+  --n-warning-color: 232, 137, 21;
+  --n-error-color: 255, 85, 85;
+}

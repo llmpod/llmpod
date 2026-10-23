@@ -1,0 +1,40 @@
+{
+  "name": "llmpod",
+  "private": true,
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:tenant": "turbo run dev --filter=@repo/tenant-web",
+    "dev:admin": "turbo run dev --filter=@repo/admin-web",
+    "dev:portal": "turbo run dev --filter=@repo/portal-web",
+    "build": "turbo run build && node scripts/aggregate.mjs",
+    "build:tenant": "turbo run build --filter=@repo/tenant-web",
+    "build:admin": "turbo run build --filter=@repo/admin-web",
+    "build:portal": "turbo run build --filter=@repo/portal-web",
+    "build:aggregate": "node scripts/aggregate.mjs",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@unocss/preset-rem-to-px": "catalog:",
+    "eslint": "catalog:",
+    "eslint-plugin-vue": "catalog:",
+    "prettier": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "unocss": "catalog:",
+    "unplugin-auto-import": "catalog:",
+    "unplugin-vue-components": "catalog:"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.19",
+    "pnpm": ">=10"
+  }
+}

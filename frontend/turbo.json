@@ -1,0 +1,15 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "tui",
+  "globalDependencies": ["uno.config.ts", "vite.plugins.ts", "theme.boot.js", "tsconfig.json"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "dev": { "cache": false, "persistent": true },
+    "lint": {},
+    "test": {},
+    "typecheck": {}
+  }
+}

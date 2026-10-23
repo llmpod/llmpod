@@ -1,0 +1,53 @@
+# git / venv / runtime artifacts (never bake into image)
+.git
+.gitignore
+.venv
+venv
+env
+.run
+.logs
+.pytest_cache
+.ruff_cache
+htmlcov
+.coverage
+
+# IDE / editor
+.idea
+.vscode
+
+# 大目录从不进镜像（Dockerfile 只 COPY llmpod/scripts/alembic*），但仍要排除：
+# build context 是仓库根，不排除的话整目录会被打包传给 daemon（实测数 GB 级）
+frontend
+e2e-suite
+chaos-test
+perf-test
+human-docs
+.turbo
+.zcode
+node_modules
+
+# secrets & local data (do not leak into image)
+.env
+docker/.env
+docker/.env.node
+data
+*.db
+*.sqlite
+
+# docs/tests not needed at runtime
+docs
+tests
+*.md
+
+# claude working files
+.claude
+
+# python bytecode
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+*.egg-info
+dist
+build
+.eggs

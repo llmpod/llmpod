@@ -1,0 +1,42 @@
+{
+  "name": "@repo/tenant-web",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint --config ../../eslint.config.js src",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@repo/http-client": "workspace:*",
+    "@repo/hooks": "workspace:*",
+    "@repo/naive-ui": "workspace:*",
+    "@vicons/ionicons5": "^0.13.0",
+    "axios": "catalog:",
+    "echarts": "catalog:",
+    "naive-ui": "catalog:",
+    "pinia": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
+  },
+  "devDependencies": {
+    "@unocss/preset-rem-to-px": "catalog:",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vitejs/plugin-vue-jsx": "catalog:",
+    "@vue/test-utils": "catalog:",
+    "eslint": "catalog:",
+    "happy-dom": "catalog:",
+    "sass": "catalog:",
+    "typescript": "catalog:",
+    "unocss": "catalog:",
+    "unplugin-auto-import": "catalog:",
+    "unplugin-vue-components": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "vue-tsc": "catalog:"
+  }
+}

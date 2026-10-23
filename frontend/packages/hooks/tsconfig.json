@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@repo/hooks": ["./src/index.ts"],
+      "@repo/naive-ui": ["../naive-ui/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

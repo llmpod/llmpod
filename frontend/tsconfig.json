@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "jsx": "preserve",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "useDefineForClassFields": true,
+    "baseUrl": ".",
+    "paths": {
+      "@repo/http-client": ["packages/http-client/src/index.ts"],
+      "@repo/http-client/*": ["packages/http-client/src/*"],
+      "@repo/hooks": ["packages/hooks/src/index.ts"],
+      "@repo/hooks/*": ["packages/hooks/src/*"],
+      "@repo/naive-ui": ["packages/naive-ui/src/index.ts"],
+      "@repo/naive-ui/*": ["packages/naive-ui/src/*"],
+      "@repo/ui-automator": ["packages/ui-automator/src/index.ts"],
+      "@repo/ui-automator/*": ["packages/ui-automator/src/*"]
+    }
+  }
+}

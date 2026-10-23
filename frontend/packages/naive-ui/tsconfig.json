@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "preserve",
+    "paths": {
+      "@repo/http-client": ["../http-client/src/index.ts"],
+      "@repo/http-client/*": ["../http-client/src/*"],
+      "@repo/hooks": ["../hooks/src/index.ts"],
+      "@repo/hooks/*": ["../hooks/src/*"],
+      "@repo/naive-ui": ["./src/index.ts"],
+      "@repo/naive-ui/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,6541 @@
+{
+  "_comment": "推理镜像 catalog：按 engine / arch / gpu_model(glob) / driver(区间) / engine_version 五维匹配，选择与排序逻辑见 image_catalog.py。驱动地板写在每条 driver 字段；R535/R570 兼容条目仅面向特定数据中心卡。",
+  "_comment_engine_versions": "引擎版本词表（键 engine:version 与 images[].engine_version 同串）。字段语义与降档规则以 image_catalog.EngineVocab 为准；新增引擎版本 = 加 images 条目 + 按该版源码核对解析器与参数名。",
+  "engine_versions": {
+    "vllm:0.7.3": {
+      "tool_parsers": [
+        "hermes",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba"
+      ],
+      "reasoning_parsers": [],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.8.5": {
+      "tool_parsers": [
+        "hermes",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite"
+      ],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.9.0": {
+      "tool_parsers": [
+        "hermes",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json",
+        "deepseek_v3",
+        "llama4_pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.22.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert"
+    },
+    "vllm:0.23.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert"
+    },
+    "vllm:0.26.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert"
+    },
+    "vllm:0.27.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert"
+    },
+    "vllm:0.30.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert"
+    },
+    "vllm:0.32.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert"
+    },
+    "llamacpp:b10975": {},
+    "sglang:0.4.2": {
+      "parser_auto": false,
+      "pp": false
+    },
+    "sglang:0.4.6": {
+      "parser_auto": false,
+      "pp": false
+    },
+    "sglang:0.4.7": {
+      "parser_auto": false
+    },
+    "sglang:0.4.10": {
+      "parser_auto": false
+    },
+    "sglang:0.5.11": {
+      "parser_auto": false
+    },
+    "sglang:0.5.17": {
+      "parser_auto": true
+    },
+    "vllm:0.11.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json",
+        "llama4_pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": false
+    },
+    "vllm:0.13.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json",
+        "llama4_pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.17.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json",
+        "llama4_pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.24.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json",
+        "llama4_pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "sglang:0.5.9": {
+      "parser_auto": false
+    },
+    "sglang:0.5.14": {
+      "parser_auto": true
+    },
+    "vllm:0.10.2": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.11.2": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": false
+    },
+    "vllm:0.12.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.14.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.15.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.16.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.18.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.19.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.20.2": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.21.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.25.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.28.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.29.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "sglang:0.5.5.post3": {
+      "parser_auto": false
+    },
+    "sglang:0.5.6.post2": {
+      "parser_auto": false
+    },
+    "sglang:0.5.7": {
+      "parser_auto": false
+    },
+    "sglang:0.5.8.post1": {
+      "parser_auto": false
+    },
+    "sglang:0.5.10": {
+      "parser_auto": false
+    },
+    "sglang:0.5.12": {
+      "parser_auto": true
+    },
+    "sglang:0.5.12.post1": {
+      "parser_auto": true
+    },
+    "sglang:0.5.13": {
+      "parser_auto": true
+    },
+    "sglang:0.5.13.post1": {
+      "parser_auto": true
+    },
+    "sglang:0.5.15": {
+      "parser_auto": true
+    },
+    "sglang:0.5.15.post1": {
+      "parser_auto": true
+    },
+    "sglang:0.5.16": {
+      "parser_auto": true
+    },
+    "sglang:0.5.18": {
+      "parser_auto": true
+    },
+    "sglang:0.5.19": {
+      "parser_auto": true
+    },
+    "sglang:0.5.20": {
+      "parser_auto": true
+    },
+    "llamacpp:b10991": {},
+    "llamacpp:b11243": {},
+    "sglang:0.4.8": {
+      "parser_auto": false
+    },
+    "sglang:0.4.9.post6": {
+      "parser_auto": false
+    },
+    "sglang:0.4.10.post2": {
+      "parser_auto": false
+    },
+    "sglang:0.5.1.post3": {
+      "parser_auto": false
+    },
+    "sglang:0.5.2": {
+      "parser_auto": false
+    },
+    "sglang:0.5.3": {
+      "parser_auto": false
+    },
+    "sglang:0.5.3.post3": {
+      "parser_auto": false
+    },
+    "sglang:0.5.4": {
+      "parser_auto": false
+    },
+    "sglang:0.5.4.post3": {
+      "parser_auto": false
+    },
+    "sglang:0.5.10.post1": {
+      "parser_auto": false
+    },
+    "vllm:0.9.1": {
+      "tool_parsers": [
+        "hermes",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json",
+        "deepseek_v3",
+        "llama4_pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.9.2": {
+      "tool_parsers": [
+        "hermes",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json",
+        "deepseek_v3",
+        "llama4_pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.10.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.10.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.10.1.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "vllm:0.11.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": false
+    },
+    "vllm:0.14.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.15.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.17.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic",
+        "granite",
+        "internlm",
+        "jamba",
+        "phi4_mini_json",
+        "llama4_pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.18.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.19.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.20.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.20.1": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.22.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert"
+    },
+    "vllm:0.25.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder"
+      ],
+      "reasoning_parsers": [
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert",
+      "multinode": true
+    },
+    "vllm:0.27.0": {
+      "tool_parsers": [
+        "hermes",
+        "qwen3_coder",
+        "qwen3_xml",
+        "deepseek_v3",
+        "llama3_json",
+        "mistral",
+        "pythonic"
+      ],
+      "reasoning_parsers": [
+        "deepseek_r1",
+        "granite",
+        "qwen3"
+      ],
+      "pooling_flags": "runner_convert"
+    },
+    "vllm:0.6.6": {
+      "tool_parsers": [
+        "hermes"
+      ],
+      "reasoning_parsers": [],
+      "pooling_flags": "task",
+      "multinode": false
+    },
+    "sglang:0.3.0": {
+      "parser_auto": false,
+      "metrics_flag": false,
+      "multinode": false,
+      "pp": false
+    }
+  },
+  "images": [
+    {
+      "id": "vllm-nvidia-default",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.23.0",
+      "image": "vllm/vllm-openai:v0.23.0",
+      "default": false,
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580"
+    },
+    {
+      "id": "vllm-0300-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.30.0",
+      "image": "vllm/vllm-openai:v0.30.0",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580"
+    },
+    {
+      "id": "vllm-0320-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.32.0",
+      "image": "vllm/vllm-openai:v0.32.0",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580"
+    },
+    {
+      "id": "vllm-0271-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.27.1",
+      "image": "vllm/vllm-openai:v0.27.1",
+      "default": true,
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580"
+    },
+    {
+      "id": "vllm-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=575",
+      "engine_version": "0.27.1",
+      "image": "vllm/vllm-openai:v0.27.1-cu129",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥575"
+    },
+    {
+      "id": "vllm-0260-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=575",
+      "engine_version": "0.26.0",
+      "image": "vllm/vllm-openai:v0.26.0-cu129",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥575"
+    },
+    {
+      "id": "vllm-nvidia-cu128",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=570,<575",
+      "engine_version": "0.9.0",
+      "image": "vllm/vllm-openai:v0.9.0",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 570-574"
+    },
+    {
+      "id": "vllm-nvidia-cu124",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=550,<570",
+      "engine_version": "0.8.5",
+      "image": "vllm/vllm-openai:v0.8.5",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 550-569"
+    },
+    {
+      "id": "vllm-nvidia-cu121",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=525,<550",
+      "engine_version": "0.7.3",
+      "image": "vllm/vllm-openai:v0.7.3",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 525-549"
+    },
+    {
+      "id": "vllm-ascend-310p",
+      "engine": "vllm",
+      "arch": "cann",
+      "gpu_model": [
+        "*310P*",
+        "*300I*"
+      ],
+      "driver": ">=25.2",
+      "engine_version": "0.22.1",
+      "image": "vllm-ascend-310p:fixed",
+      "default": true,
+      "params": {
+        "args": [
+          "--dtype",
+          "half",
+          "--enforce-eager"
+        ],
+        "env": {
+          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
+        }
+      },
+      "notes": "驱动 ≥25.2"
+    },
+    {
+      "id": "vllm-ascend-310p-0230",
+      "engine": "vllm",
+      "arch": "cann",
+      "gpu_model": [
+        "*310P*",
+        "*300I*"
+      ],
+      "driver": ">=25.2",
+      "engine_version": "0.23.0",
+      "image": "vllm-ascend-310p:fixed",
+      "params": {
+        "args": [
+          "--dtype",
+          "half",
+          "--enforce-eager"
+        ],
+        "env": {
+          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
+        }
+      },
+      "notes": "驱动 ≥25.2"
+    },
+    {
+      "id": "vllm-ascend-310p-0260",
+      "engine": "vllm",
+      "arch": "cann",
+      "gpu_model": [
+        "*310P*",
+        "*300I*"
+      ],
+      "driver": ">=25.2",
+      "engine_version": "0.26.0",
+      "image": "vllm-ascend-310p:fixed",
+      "params": {
+        "args": [
+          "--dtype",
+          "half",
+          "--enforce-eager"
+        ],
+        "env": {
+          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
+        }
+      },
+      "notes": "驱动 ≥25.2"
+    },
+    {
+      "id": "vllm-ascend-310p-0271",
+      "engine": "vllm",
+      "arch": "cann",
+      "gpu_model": [
+        "*310P*",
+        "*300I*"
+      ],
+      "driver": ">=25.2",
+      "engine_version": "0.27.1",
+      "image": "vllm-ascend-310p:fixed",
+      "params": {
+        "args": [
+          "--dtype",
+          "half",
+          "--enforce-eager"
+        ],
+        "env": {
+          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
+        }
+      },
+      "notes": "驱动 ≥25.2"
+    },
+    {
+      "id": "vllm-ascend-910b",
+      "engine": "vllm",
+      "arch": "cann",
+      "gpu_model": [
+        "*910B*",
+        "*A2*"
+      ],
+      "driver": ">=24.1",
+      "engine_version": "0.23.0",
+      "image": "quay.io/ascend/vllm-ascend:v0.23.0rc1",
+      "default": true,
+      "params": {
+        "env": {
+          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
+        }
+      },
+      "notes": "驱动 ≥24.1"
+    },
+    {
+      "id": "vllm-ascend-910c",
+      "engine": "vllm",
+      "arch": "cann",
+      "gpu_model": [
+        "*910C*",
+        "*A3*",
+        "*9391*"
+      ],
+      "driver": ">=24.1",
+      "engine_version": "0.23.0",
+      "image": "quay.io/ascend/vllm-ascend:v0.23.0rc1-a3",
+      "params": {
+        "env": {
+          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
+        }
+      },
+      "notes": "驱动 ≥24.1"
+    },
+    {
+      "id": "vllm-ascend-950dt",
+      "engine": "vllm",
+      "arch": "cann",
+      "gpu_model": [
+        "*950*",
+        "*A5*"
+      ],
+      "driver": ">=26.0",
+      "engine_version": "0.23.0",
+      "image": "quay.io/ascend/vllm-ascend:v0.23.0rc1-950dt",
+      "default": true,
+      "params": {
+        "env": {
+          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
+        }
+      },
+      "notes": "驱动 ≥26.0"
+    },
+    {
+      "id": "sglang-nvidia-cu118",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=520,<525",
+      "engine_version": "0.4.2",
+      "image": "lmsysorg/sglang:v0.4.2-cu118",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 520-524"
+    },
+    {
+      "id": "sglang-nvidia-cu121",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=525,<550",
+      "engine_version": "0.4.6",
+      "image": "lmsysorg/sglang:v0.4.6.post1-cu121",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 525-549"
+    },
+    {
+      "id": "sglang-nvidia-cu124",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=550,<560",
+      "engine_version": "0.4.7",
+      "image": "lmsysorg/sglang:v0.4.7.post1-cu124",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 550-559"
+    },
+    {
+      "id": "sglang-nvidia-cu126",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=560,<575",
+      "engine_version": "0.4.10",
+      "image": "lmsysorg/sglang:v0.4.10-cu126",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 560-574"
+    },
+    {
+      "id": "sglang-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=575",
+      "engine_version": "0.5.17",
+      "image": "lmsysorg/sglang:v0.5.17-cu129",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-nvidia-turing",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*GTX 16*",
+        "*Titan RTX*",
+        "*Turing*",
+        "*T4*",
+        "*Quadro RTX*",
+        "*Quadro T*"
+      ],
+      "driver": ">=575",
+      "engine_version": "0.4.10",
+      "image": "lmsysorg/sglang:v0.4.10-cu126",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥575"
+    },
+    {
+      "id": "sglang-nvidia-default",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.5.17",
+      "image": "lmsysorg/sglang:v0.5.17",
+      "default": true,
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "llamacpp-nvidia-cuda12",
+      "engine": "llamacpp",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=570,<580",
+      "engine_version": null,
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda",
+      "params": {},
+      "notes": "驱动 570-579"
+    },
+    {
+      "id": "llamacpp-nvidia-cuda13",
+      "engine": "llamacpp",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": null,
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda13",
+      "default": true,
+      "params": {},
+      "notes": "驱动 ≥580"
+    },
+    {
+      "id": "llamacpp-cpu",
+      "engine": "llamacpp",
+      "arch": "cpu",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": null,
+      "engine_version": null,
+      "image": "ghcr.io/ggml-org/llama.cpp:server",
+      "default": true,
+      "params": {},
+      "notes": ""
+    },
+    {
+      "id": "llamacpp-nvidia-cuda13-b10975",
+      "engine": "llamacpp",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": "b10975",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda13-b10975",
+      "params": {},
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0110-nvidia-cu128",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=570",
+      "engine_version": "0.11.0",
+      "image": "vllm/vllm-openai:v0.11.0",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥570",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0130-nvidia",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=575",
+      "engine_version": "0.13.0",
+      "image": "vllm/vllm-openai:v0.13.0",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0171-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.17.1",
+      "image": "vllm/vllm-openai:v0.17.1-cu130",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0240-nvidia",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.24.0",
+      "image": "vllm/vllm-openai:v0.24.0",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "sglang-nvidia-0509-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.5.9",
+      "image": "lmsysorg/sglang:v0.5.9-cu130",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-nvidia-0514-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "driver": ">=575",
+      "engine_version": "0.5.14",
+      "image": "lmsysorg/sglang:v0.5.14-cu129",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-nvidia-0514-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "driver": ">=580",
+      "engine_version": "0.5.14",
+      "image": "lmsysorg/sglang:v0.5.14-cu130",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0102-nvidia-cu128",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.10.2",
+      "image": "vllm/vllm-openai:v0.10.2",
+      "driver": ">=570",
+      "default": false,
+      "notes": "驱动 ≥570",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0112-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.11.2",
+      "image": "vllm/vllm-openai:v0.11.2",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0120-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.12.0",
+      "image": "vllm/vllm-openai:v0.12.0",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0141-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.14.1",
+      "image": "vllm/vllm-openai:v0.14.1-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0141-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.14.1",
+      "image": "vllm/vllm-openai:v0.14.1",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0151-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.15.1",
+      "image": "vllm/vllm-openai:v0.15.1-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0151-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.15.1",
+      "image": "vllm/vllm-openai:v0.15.1",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0160-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.16.0",
+      "image": "vllm/vllm-openai:v0.16.0-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0160-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.16.0",
+      "image": "vllm/vllm-openai:v0.16.0",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0171-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.17.1",
+      "image": "vllm/vllm-openai:v0.17.1",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0181-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.18.1",
+      "image": "vllm/vllm-openai:v0.18.1-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0181-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.18.1",
+      "image": "vllm/vllm-openai:v0.18.1",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0191-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.19.1",
+      "image": "vllm/vllm-openai:v0.19.1-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0191-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.19.1",
+      "image": "vllm/vllm-openai:v0.19.1",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0202-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.20.2",
+      "image": "vllm/vllm-openai:v0.20.2",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0202-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.20.2",
+      "image": "vllm/vllm-openai:v0.20.2-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0210-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.21.0",
+      "image": "vllm/vllm-openai:v0.21.0",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0210-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.21.0",
+      "image": "vllm/vllm-openai:v0.21.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0221-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.22.1",
+      "image": "vllm/vllm-openai:v0.22.1",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0221-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.22.1",
+      "image": "vllm/vllm-openai:v0.22.1-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0230-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.23.0",
+      "image": "vllm/vllm-openai:v0.23.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0240-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.24.0",
+      "image": "vllm/vllm-openai:v0.24.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0251-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.25.1",
+      "image": "vllm/vllm-openai:v0.25.1",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0251-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.25.1",
+      "image": "vllm/vllm-openai:v0.25.1-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0260-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.26.0",
+      "image": "vllm/vllm-openai:v0.26.0",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0280-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.28.0",
+      "image": "vllm/vllm-openai:v0.28.0",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0280-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.28.0",
+      "image": "vllm/vllm-openai:v0.28.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0290-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.29.0",
+      "image": "vllm/vllm-openai:v0.29.0",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0290-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.29.0",
+      "image": "vllm/vllm-openai:v0.29.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0300-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.30.0",
+      "image": "vllm/vllm-openai:v0.30.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0320-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.32.0",
+      "image": "vllm/vllm-openai:v0.32.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-091-nvidia-cu128",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.9.1",
+      "image": "vllm/vllm-openai:v0.9.1",
+      "driver": ">=570",
+      "default": false,
+      "notes": "驱动 ≥570",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-092-nvidia-cu128",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.9.2",
+      "image": "vllm/vllm-openai:v0.9.2",
+      "driver": ">=570",
+      "default": false,
+      "notes": "驱动 ≥570",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0100-nvidia-cu128",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.10.0",
+      "image": "vllm/vllm-openai:v0.10.0",
+      "driver": ">=570",
+      "default": false,
+      "notes": "驱动 ≥570",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0101-nvidia-cu128",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.10.1",
+      "image": "vllm/vllm-openai:v0.10.1",
+      "driver": ">=570",
+      "default": false,
+      "notes": "驱动 ≥570",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-01011-nvidia-cu128",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.10.1.1",
+      "image": "vllm/vllm-openai:v0.10.1.1",
+      "driver": ">=570",
+      "default": false,
+      "notes": "驱动 ≥570",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0111-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.11.1",
+      "image": "vllm/vllm-openai:v0.11.1",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0140-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.14.0",
+      "image": "vllm/vllm-openai:v0.14.0",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0140-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.14.0",
+      "image": "vllm/vllm-openai:v0.14.0-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0150-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.15.0",
+      "image": "vllm/vllm-openai:v0.15.0",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0150-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.15.0",
+      "image": "vllm/vllm-openai:v0.15.0-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0170-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.17.0",
+      "image": "vllm/vllm-openai:v0.17.0",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0170-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.17.0",
+      "image": "vllm/vllm-openai:v0.17.0-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0180-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.18.0",
+      "image": "vllm/vllm-openai:v0.18.0",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0180-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.18.0",
+      "image": "vllm/vllm-openai:v0.18.0-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0190-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.19.0",
+      "image": "vllm/vllm-openai:v0.19.0",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0190-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.19.0",
+      "image": "vllm/vllm-openai:v0.19.0-cu130",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0200-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.20.0",
+      "image": "vllm/vllm-openai:v0.20.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0200-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.20.0",
+      "image": "vllm/vllm-openai:v0.20.0",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0201-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.20.1",
+      "image": "vllm/vllm-openai:v0.20.1-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0201-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.20.1",
+      "image": "vllm/vllm-openai:v0.20.1",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0220-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.22.0",
+      "image": "vllm/vllm-openai:v0.22.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0220-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.22.0",
+      "image": "vllm/vllm-openai:v0.22.0",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0250-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.25.0",
+      "image": "vllm/vllm-openai:v0.25.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0250-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.25.0",
+      "image": "vllm/vllm-openai:v0.25.0",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0270-nvidia-cu129",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.27.0",
+      "image": "vllm/vllm-openai:v0.27.0-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0270-nvidia-cu130",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "engine_version": "0.27.0",
+      "image": "vllm/vllm-openai:v0.27.0",
+      "driver": ">=580",
+      "default": true,
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0170-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.17.0",
+      "image": "vllm/vllm-openai:v0.17.0-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0170-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.17.0",
+      "image": "vllm/vllm-openai:v0.17.0-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0180-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.18.0",
+      "image": "vllm/vllm-openai:v0.18.0-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0180-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.18.0",
+      "image": "vllm/vllm-openai:v0.18.0-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0190-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.19.0",
+      "image": "vllm/vllm-openai:v0.19.0-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0190-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.19.0",
+      "image": "vllm/vllm-openai:v0.19.0-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0200-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.20.0",
+      "image": "vllm/vllm-openai:v0.20.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0200-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.20.0",
+      "image": "vllm/vllm-openai:v0.20.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0201-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.20.1",
+      "image": "vllm/vllm-openai:v0.20.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0201-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.20.1",
+      "image": "vllm/vllm-openai:v0.20.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0171-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.17.1",
+      "image": "vllm/vllm-openai:v0.17.1-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0171-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.17.1",
+      "image": "vllm/vllm-openai:v0.17.1-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0181-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.18.1",
+      "image": "vllm/vllm-openai:v0.18.1-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0181-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.18.1",
+      "image": "vllm/vllm-openai:v0.18.1-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0191-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.19.1",
+      "image": "vllm/vllm-openai:v0.19.1-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0191-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.19.1",
+      "image": "vllm/vllm-openai:v0.19.1-cu130",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0202-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.20.2",
+      "image": "vllm/vllm-openai:v0.20.2",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0202-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.20.2",
+      "image": "vllm/vllm-openai:v0.20.2",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0210-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.21.0",
+      "image": "vllm/vllm-openai:v0.21.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0210-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.21.0",
+      "image": "vllm/vllm-openai:v0.21.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0221-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.22.1",
+      "image": "vllm/vllm-openai:v0.22.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0221-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.22.1",
+      "image": "vllm/vllm-openai:v0.22.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0230-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.23.0",
+      "image": "vllm/vllm-openai:v0.23.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true,
+      "default": false
+    },
+    {
+      "id": "vllm-0230-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.23.0",
+      "image": "vllm/vllm-openai:v0.23.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true,
+      "default": false
+    },
+    {
+      "id": "vllm-0240-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.24.0",
+      "image": "vllm/vllm-openai:v0.24.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0240-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.24.0",
+      "image": "vllm/vllm-openai:v0.24.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0251-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.25.1",
+      "image": "vllm/vllm-openai:v0.25.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0251-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.25.1",
+      "image": "vllm/vllm-openai:v0.25.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0260-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.26.0",
+      "image": "vllm/vllm-openai:v0.26.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0260-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.26.0",
+      "image": "vllm/vllm-openai:v0.26.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0271-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.27.1",
+      "image": "vllm/vllm-openai:v0.27.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true,
+      "default": true
+    },
+    {
+      "id": "vllm-0271-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.27.1",
+      "image": "vllm/vllm-openai:v0.27.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true,
+      "default": true
+    },
+    {
+      "id": "vllm-0280-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.28.0",
+      "image": "vllm/vllm-openai:v0.28.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0280-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.28.0",
+      "image": "vllm/vllm-openai:v0.28.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0290-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.29.0",
+      "image": "vllm/vllm-openai:v0.29.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0290-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.29.0",
+      "image": "vllm/vllm-openai:v0.29.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0300-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.30.0",
+      "image": "vllm/vllm-openai:v0.30.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0300-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.30.0",
+      "image": "vllm/vllm-openai:v0.30.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0320-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.32.0",
+      "image": "vllm/vllm-openai:v0.32.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0320-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.32.0",
+      "image": "vllm/vllm-openai:v0.32.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "sglang-055p3-nvidia-cu130-safe",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.5.post3",
+      "image": "lmsysorg/sglang:v0.5.5.post3",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-056p2-nvidia-cu130-safe",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.6.post2",
+      "image": "lmsysorg/sglang:v0.5.6.post2",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-057-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.7",
+      "image": "lmsysorg/sglang:v0.5.7",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-058p1-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.8.post1",
+      "image": "lmsysorg/sglang:v0.5.8.post1-cu130",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-058p1-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.8.post1",
+      "image": "lmsysorg/sglang:v0.5.8.post1",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-059-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.9",
+      "image": "lmsysorg/sglang:v0.5.9",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0510-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.10",
+      "image": "lmsysorg/sglang:v0.5.10-cu130",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0510-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.10",
+      "image": "lmsysorg/sglang:v0.5.10",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0511-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.11",
+      "image": "lmsysorg/sglang:v0.5.11",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0511-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.11",
+      "image": "lmsysorg/sglang:v0.5.11-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0512-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.12",
+      "image": "lmsysorg/sglang:v0.5.12",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0512-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.12",
+      "image": "lmsysorg/sglang:v0.5.12-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0512p1-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.12.post1",
+      "image": "lmsysorg/sglang:v0.5.12.post1",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0512p1-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.12.post1",
+      "image": "lmsysorg/sglang:v0.5.12.post1-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0513-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.13",
+      "image": "lmsysorg/sglang:v0.5.13",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0513-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.13",
+      "image": "lmsysorg/sglang:v0.5.13-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0513p1-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.13.post1",
+      "image": "lmsysorg/sglang:v0.5.13.post1",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0513p1-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.13.post1",
+      "image": "lmsysorg/sglang:v0.5.13.post1-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0515-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.15",
+      "image": "lmsysorg/sglang:v0.5.15",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0515-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.15",
+      "image": "lmsysorg/sglang:v0.5.15-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0515p1-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.15.post1",
+      "image": "lmsysorg/sglang:v0.5.15.post1",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0515p1-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.15.post1",
+      "image": "lmsysorg/sglang:v0.5.15.post1-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0516-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.16",
+      "image": "lmsysorg/sglang:v0.5.16",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0516-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.16",
+      "image": "lmsysorg/sglang:v0.5.16-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0518-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.18",
+      "image": "lmsysorg/sglang:v0.5.18",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0518-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.18",
+      "image": "lmsysorg/sglang:v0.5.18-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0519-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.19",
+      "image": "lmsysorg/sglang:v0.5.19",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0519-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.19",
+      "image": "lmsysorg/sglang:v0.5.19-cu129",
+      "driver": ">=575",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": false,
+      "notes": "驱动 ≥575",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0520-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.20",
+      "image": "lmsysorg/sglang:v0.5.20",
+      "driver": ">=580",
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "default": true,
+      "notes": "驱动 ≥580",
+      "gpu_model_required": true,
+      "driver_required": true
+    },
+    {
+      "id": "llamacpp-nvidia-cuda13-b10991",
+      "engine": "llamacpp",
+      "arch": "nvidia",
+      "engine_version": "b10991",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda13-b10991",
+      "driver": ">=580",
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "llamacpp-nvidia-cuda13-b11243",
+      "engine": "llamacpp",
+      "arch": "nvidia",
+      "engine_version": "b11243",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda13-b11243",
+      "driver": ">=580",
+      "notes": "驱动 ≥580",
+      "driver_required": true
+    },
+    {
+      "id": "llamacpp-nvidia-cuda12-b10975",
+      "engine": "llamacpp",
+      "arch": "nvidia",
+      "engine_version": "b10975",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda12-b10975",
+      "driver": ">=570,<580",
+      "notes": "驱动 570-579",
+      "driver_required": true
+    },
+    {
+      "id": "llamacpp-nvidia-cuda12-b10991",
+      "engine": "llamacpp",
+      "arch": "nvidia",
+      "engine_version": "b10991",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda12-b10991",
+      "driver": ">=570,<580",
+      "notes": "驱动 570-579",
+      "driver_required": true
+    },
+    {
+      "id": "llamacpp-nvidia-cuda12-b11243",
+      "engine": "llamacpp",
+      "arch": "nvidia",
+      "engine_version": "b11243",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda12-b11243",
+      "driver": ">=570,<580",
+      "notes": "驱动 570-579",
+      "driver_required": true
+    },
+    {
+      "id": "sglang-048-nvidia-cu126",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.4.8",
+      "image": "lmsysorg/sglang:v0.4.8-cu126",
+      "driver": ">=560",
+      "default": false,
+      "notes": "驱动 ≥560",
+      "driver_required": true
+    },
+    {
+      "id": "sglang-049post6-nvidia-cu126",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.4.9.post6",
+      "image": "lmsysorg/sglang:v0.4.9.post6-cu126",
+      "driver": ">=560",
+      "default": false,
+      "notes": "驱动 ≥560",
+      "driver_required": true
+    },
+    {
+      "id": "sglang-0410post2-nvidia-cu126",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.4.10.post2",
+      "image": "lmsysorg/sglang:v0.4.10.post2-cu126",
+      "driver": ">=560",
+      "default": false,
+      "notes": "驱动 ≥560",
+      "driver_required": true
+    },
+    {
+      "id": "sglang-051post3-nvidia-cu126",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.1.post3",
+      "image": "lmsysorg/sglang:v0.5.1.post3-cu126",
+      "driver": ">=560",
+      "default": false,
+      "notes": "驱动 ≥560",
+      "driver_required": true,
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true
+    },
+    {
+      "id": "sglang-052-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.2",
+      "image": "lmsysorg/sglang:v0.5.2",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true,
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true
+    },
+    {
+      "id": "sglang-053-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.3",
+      "image": "lmsysorg/sglang:v0.5.3-cu129",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true,
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true
+    },
+    {
+      "id": "sglang-053post3-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.3.post3",
+      "image": "lmsysorg/sglang:v0.5.3.post3",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true,
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true
+    },
+    {
+      "id": "sglang-054-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.4",
+      "image": "lmsysorg/sglang:v0.5.4",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true,
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true
+    },
+    {
+      "id": "sglang-054post3-nvidia-cu129",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.4.post3",
+      "image": "lmsysorg/sglang:v0.5.4.post3",
+      "driver": ">=575",
+      "default": false,
+      "notes": "驱动 ≥575",
+      "driver_required": true,
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true
+    },
+    {
+      "id": "sglang-0510post1-nvidia-cu130",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "engine_version": "0.5.10.post1",
+      "image": "lmsysorg/sglang:v0.5.10.post1-cu130",
+      "driver": ">=580",
+      "default": false,
+      "notes": "驱动 ≥580",
+      "driver_required": true,
+      "gpu_model_exclude": [
+        "*2080*",
+        "*2070*",
+        "*2060*",
+        "*gtx*",
+        "*titan*",
+        "*quadro*",
+        "*tesla*",
+        "*t4*",
+        "*v100*",
+        "*p100*",
+        "*p40*",
+        "*p4*",
+        "*m40*",
+        "*k80*",
+        "*k40*",
+        "*turing*"
+      ],
+      "gpu_model_required": true
+    },
+    {
+      "id": "vllm-0220-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.22.0",
+      "image": "vllm/vllm-openai:v0.22.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0220-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.22.0",
+      "image": "vllm/vllm-openai:v0.22.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0250-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.25.0",
+      "image": "vllm/vllm-openai:v0.25.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0250-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.25.0",
+      "image": "vllm/vllm-openai:v0.25.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0270-nvidia-cu130-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.27.0",
+      "image": "vllm/vllm-openai:v0.27.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0270-nvidia-cu130-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.27.0",
+      "image": "vllm/vllm-openai:v0.27.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0271-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.27.1",
+      "image": "vllm/vllm-openai:v0.27.1-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0271-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.27.1",
+      "image": "vllm/vllm-openai:v0.27.1-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0260-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.26.0",
+      "image": "vllm/vllm-openai:v0.26.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0260-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.26.0",
+      "image": "vllm/vllm-openai:v0.26.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0171-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.17.1",
+      "image": "vllm/vllm-openai:v0.17.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0171-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.17.1",
+      "image": "vllm/vllm-openai:v0.17.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0181-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.18.1",
+      "image": "vllm/vllm-openai:v0.18.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0181-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.18.1",
+      "image": "vllm/vllm-openai:v0.18.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0191-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.19.1",
+      "image": "vllm/vllm-openai:v0.19.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0191-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.19.1",
+      "image": "vllm/vllm-openai:v0.19.1",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0202-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.20.2",
+      "image": "vllm/vllm-openai:v0.20.2-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0202-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.20.2",
+      "image": "vllm/vllm-openai:v0.20.2-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0210-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.21.0",
+      "image": "vllm/vllm-openai:v0.21.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0210-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.21.0",
+      "image": "vllm/vllm-openai:v0.21.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0221-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.22.1",
+      "image": "vllm/vllm-openai:v0.22.1-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0221-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.22.1",
+      "image": "vllm/vllm-openai:v0.22.1-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0230-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.23.0",
+      "image": "vllm/vllm-openai:v0.23.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0230-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.23.0",
+      "image": "vllm/vllm-openai:v0.23.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0240-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.24.0",
+      "image": "vllm/vllm-openai:v0.24.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0240-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.24.0",
+      "image": "vllm/vllm-openai:v0.24.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0251-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.25.1",
+      "image": "vllm/vllm-openai:v0.25.1-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0251-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.25.1",
+      "image": "vllm/vllm-openai:v0.25.1-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0280-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.28.0",
+      "image": "vllm/vllm-openai:v0.28.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0280-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.28.0",
+      "image": "vllm/vllm-openai:v0.28.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0290-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.29.0",
+      "image": "vllm/vllm-openai:v0.29.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0290-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.29.0",
+      "image": "vllm/vllm-openai:v0.29.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0300-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.30.0",
+      "image": "vllm/vllm-openai:v0.30.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0300-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.30.0",
+      "image": "vllm/vllm-openai:v0.30.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0320-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.32.0",
+      "image": "vllm/vllm-openai:v0.32.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0320-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.32.0",
+      "image": "vllm/vllm-openai:v0.32.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0170-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.17.0",
+      "image": "vllm/vllm-openai:v0.17.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0170-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.17.0",
+      "image": "vllm/vllm-openai:v0.17.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0180-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.18.0",
+      "image": "vllm/vllm-openai:v0.18.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0180-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.18.0",
+      "image": "vllm/vllm-openai:v0.18.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0190-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.19.0",
+      "image": "vllm/vllm-openai:v0.19.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0190-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.19.0",
+      "image": "vllm/vllm-openai:v0.19.0",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0200-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.20.0",
+      "image": "vllm/vllm-openai:v0.20.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0200-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.20.0",
+      "image": "vllm/vllm-openai:v0.20.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0201-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.20.1",
+      "image": "vllm/vllm-openai:v0.20.1-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0201-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.20.1",
+      "image": "vllm/vllm-openai:v0.20.1-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0220-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.22.0",
+      "image": "vllm/vllm-openai:v0.22.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0220-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.22.0",
+      "image": "vllm/vllm-openai:v0.22.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0250-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.25.0",
+      "image": "vllm/vllm-openai:v0.25.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0250-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.25.0",
+      "image": "vllm/vllm-openai:v0.25.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0270-nvidia-cu129-compat-r535",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=535,<540",
+      "engine_version": "0.27.0",
+      "image": "vllm/vllm-openai:v0.27.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 535-539",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-0270-nvidia-cu129-compat-r570",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*T4*",
+        "*A10*",
+        "*A30*",
+        "*A40*",
+        "*A100*",
+        "*A800*",
+        "*H100*",
+        "*H800*",
+        "*L4*",
+        "*L40*",
+        "*L40S*",
+        "*H20*",
+        "*H200*",
+        "*B100*",
+        "*B200*",
+        "*GB200*",
+        "*L20*",
+        "*L2*",
+        "*A2*",
+        "*A16*",
+        "*AX800*"
+      ],
+      "gpu_model_required": true,
+      "driver": ">=570,<575",
+      "engine_version": "0.27.0",
+      "image": "vllm/vllm-openai:v0.27.0-cu129",
+      "params": {
+        "env": {
+          "VLLM_ENABLE_CUDA_COMPATIBILITY": "1"
+        }
+      },
+      "notes": "驱动 570-574",
+      "driver_required": true
+    },
+    {
+      "id": "vllm-066-nvidia-cu121",
+      "engine": "vllm",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=525",
+      "engine_version": "0.6.6",
+      "image": "vllm/vllm-openai:v0.6.6",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥525"
+    },
+    {
+      "id": "sglang-0300-nvidia-cu118",
+      "engine": "sglang",
+      "arch": "nvidia",
+      "gpu_model": [
+        "*"
+      ],
+      "driver": ">=525",
+      "engine_version": "0.3.0",
+      "image": "lmsysorg/sglang:v0.3.0-cu118",
+      "params": {
+        "env": {
+          "HF_HUB_OFFLINE": "1"
+        }
+      },
+      "notes": "驱动 ≥525"
+    }
+  ]
+}

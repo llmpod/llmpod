@@ -1,0 +1,26 @@
+/* 仪表盘窗口 radio-button 组移动端兼容(statistics / engine-dashboard 共用):
+   naive 按钮组为 inline-block + splitor 分隔线,超宽无法换行(溢出视口);
+   且按钮 border-right:0 依赖 splitor 补线,直接换行会出现缺线断口。
+   这里改为 flex wrap 独立按钮:隐藏 splitor,每个按钮全边框 + 圆角 + 间距。
+   naive 运行样式后注入 head,同优先级会覆盖,故嵌套 .n-radio-group 抬优先级 */
+.n-radio-group.dash-seg-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  /* naive 的 .n-radio-group--button-group 把高度锁死为 --n-height(28px),换行后第二行会溢出组盒;
+     行高保留 28px 供按钮继承(文字垂直居中),只放开高度由内容撑开 */
+  height: auto;
+}
+
+.n-radio-group.dash-seg-group .n-radio-group__splitor {
+  display: none;
+}
+
+.n-radio-group.dash-seg-group .n-radio-button {
+  border: 1px solid var(--c-line-strong);
+  border-radius: 0.5rem;
+}
+
+.n-radio-group.dash-seg-group .n-radio-button.n-radio-button--checked {
+  border-color: rgba(var(--n-primary-color), 0.45);
+}

@@ -1,0 +1,83 @@
+name: llmpod-test
+
+# 独立 E2E 测试栈 —— 与开发栈 docker-compose.yml (name: llmpod) 完全隔离。
+# 仅 webserver 暴露一个宿主机端口（由 run.sh 动态探测注入 LLMPOD_E2E_PORT）。
+# 复用已构建的 llmpod:latest 镜像（不在此 build；缺镜像由 run.sh 负责 build）。
+# 卷独立命名，down -v 只清测试数据。
+
+services:
+  postgres:
+    image: postgres:16.3
+    restart: "no"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: e2e-pg-pw
+      POSTGRES_DB: llmpod
+    volumes:
+      - llmpod-test-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-q", "-U", "postgres"]
+      start_period: 20s
+      interval: 5s
+      retries: 20
+      timeout: 3s
+    networks: [llmpod-test-net]
+
+  redis:
+    image: redis:7.4
+    restart: "no"
+    command: ["redis-server", "--requirepass", "e2e-redis-pw"]
+    volumes:
+      - llmpod-test-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "e2e-redis-pw", "ping"]
+      start_period: 10s
+      interval: 5s
+      retries: 20
+      timeout: 3s
+    networks: [llmpod-test-net]
+
+  webserver:
+    image: llmpod:latest
+    restart: "no"
+    command: ["webserver"]
+    environment:
+      LLMPOD_PG_HOST: postgres
+      LLMPOD_PG_PORT: "5432"
+      LLMPOD_PG_USER: postgres
+      LLMPOD_PG_PASSWORD: e2e-pg-pw
+      LLMPOD_PG_DATABASE: llmpod
+      LLMPOD_REDIS_HOST: redis
+      LLMPOD_REDIS_PORT: "6379"
+      LLMPOD_REDIS_PASSWORD: e2e-redis-pw
+      LLMPOD_WEBSERVER_HOST: "0.0.0.0"
+      LLMPOD_WEBSERVER_PORT: "8080"
+      LLMPOD_ADMIN_USER: admin
+      LLMPOD_ADMIN_PASSWORD: admin
+      LLMPOD_DOCS_ENABLED: "true"
+      LLMPOD_CORS_ORIGINS: '["*"]'
+      LLMPOD_TOKEN_EXPIRE_SECONDS: "86400"
+      LLMPOD_TOKEN_KEY_PREFIX: "llmpod:token:"
+      LLMPOD_LOG_LEVEL: info
+    ports:
+      - "${LLMPOD_E2E_PORT:?run.sh 必须注入 LLMPOD_E2E_PORT}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      start_period: 30s
+      interval: 5s
+      retries: 30
+      timeout: 3s
+    networks: [llmpod-test-net]
+
+volumes:
+  llmpod-test-pg:
+  llmpod-test-redis:
+
+networks:
+  llmpod-test-net:
+    driver: bridge

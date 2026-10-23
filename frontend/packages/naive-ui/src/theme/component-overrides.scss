@@ -1,0 +1,47 @@
+// ============================================================
+// Naive UI 组件覆盖
+// 集中收口无法通过 GlobalThemeOverrides 主题变量实现的组件样式补丁。
+// 能用变量(common / 组件级 theme override)解决的,优先在
+// packages/hooks/src/theme/helper.ts 处理;此处仅放 CSS 兜底。
+// ============================================================
+
+// ------ n-button--ghost 悬浮背景 ------
+// naive-ui 将 ghost 按钮的 --n-color-hover 在 Button.mjs 内联硬编码为 #0000(透明),
+// 且该变量写在元素内联 style 上,优先级最高,GlobalThemeOverrides 无法覆盖。
+// 此处直接覆盖 background-color,按 type 取运行时主题色 RGB 变量
+// (helper.ts addCssVarsToHtml 注入的 --n-<type>-color),叠加淡透明度,
+// 补齐与 secondary 一致的悬浮填充反馈。
+// 选择器额外叠加 .n-button--ghost / .n-button--<type>-type,抬高特异性至 (0,4,0)/(0,5,0),
+// 压过 naive-ui 通用的 .n-button:not(.n-button--disabled):hover (0,3,0),无需 !important。
+.n-button.n-button--ghost:not(.n-button--disabled):hover {
+  background-color: rgba(var(--n-primary-color), 0.1);
+}
+
+.n-button.n-button--primary-type.n-button--ghost:not(.n-button--disabled):hover {
+  background-color: rgba(var(--n-primary-color), 0.1);
+}
+
+.n-button.n-button--info-type.n-button--ghost:not(.n-button--disabled):hover {
+  background-color: rgba(var(--n-info-color), 0.1);
+}
+
+.n-button.n-button--success-type.n-button--ghost:not(.n-button--disabled):hover {
+  background-color: rgba(var(--n-success-color), 0.1);
+}
+
+.n-button.n-button--warning-type.n-button--ghost:not(.n-button--disabled):hover {
+  background-color: rgba(var(--n-warning-color), 0.1);
+}
+
+.n-button.n-button--error-type.n-button--ghost:not(.n-button--disabled):hover {
+  background-color: rgba(var(--n-error-color), 0.1);
+}
+
+.n-tabs-nav--line-type.n-tabs-nav--top.n-tabs-nav {
+  background-color: var(--n-color);
+  padding: 0 0 0 3.6rem;
+}
+
+.n-base-selection {
+  --n-font-size: 1.2rem !important;
+}

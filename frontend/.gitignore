@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# turbo
+.turbo/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / os
+.DS_Store
+.idea/
+*.local
+
+# env secrets
+.env.*.local
+
+# playwright mcp artifacts
+.playwright-mcp/
+
+# icon verification scratch (downloaded brand assets & trace scripts)
+.tmp-icons/
+
+# pnpm store
+.pnpm-store/
+
+# codegraph local index (SQLite)
+.codegraph/
+
+

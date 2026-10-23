@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+.zcode/
+*.swp
+*.swo
+
+# Environment
+.env
+docker/.env.deps
+docker/.env.node
+
+# Data
+data/
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+scripts/bench_idle_hello.py
+
+# turbo 构建缓存
+.turbo/
+
+# 运行时产物（PID 文件与后台日志）
+.run/
+.logs/
+llmpod/static
+
+# 正式文档按分类纳入版本控制，保留其他本地工作笔记的忽略状态
+/docs/*
+!/docs/README.md
+!/docs/usage/
+!/docs/development/
+/human-docs/
+
+# 压测 / 端到端套件（本地工作笔记与运行产物：报告、logs/、results/、.coverage，不入库）
+chaos-test/
+e2e-suite/
+
+# Claude Code 本地会话配置与 worktree（不入库）
+.claude/
+
+# 本地性能评测脚手架（不入库）
+perf-test/

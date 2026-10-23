@@ -1,0 +1,123 @@
+// ============================================================
+// 设计 Token:来源于 Figma 设计规范(Brand / Line / Fill / Text)
+// 命名约定:--c-<语义>,与 naive 运行时变量 --n-* 隔离
+// 说明:主题色(primary/info/success/warning/error)走运行时 --n-* 动态变量,
+//       此处仅定义中性/功能/装饰类固定 token。
+// ============================================================
+
+:root {
+  /* ===== 文字色 Text ===== */
+  --c-strong: #000000; // Text-5 标题/强调
+  --c-default: #606266; // Text-4 正文
+  --c-secondary: #a8a8a8; // Text-3 次要信息
+  --c-tertiary: #c7c7c7; // Text-2 占位/未输入提示
+  --c-disabled: #c7c7c7; // Text-2 禁用态
+  --c-inverse: #ffffff; // Text-1 反色文字(深底用)
+  --c-icon: #7a7a7a; // Fill-11 图标默认色
+
+  /* ===== 线条色 Line ===== */
+  --c-line: #f2f2f2; // Line-1 分割线
+  --c-line-strong: #e9e9e9; // Line-2 按钮/卡片边框
+  --c-line-glass: rgba(255, 255, 255, 0.1); // Line-3 玻璃态边框
+
+  /* ===== 填充/背景 Fill / Background ===== */
+  --c-fill-1: #ffffff; // Fill-1 纯白容器底
+  --c-fill-2: #fbfbfd; // Fill-2 表头
+  --c-fill-3: #f9f9ff; // Fill-3 侧边栏选中底
+  --c-fill-4: #f7f7f7; // Fill-4 次级容器底/按钮底
+  --c-page: #f5f5f6; // Background 页面级背景
+  --c-brand-dark: #0f1219; // Brand2 登录页深底
+  --c-glass: rgba(255, 255, 255, 0.05); // Fill-15 卡片玻璃底
+
+  /* ===== Tag 底色(固定语义,不随主题色变化) ===== */
+  --c-tag-cyan: #efffff; // Fill-5
+  --c-tag-red: #fff1f1; // Fill-6
+  --c-tag-purple: #f3f3ff; // Fill-7
+  --c-tag-pink: #ffeef4; // Fill-8
+  --c-tag-blue: #f3f8ff; // Fill-9
+  --c-tag-teal: #e5fffe; // Fill-10
+
+  /* ===== 装饰/状态固定色 ===== */
+  --c-accent-blue: #447ffe; // Text-9 Tag 蓝文字
+  --c-accent-teal: #27bab0; // Text-10 Tag 青文字
+  --c-switch: #07c160; // Fill-12 开关开启
+  --c-progress: #ffb357; // Fill-13 进度条
+
+  /* ===== 文字安全语义色(窄屏卡片等小字场景) =====
+     上方语义色是为「填充/描边」设计的,直接当文字色仅 2.62–3.23:1,不达 WCAG 正文 4.5:1。
+     下列变体保持色相与彩度不变,只沿 OKLch 的 L 轴朝远离背景方向移动,
+     按「卡片底 + 选中卡底」这一最差背景求解(而非只算白底)。
+     原值继续用于底色/描边/图标,两者职责分离。 */
+  --c-success-text: #008412; // 4.51:1 入账 / 成功
+  --c-error-text: #d82c35; // 4.51:1 出账 / 失败
+  --c-warning-text: #b35800; // 4.51:1 处理中 / 预警
+  --c-info-text: #316ae7; // 4.51:1 提示
+  --c-warning-mark: #d57700; // 边轨等非文字标记,仅需 3:1
+
+  /* 主色的两种角色:--c-primary(运行时注入)兼作文字/描边与实心填充底。
+     选中态卡片底/边由其派生,跟随 theme-lab 改色联动。 */
+  --c-primary-tint: rgba(var(--n-primary-color), 0.05); // 选中卡底
+  --c-primary-edge: rgba(var(--n-primary-color), 0.34); // 选中卡边
+  /* 正文级主色文字:亮色下主色本身已达 5.91:1,直接沿用并跟随主题色 */
+  --c-primary-text: var(--c-primary);
+}
+
+// ============================================================
+// 暗色模式覆盖
+// 注:图片仅提供 light 值,以下 dark 值基于设计常识推断
+//     (文字反转、线条/填充转半透明白、Tag 底转对应文字色低透明度)
+//     建议后续与设计师校准。
+// ============================================================
+html.dark {
+  /* ===== 文字色(反转:深底浅字) ===== */
+  --c-strong: rgba(255, 255, 255, 0.95);
+  --c-default: rgba(255, 255, 255, 0.82);
+  --c-secondary: rgba(255, 255, 255, 0.55);
+  --c-tertiary: rgba(255, 255, 255, 0.4);
+  --c-disabled: rgba(255, 255, 255, 0.35);
+  --c-inverse: #18181c;
+  --c-icon: rgba(255, 255, 255, 0.5);
+
+  /* ===== 线条色 ===== */
+  --c-line: rgba(255, 255, 255, 0.08);
+  --c-line-strong: rgba(255, 255, 255, 0.14);
+  --c-line-glass: rgba(255, 255, 255, 0.1);
+
+  /* ===== 填充/背景 ===== */
+  --c-fill-1: #18181c;
+  --c-fill-2: rgba(255, 255, 255, 0.04);
+  --c-fill-3: rgba(255, 255, 255, 0.06);
+  --c-fill-4: rgba(255, 255, 255, 0.06);
+  --c-page: #13131a;
+  --c-brand-dark: #0f1219;
+  --c-glass: rgba(255, 255, 255, 0.05);
+
+  /* ===== Tag 底色(暗色:降饱和、对应文字色低透明度) ===== */
+  --c-tag-cyan: rgba(39, 186, 176, 0.14);
+  --c-tag-red: rgba(255, 85, 85, 0.14);
+  --c-tag-purple: rgba(74, 58, 255, 0.16);
+  --c-tag-pink: rgba(255, 99, 158, 0.14);
+  --c-tag-blue: rgba(68, 127, 254, 0.14);
+  --c-tag-teal: rgba(39, 186, 176, 0.14);
+
+  /* ===== 装饰/状态(暗色微调亮度) ===== */
+  --c-accent-blue: #5a92fe;
+  --c-accent-teal: #3ac8bf;
+  --c-switch: #07c160;
+  --c-progress: #ffb357;
+
+  /* ===== 文字安全语义色(暗底重新求解,非简单反色) =====
+     暗色下 success / warning / error / info 原值在 #18181c 卡片底上即达标,直接沿用。 */
+  --c-success-text: #20a53a;
+  --c-error-text: #ff5555;
+  --c-warning-text: #e88915;
+  --c-info-text: #447ffe;
+  --c-warning-mark: #e88915;
+
+  /* 暗底选中态:透明度略提,保证浅底差异仍可辨 */
+  --c-primary-tint: rgba(var(--n-primary-color), 0.09);
+  --c-primary-edge: rgba(var(--n-primary-color), 0.45);
+  /* 暗色下主色不能直接当文字色:--n-primary-color 在暗色被压到 #125592,
+     落在 #18181c 卡底上仅 2.3:1;提亮为 #4088d3 后 4.5:1(色相彩度不变) */
+  --c-primary-text: #4088d3;
+}
