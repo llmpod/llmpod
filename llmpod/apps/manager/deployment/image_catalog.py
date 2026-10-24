@@ -281,6 +281,31 @@ def pick_image(
     return e.image if e else None
 
 
+def _sort_groups_by_version(entries: list[ImageEntry]) -> list[ImageEntry]:
+    """按 (engine, arch) 分组、组内引擎版本从新到旧；无版本条目排在组尾。
+
+    前端镜像版本下拉按本条列表的顺序首次出现去重展示，组内降序才能让最新版本排在最前。
+    同版本的多驱动/多卡变体保持 JSON 声明顺序。
+    """
+    groups: dict[tuple[str, str], list[ImageEntry]] = {}
+    for entry in entries:
+        groups.setdefault((entry.engine, entry.arch), []).append(entry)
+
+    ordered: list[ImageEntry] = []
+    for group in groups.values():
+        versioned: list[tuple[tuple[int, ...], ImageEntry]] = []
+        unversioned: list[ImageEntry] = []
+        for entry in group:
+            if entry.engine_version:
+                versioned.append((_ver_key(entry.engine_version), entry))
+            else:
+                unversioned.append(entry)
+        versioned.sort(key=lambda pair: pair[0], reverse=True)
+        ordered.extend(entry for _, entry in versioned)
+        ordered.extend(unversioned)
+    return ordered
+
+
 def list_entries(
     *,
     engine: str | None = None,
@@ -289,7 +314,7 @@ def list_entries(
     gpu_model: str | None = None,
     driver_version: str | None = None,
 ) -> list[ImageEntry]:
-    """列举（端点用）：按给定维度过滤，不做 specificity 强制排序（保持 catalog 顺序）。"""
+    """列举（端点用）：按给定维度过滤，组内引擎版本从新到旧（无版本条目置组尾）。"""
     out: list[ImageEntry] = []
     for e in _load():
         if engine is not None and e.engine != engine:
@@ -310,7 +335,7 @@ def list_entries(
         if not _driver_ok(e.driver, driver_version):
             continue
         out.append(e)
-    return out
+    return _sort_groups_by_version(out)
 
 
 def resolve_image_ref(
