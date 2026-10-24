@@ -1,4 +1,4 @@
-.PHONY: dev dev-proxy dev-node set-ip test test-e2e lint format setup db-reset db-migrate db-revision bump-version deps-up deps-down docker-build push push-version node-up node-build-up frontend-install frontend-build frontend-dev
+.PHONY: dev dev-proxy dev-node set-ip test test-e2e lint format setup db-reset db-migrate db-revision bump-version deps-up deps-down docker-build node-up node-build-up frontend-install frontend-build frontend-dev
 
 DC_DEPS := docker compose -f docker/docker-compose.deps.yml --env-file docker/.env.deps
 
@@ -117,20 +117,11 @@ deps-up: .env docker/.env.deps
 deps-down:
 	$(DC_DEPS) down
 
-# ===== 镜像构建 / 发布 =====
+# ===== 镜像构建 =====
 
 # 构建镜像（本地 node 容器 / 推 registry 前）；APP_VERSION 进 OCI label
 docker-build:
 	docker build -f docker/Dockerfile --build-arg APP_VERSION=$(VERSION) -t llmpod:latest .
-
-# 推镜像（本机 docker push 直连被墙，走 proxy-push/skopeo 经代理）。
-# latest 与版本 tag 同仓库双推：检测更新按日历版本号比较版本 tag，发版必须推。
-# 切私有 registry 改 PUSH_REGISTRY（勿只改一处——版本 tag 推错仓库会让新装节点
-# 拉不到同代镜像）。先构建再推：直接推会把上一次构建的旧镜像打成新版本 tag。
-PUSH_REGISTRY ?= docker.io/btpanel/llmpod
-push push-version: docker-build
-	proxy-push llmpod:latest $(PUSH_REGISTRY):latest
-	proxy-push llmpod:latest $(PUSH_REGISTRY):$(VERSION)
 
 # ===== 节点容器（本地 docker 起 node，连本机 manager ws://localhost:8080）=====
 # 与 dev-node 互斥：都代表「本机这个节点」，共享 data/node_id + data/node_token，
