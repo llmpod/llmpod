@@ -46,7 +46,7 @@ flowchart LR
 ### 启动后端
 
 ```bash
-git clone https://cnb.cool/btpanel/llmpod.git
+git clone https://github.com/llmpod/llmpod.git
 cd llmpod
 make setup
 ```

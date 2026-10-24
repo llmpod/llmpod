@@ -10,7 +10,7 @@
 [![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?logo=docker&logoColor=white)](docs/usage/deployment.md)
 [![QQ 交流群：836253774](https://img.shields.io/badge/QQ交流群-836253774-12B7F5)](https://qm.qq.com/q/o9aWnbPMnS)
 
-[官网](https://llmpod.ai/) · [源码仓库](https://cnb.cool/btpanel/llmpod) · [功能特性](#功能特性) · [快速开始](#快速开始) · [文档](#文档) · [QQ 交流群](https://qm.qq.com/q/o9aWnbPMnS)
+[官网](https://llmpod.ai/) · [功能特性](#功能特性) · [快速开始](#快速开始) · [文档](#文档) · [QQ 交流群](https://qm.qq.com/q/o9aWnbPMnS)
 
 </div>
 
@@ -131,7 +131,7 @@ curl -fsSL https://llmpod.ai/src/download/install.sh -o install.sh && sudo bash 
 
 ## 参与贡献
 
-欢迎通过[源码仓库](https://cnb.cool/btpanel/llmpod)提交问题、改进文档或贡献代码。
+欢迎提交问题、改进文档或贡献代码。
 
 - **反馈问题**：提供版本、部署方式、复现步骤及相关日志；涉及模型部署时，附上设备、驱动与推理镜像信息。提交前请移除日志中的 API Key、密码及其他敏感数据。
 - **提出功能建议**：说明使用场景、遇到的问题和期望行为；较大的变更建议先通过 Issue 讨论。
