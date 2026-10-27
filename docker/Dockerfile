@@ -72,12 +72,9 @@ RUN uv sync --frozen --no-dev --extra node
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
 ARG PYTHON_VERSION=3.12
-# 版本号进 OCI label；运行时版本读源码 llmpod/__init__.py 的 __version__。
-# make docker-build 自动传 --build-arg APP_VERSION（见 Makefile）。
-ARG APP_VERSION=dev
+# 镜像版本以发布的 tag 为准；运行时版本读源码 llmpod/__init__.py 的 __version__。
 LABEL org.opencontainers.image.title="llmpod" \
       org.opencontainers.image.description="LLMPod —— AI 推理网关平台 (管理端 + API 网关 + 节点代理)" \
-      org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.source="https://github.com/LLMPPOD-Team/llmpod" \
       createdBy="bt_apps"
 

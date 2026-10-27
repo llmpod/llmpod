@@ -38,7 +38,7 @@ _SAFE_RE = r"[A-Za-z0-9._:/@,-]{0,300}"
 # 环境默认值兜底（容器名/卷名）
 DEFAULT_CONTAINER_NAME = "llmpod-node"
 DEFAULT_DATA_VOLUME = "llmpod-node-data"
-# 默认镜像跟随 manager 自身版本（official_image_ref = btpanel/llmpod:<__version__>，
+# 默认镜像跟随 manager 自身版本（official_image_ref = 官方镜像:<__version__>，
 # 发版纪律保证每个版本号都有对应 tag）：beta/test 管理器引导出的节点与自身同代，
 # 不再被写死的 :latest 拉回 stable 旧版。显式传 image= 或目标机 env
 # LLMPOD_NODE_IMAGE 仍可覆盖（本地构建 tag / 私有 registry）。

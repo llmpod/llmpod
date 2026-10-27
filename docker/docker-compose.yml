@@ -62,17 +62,11 @@ services:
     networks: [llmpod_net]
 
   webserver:
-    # 官方发布镜像（Makefile push-version 双推 版本tag+latest）；本地 --build
-    # 构建会以此 tag 落地，不与官方发布冲突（pull 时覆盖为远端版本）
-    image: btpanel/llmpod:latest
+    # 官方镜像仓库与 tag：均可由 .env 覆盖（LLMPOD_OFFICIAL_IMAGE / LLMPOD_IMAGE_TAG）
+    image: ${LLMPOD_OFFICIAL_IMAGE:-docker.cnb.cool/btpanel/llmpod}:${LLMPOD_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      args:
-        UV_VERSION: ${UV_VERSION:-0.5.11}
-        # OCI label 版本：make docker-build 传真实版本；compose --build 缺省 dev
-        #（本地未发布构建），发版用 make docker-build + push-version 推带版本 tag 的镜像
-        APP_VERSION: ${APP_VERSION:-dev}
     restart: unless-stopped
     command: ["webserver"]
     environment:
@@ -114,6 +108,8 @@ services:
       # 节点自动升级（默认关）：开 = manager 升级重启后节点重连对账自动跟随；
       # 关 = 只标 outdated 不下发，升级走 admin 节点页手动触发（手动不受限）
       LLMPOD_NODE_AUTO_UPGRADE: ${LLMPOD_NODE_AUTO_UPGRADE:-false}
+      # 官方镜像仓库（manager 自身与节点升级/引导默认拉取）：留空 = 内置默认（CNB 制品库）
+      LLMPOD_OFFICIAL_IMAGE: ${LLMPOD_OFFICIAL_IMAGE:-}
       LLMPOD_LOG_LEVEL: ${LLMPOD_LOG_LEVEL:-info}
       # 遥测开关（每日匿名遥测，仅管理端消费）：false = 后台任务不启动
       LLMPOD_TELEMETRY_ENABLED: ${LLMPOD_TELEMETRY_ENABLED:-true}
@@ -146,7 +142,7 @@ services:
   # BodyStore 本地内容寻址落在 data/request_logs（相对 /app），与 webserver
   # 共享 webserver-data 卷保证两进程读写同一路径。
   proxyserver:
-    image: btpanel/llmpod:latest
+    image: ${LLMPOD_OFFICIAL_IMAGE:-docker.cnb.cool/btpanel/llmpod}:${LLMPOD_IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["proxyserver"]
     environment:

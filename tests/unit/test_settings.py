@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from llmpod.config.settings import Settings
+from llmpod.config.settings import DEFAULT_OFFICIAL_IMAGE, Settings
 
 
 class TestSettings:
@@ -116,3 +116,14 @@ class TestSettings:
             metrics_scrape_interval_engine_slow=5,
         )
         assert s.metrics_scrape_interval_engine_slow == 30
+
+    def test_official_image_default_and_override(self):
+        """官方镜像仓库可配；空串（compose 透传）回落到默认。"""
+        assert Settings(_env_file=None).official_image == DEFAULT_OFFICIAL_IMAGE
+        assert Settings(_env_file=None, official_image="").official_image == DEFAULT_OFFICIAL_IMAGE
+        assert (
+            Settings(_env_file=None, official_image=" registry.local/llmpod ").official_image == "registry.local/llmpod"
+        )
+        assert (
+            Settings(_env_file=None, official_image="registry.local/llmpod/").official_image == "registry.local/llmpod"
+        )

@@ -37,22 +37,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import llmpod
+from llmpod.config.settings import settings
 from llmpod.models.system_config import SystemConfig
 from llmpod.utils import now_utc
 
 log = logging.getLogger("llmpod.services.version")
 
-# 官方发布镜像（产品级固定值，与 Makefile push-version 的推送目标一致）。
-# 节点升级提议的 image_ref 由此推导（版本 tag 随发版双推），不做部署配置——
-# 全平台统一走官方镜像，自建/离线分发场景引导脚本仍可指定本地 ref。
-OFFICIAL_IMAGE = "docker.io/btpanel/llmpod"
+# 官方发布镜像：默认 CNB 制品库（国内直连），发版时同一镜像同步推 Docker Hub
+# 作海外备份。节点升级提议的 image_ref 由此推导（版本 tag 随发版双推），仓库
+# 可用 LLMPOD_OFFICIAL_IMAGE 覆盖（离线/自建分发指向私有 registry），单个节点
+# 仍可用引导参数里的 image= 指定本地 ref。
+OFFICIAL_IMAGE = settings.official_image
 
 
 def official_image_ref(version: str | None = None) -> str:
     """官方镜像的版本 ref（默认当前运行版本）。
 
-    发版纪律（make push-version）保证每个版本号都有对应 tag；manager 下发
-    ``$node_upgrade`` 时用它告诉节点「拉哪个镜像能到我的版本」。
+    发版纪律保证每个版本号都有对应 tag；manager 下发 ``$node_upgrade`` 时用它
+    告诉节点「拉哪个镜像能到我的版本」。
     """
     return f"{OFFICIAL_IMAGE}:{version or llmpod.__version__}"
 

@@ -15,6 +15,7 @@ from llmpod.apps.webserver.utils.bootstrap_params import (
     _SAFE_RE,
 )
 from llmpod.core.exceptions import LLMPodValidationError
+from llmpod.services.version_service import OFFICIAL_IMAGE
 
 
 def _from_raw(**kw) -> BootstrapNodeParams:
@@ -28,8 +29,8 @@ def test_defaults_when_all_none():
     p = _from_raw()
     assert p.container_name == DEFAULT_CONTAINER_NAME == "llmpod-node"
     assert p.data_volume == DEFAULT_DATA_VOLUME == "llmpod-node-data"
-    # 默认镜像跟随 manager 当前版本（btpanel/llmpod:<__version__>，与 manager 同代）
-    assert p.image == DEFAULT_IMAGE == f"docker.io/btpanel/llmpod:{llmpod.__version__}"
+    # 默认镜像跟随 manager 当前版本（官方镜像:<__version__>，与 manager 同代）
+    assert p.image == DEFAULT_IMAGE == f"{OFFICIAL_IMAGE}:{llmpod.__version__}"
     assert p.node_ip == ""
     assert p.extra_mounts == []
     # 全默认 → 无 query 增量

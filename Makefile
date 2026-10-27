@@ -2,9 +2,6 @@
 
 DC_DEPS := docker compose -f docker/docker-compose.deps.yml --env-file docker/.env.deps
 
-# 版本号唯一来源：llmpod/__init__.py 的 __version__（pyproject 静态版本由 bump-version 同步）
-VERSION := $(shell sed -n 's/^__version__ = "\(.*\)"/\1/p' llmpod/__init__.py)
-
 # 发版改版本号（日历版本号 yy.m.d；当天追加发布 yy.m.d.n）：
 # 同步 __init__ 与 pyproject 两处并刷新 uv.lock。
 # -test 不是合法 PEP 440（uv lock 拒绝），test 通道只改 __init__.py——
@@ -119,9 +116,9 @@ deps-down:
 
 # ===== 镜像构建 =====
 
-# 构建镜像（本地 node 容器 / 推 registry 前）；APP_VERSION 进 OCI label
+# 构建镜像（本地 node 容器 / 推 registry 前）
 docker-build:
-	docker build -f docker/Dockerfile --build-arg APP_VERSION=$(VERSION) -t llmpod:latest .
+	docker build -f docker/Dockerfile -t llmpod:latest .
 
 # ===== 节点容器（本地 docker 起 node，连本机 manager ws://localhost:8080）=====
 # 与 dev-node 互斥：都代表「本机这个节点」，共享 data/node_id + data/node_token，

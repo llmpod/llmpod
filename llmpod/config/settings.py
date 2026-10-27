@@ -5,10 +5,13 @@ Node 端只需要 node_* 配置；PG/Redis/CH 的默认值不会产生影响，
 因为 Node 不会导入数据库层。
 """
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from llmpod.config.enums import AffinityFailoverPolicy
+
+# 官方镜像仓库默认值：CNB 制品库（国内直连），发版时同一镜像同步推 Docker Hub 作海外备份。
+DEFAULT_OFFICIAL_IMAGE = "docker.cnb.cool/btpanel/llmpod"
 
 
 class Settings(BaseSettings):
@@ -32,6 +35,9 @@ class Settings(BaseSettings):
     webserver_host: str = "0.0.0.0"
     webserver_port: int = 8080  # 对外端口：dev=监听口；容器部署映射两端同值并回注 env（见 docker-compose.yml 头注释）
     manager_ws_path: str = "/ws/node"
+    # 官方镜像仓库（manager 自身与节点升级/引导默认拉取）：离线/自建分发可指向
+    # 私有 registry，只填仓库地址、不带 tag；空值按默认处理（compose 未配置时会透传空串）。
+    official_image: str = DEFAULT_OFFICIAL_IMAGE
 
     # ===== API 网关（proxyserver，v2）=====
     proxy_host: str = "0.0.0.0"  # 监听绑定地址，只管 bind、不进对客 URL
@@ -135,6 +141,14 @@ class Settings(BaseSettings):
     metrics_scrape_interval_engine_slow: int = 30
     # metric_rollup 保留期（天），超期桶由清理循环删除
     metrics_retention_days: int = 90
+
+    @field_validator("official_image", mode="before")
+    @classmethod
+    def _empty_official_image_uses_default(cls, v):
+        """空串按默认处理（compose 未配置时会透传空字符串），尾部斜杠去掉（只填仓库地址）。"""
+        if isinstance(v, str):
+            v = v.strip().rstrip("/")
+        return v or DEFAULT_OFFICIAL_IMAGE
 
     @model_validator(mode="after")
     def _backfill_scrape_intervals(self) -> "Settings":
