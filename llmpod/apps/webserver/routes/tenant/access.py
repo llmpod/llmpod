@@ -105,6 +105,17 @@ async def _load_tenant_role(db: AsyncSession, role_id: int, tenant_id: int) -> R
     return role
 
 
+async def _get_role_by_name(db: AsyncSession, tenant_id: int, name: str) -> Role | None:
+    """按 (tenant_id, name) 查角色。
+
+    角色名同租户唯一是应用层约定（无 DB 唯一约束），``limit(1)`` 让存量同名脏数据
+    下查重仍返回命中而非多行报错。
+    """
+    return (
+        await db.execute(select(Role).where(Role.tenant_id == tenant_id, Role.name == name).limit(1))
+    ).scalar_one_or_none()
+
+
 @router.get("/roles", response_model=Result[list[RoleDetailOut]], summary="列出本租户角色")
 async def list_roles(
     db: AsyncSession = Depends(get_db),
@@ -132,17 +143,15 @@ async def create_role(
     user: SessionData = Depends(get_current_user),
 ):
     """在当前租户下创建自定义角色（``is_builtin=False``）。"""
+    if await _get_role_by_name(db, tenant_id, request.name) is not None:
+        raise Conflict("该角色名已存在")
     role = Role(
         tenant_id=tenant_id,
         name=request.name,
         is_builtin=False,
     )
     db.add(role)
-    try:
-        await db.flush()
-    except IntegrityError:
-        await db.rollback()
-        raise Conflict("该角色名已存在")
+    await db.flush()
     await db.commit()
     # 新建角色尚无授权，permission_ids 必为空，直接置默认，避免空 IN 查询
     role.permission_ids = []
@@ -168,6 +177,11 @@ async def update_role(
         raise LLMPodValidationError("未提供任何待更新字段")
 
     role = await _load_tenant_role(db, role_id, tenant_id)
+    # 保持原名不视为冲突；改名时才查重（存量同名脏数据下也不误报）
+    if request.name != role.name:
+        dup = await _get_role_by_name(db, tenant_id, request.name)
+        if dup is not None:
+            raise Conflict("该角色名已存在")
     role.name = request.name
     await db.flush()
     await db.commit()

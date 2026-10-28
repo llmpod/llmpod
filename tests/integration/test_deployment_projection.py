@@ -18,8 +18,11 @@ from llmpod.models.model_deployment import ModelDeployment
 from llmpod.models.model_deployment_instance import ModelDeploymentInstance
 from llmpod.models.model_deployment_replica import ModelDeploymentReplica
 from llmpod.models.model_endpoint import ModelEndpoint
+from llmpod.models.node import Node
 from llmpod.models.route_binding import RouteBinding
 from llmpod.services import deployment_projection
+from llmpod.services.node_service import mark_node_offline, register_node
+from llmpod.tunnel.schemas.system import NodeReport
 
 from _fakes import FakeSession
 
@@ -243,6 +246,192 @@ class TestProjectionChain:
         assert engines["eng-p"].status == "down"
         assert engines["eng-d"].status == "ready"
         assert rep.status == "down"  # P 死 ⇒ 整份死，D 虽 ready 也不 serving
+        assert dep.health_status == "degraded"
+
+
+# ---- 节点离线感知投影 ----
+
+
+def _mk_node(session, node_id: str, *, status: str):
+    return session.preload(Node(id=node_id, cluster_id=1, hostname=node_id, ip="0.0.0.0", status=status))
+
+
+class TestNodeOfflineAwareProjection:
+    """节点离线感知：宿主节点离线的分片按不可服务投影——引擎/副本判死、端点摘流、
+    健康灯降级；节点回线（register_node）即恢复。容器行（权威依据）不动，
+    自愈触发集（Instance.status）不因此扩大。
+
+    触发点在状态翻转写点上：mark_node_offline / register_node 翻完 Node.status
+    后就地重算（reproject_after_node_transition），bootstrap 回调零改动。
+    """
+
+    async def test_mark_node_offline_reprojects_to_down(self):
+        session = FakeSession()
+        dep, rep, eng, shards, ep = _mk_stack(session)
+        for s in shards:
+            s.assigned_node = "n1"
+        _mk_node(session, "n1", status="online")
+
+        await mark_node_offline("n1", session)
+
+        assert eng.status == "down"
+        assert rep.status == "down"
+        assert ep.health_status == "down"
+        assert dep.health_status == "degraded"
+        # 权威依据不动：分片容器态维持 READY（节点回来 monitor 首扫再对真实死容器收敛）
+        assert all(s.status == "READY" for s in shards)
+
+    async def test_register_node_restores_projection(self):
+        session = FakeSession()
+        dep, rep, eng, shards, ep = _mk_stack(session)
+        for s in shards:
+            s.assigned_node = "n1"
+        _mk_node(session, "n1", status="online")
+        await mark_node_offline("n1", session)
+        assert ep.health_status == "down"
+
+        await register_node("n1", 1, NodeReport(hostname="n1"), session)
+
+        assert eng.status == "ready"
+        assert rep.status == "serving"
+        assert ep.health_status == "healthy"
+        assert dep.health_status == "healthy"
+        assert all(s.status == "READY" for s in shards)
+
+    async def test_offline_node_only_degrades_own_replica(self):
+        """跨节点双副本：仅离线节点上的副本判死摘流，另一副本继续 serving。"""
+        session = FakeSession()
+        dep = session.preload(
+            ModelDeployment(
+                deployment_id="dep-2n",
+                cluster_id=1,
+                name="d2",
+                model_id=1,
+                engine="vllm",
+                status="running",
+                phase="RUNNING",
+                health_status="healthy",
+            )
+        )
+        rows = {}
+        for tag, node_id in (("a", "n-a"), ("b", "n-b")):
+            rep = session.preload(
+                ModelDeploymentReplica(
+                    replica_id=f"rep-{tag}",
+                    deployment_id=dep.deployment_id,
+                    seq=ord(tag) - ord("a"),
+                    status="serving",
+                )
+            )
+            eng = session.preload(
+                ModelDeploymentInstance(
+                    instance_id=f"eng-{tag}",
+                    replica_id=f"rep-{tag}",
+                    role="full",
+                    tp=1,
+                    pp=1,
+                    nnodes=1,
+                    status="ready",
+                )
+            )
+            session.preload(
+                Instance(
+                    instance_id=f"i-{tag}",
+                    deployment_id=dep.deployment_id,
+                    model_deployment_instance_id=f"eng-{tag}",
+                    role="head",
+                    rank=0,
+                    status="READY",
+                    assigned_node=node_id,
+                    spec={"node_rank": 0},
+                )
+            )
+            ep = session.preload(
+                ModelEndpoint(
+                    id=ord(tag),
+                    deployment_id=dep.deployment_id,
+                    model_deployment_replica_id=f"rep-{tag}",
+                    engine_type="vllm",
+                    protocol="openai",
+                    api_base=f"http://10.0.1.{ord(tag)}/v1",
+                    served_model="m",
+                    name=f"m-{tag}",
+                    health_status="healthy",
+                )
+            )
+            rows[tag] = (rep, eng, ep)
+            _mk_node(session, node_id, status="online")
+
+        await mark_node_offline("n-b", session)
+
+        assert rows["a"][0].status == "serving"
+        assert rows["a"][2].health_status == "healthy"  # 幸存副本端点仍在流
+        assert rows["b"][0].status == "down"
+        assert rows["b"][2].health_status == "down"
+        assert dep.health_status == "degraded"
+
+    async def test_regular_recalc_keeps_offline_down(self):
+        """常规重算不洗白离线：摘流后任意普通 project_upwards（容器上报/扩缩等
+        有机触发路径）仍按当前 OFFLINE 节点集收敛——离线口径不依赖翻转写点的
+        一次性事件状态，每次重算自查。"""
+        session = FakeSession()
+        dep, rep, eng, shards, ep = _mk_stack(session)
+        for s in shards:
+            s.assigned_node = "n1"
+        _mk_node(session, "n1", status="online")
+        await mark_node_offline("n1", session)
+        assert ep.health_status == "down"
+
+        await deployment_projection.project_upwards(session, dep.deployment_id)
+
+        assert eng.status == "down"
+        assert ep.health_status == "down"
+        assert dep.health_status == "degraded"
+
+    async def test_engine_spanning_nodes_down_when_one_offline(self):
+        """多机引擎（head@n-a + worker@n-b）任一节点离线 ⇒ 整引擎判死。"""
+        session = FakeSession()
+        dep, rep, eng, shards, ep = _mk_stack(session, shard_statuses=("READY", "READY"))
+        shards[0].assigned_node = "n-a"
+        shards[1].assigned_node = "n-b"
+        _mk_node(session, "n-a", status="online")
+        _mk_node(session, "n-b", status="online")
+
+        await mark_node_offline("n-b", session)
+
+        assert eng.status == "down"
+        assert rep.status == "down"
+        assert ep.health_status == "down"
+        assert dep.health_status == "degraded"
+
+    async def test_legacy_no_replica_rows_degrades(self):
+        """无副本行旧数据：健康灯按容器口径兜底，节点离线同样降级。"""
+        session = FakeSession()
+        dep = session.preload(
+            ModelDeployment(
+                deployment_id="dep-legacy-off",
+                cluster_id=1,
+                name="lo",
+                model_id=1,
+                engine="vllm",
+                status="running",
+                phase="RUNNING",
+                health_status="healthy",
+            )
+        )
+        session.preload(
+            Instance(
+                instance_id="i-lo",
+                deployment_id=dep.deployment_id,
+                status="READY",
+                assigned_node="n-off",
+                spec={},
+            )
+        )
+        _mk_node(session, "n-off", status="online")
+
+        await mark_node_offline("n-off", session)
+
         assert dep.health_status == "degraded"
 
 

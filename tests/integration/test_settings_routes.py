@@ -73,6 +73,7 @@ class TestPublicSettings:
         assert data["logo"] is None
         assert data["maintenanceMode"] is False
         assert data["maintenanceMessage"] is None
+        assert data["telemetryEnabled"] is True  # 遥测开关键恒存在，缺省=开
 
 
 class TestAdminSettings:
@@ -152,6 +153,50 @@ class TestAdminSettings:
 
         response = await client.post("/api/v1/admin/settings/update", json={"maintenanceMode": True})
         assert response.status_code == 403
+
+    async def test_update_telemetry_toggle(self, client: AsyncClient, monkeypatch):
+        """关遥测开关：False 直通 service（exclude_unset 不剔除假值），响应回显关。"""
+        captured = {}
+
+        async def fake_update(db, changes, updated_by):
+            captured["changes"] = changes
+            return SettingsPayload(telemetryEnabled=changes["telemetryEnabled"], siteName="库中保留")
+
+        monkeypatch.setattr("llmpod.apps.webserver.routes.admin.settings.update_settings", fake_update)
+        app.dependency_overrides[get_current_user] = lambda: admin_session()
+
+        response = await client.post("/api/v1/admin/settings/update", json={"telemetryEnabled": False})
+        assert response.status_code == 200
+        assert captured["changes"] == {"telemetryEnabled": False}
+        data = response.json()["data"]
+        assert data["telemetryEnabled"] is False
+        assert data["siteName"] == "库中保留"
+
+    async def test_update_telemetry_null_rejected_422(self, client: AsyncClient):
+        """显式 null 被 pydantic 请求模型先拦（布尔字段无 null 清空态）：
+        422 + VALIDATION_ERROR，data 为错误明细数组——前端可见契约。"""
+        app.dependency_overrides[get_current_user] = lambda: admin_session()
+
+        response = await client.post("/api/v1/admin/settings/update", json={"telemetryEnabled": None})
+        assert response.status_code == 422
+        body = response.json()
+        assert body["error_code"] == ErrorCode.VALIDATION_ERROR.value
+        assert body["data"][0]["loc"] == ["body", "telemetryEnabled"]
+
+    async def test_update_bool_string_coerced(self, client: AsyncClient, monkeypatch):
+        """pydantic lax 矫正现状："false"/0/1 自动转 bool 后照常生效（锁定该口径）。"""
+        captured = {}
+
+        async def fake_update(db, changes, updated_by):
+            captured["changes"] = changes
+            return SettingsPayload(**changes)
+
+        monkeypatch.setattr("llmpod.apps.webserver.routes.admin.settings.update_settings", fake_update)
+        app.dependency_overrides[get_current_user] = lambda: admin_session()
+
+        response = await client.post("/api/v1/admin/settings/update", json={"telemetryEnabled": "false"})
+        assert response.status_code == 200
+        assert captured["changes"] == {"telemetryEnabled": False}
 
 
 def _session(access_domain: str, is_superuser: bool = False) -> SessionData:

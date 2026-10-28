@@ -182,6 +182,48 @@ class TestResolveTenantId:
         assert _resolve_tenant_id(None, None, {}, tenant_user, None, None, True) == 9
 
 
+class TestAuditLabels:
+    """资源/操作 → 中文标签：命中 / 回退 / None 透传 / 词表漂移守卫。"""
+
+    def test_known_resource_and_action(self):
+        assert audit_service.resource_type_label("model_deployment") == "部署"
+        assert audit_service.resource_type_label("node") == "节点"
+        assert audit_service.action_label("upgrade_batch") == "批量升级"
+        assert audit_service.action_label("bootstrap") == "节点引导"
+
+    def test_unknown_falls_back_to_raw(self):
+        """词表开放（权限拒绝可写入任意 RBAC 串）：未命中必须回退原串，不抛异常。"""
+        assert audit_service.resource_type_label("mystery_widget") == "mystery_widget"
+        assert audit_service.action_label("wat") == "wat"
+
+    def test_none_resource_passes_through(self):
+        assert audit_service.resource_type_label(None) is None
+
+    def test_rbac_registry_covered(self):
+        """漂移守卫：RBAC 注册表的全部 resource/action 串都在标签表内——
+        权限拒绝落账会把这些串写进审计行，以后新增权限而标签没补时这里直接红。"""
+        import llmpod.permission.permissions  # noqa: F401  # 触发 PermSpec 自注册
+
+        from llmpod.permission.registry import registered_permissions
+
+        resources = {p.resource for p in registered_permissions()}
+        actions = {p.action for p in registered_permissions()}
+        assert resources <= set(audit_service._RESOURCE_TYPE_LABELS), resources - set(
+            audit_service._RESOURCE_TYPE_LABELS
+        )
+        assert actions <= set(audit_service._ACTION_LABELS), actions - set(audit_service._ACTION_LABELS)
+
+    def test_write_path_vocabulary_covered(self):
+        """漂移守卫（写路径）：全部 @audit_action 装饰点登记的 (action, resource) 都在
+        标签表内——新增审计端点忘补词表时这里直接红（运行时未命中回退英文，不炸）。"""
+        import llmpod.app  # noqa: F401  # 组装全部路由，触发装饰器登记
+
+        assert audit_service._AUDIT_WRITE_VOCAB, "路由组装后登记表不应为空"
+        for action, resource in audit_service._AUDIT_WRITE_VOCAB:
+            assert action in audit_service._ACTION_LABELS, action
+            assert resource in audit_service._RESOURCE_TYPE_LABELS, resource
+
+
 class TestListAuditLogsScope:
     """admin 视角开关：exclude_tenant_scope 在 tenant_id 缺省时过滤平台域行。
 

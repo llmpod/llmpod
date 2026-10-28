@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { h, nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
+import type { VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,17 +15,19 @@ vi.mock('@repo/hooks', async (importOriginal) => {
     ...actual,
     message: { success: vi.fn(), error: vi.fn() },
     useConfirm: vi.fn(),
+    useDialog: vi.fn(),
   }
 })
 
-import { message, useBrand, useConfirm } from '@repo/hooks'
+import { message, useBrand, useConfirm, useDialog } from '@repo/hooks'
 import { getAdminSettings, updateAdminSettings } from '@/api/settings'
 import { useSettingsStore } from '@/store/settings'
 import { routes } from '@/router/routes'
 import { useController } from '@/views/config/useController'
+import TelemetrySettings from '@/views/config/components/TelemetrySettings.vue'
 import { searchTabs } from '@/views/config/tabs'
 
-/** 回显 fixture:通用组有值,维护关闭 */
+/** 回显 fixture:通用组有值,维护关闭,遥测默认开启 */
 const SETTINGS_FIXTURE = {
   siteName: 'LLMPod 平台',
   siteDescription: '企业级推理网关',
@@ -37,6 +40,7 @@ const SETTINGS_FIXTURE = {
   loginPrimary: null,
   maintenanceMode: false,
   maintenanceMessage: null,
+  telemetryEnabled: true,
   updated_by: 1,
   updated_at: '2026-09-02T00:00:00Z',
 }
@@ -79,6 +83,22 @@ function mountController() {
 async function waitForSettingsLoaded(store: ReturnType<typeof useSettingsStore>) {
   await vi.waitFor(() => expect(store.settings).not.toBeNull())
   await nextTick()
+}
+
+/** 挂载遥测卡片(自治组件,不走 controller) */
+function mountTelemetry() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const wrapper = mount(TelemetrySettings, {
+    attachTo: document.body,
+    global: { plugins: [pinia] },
+  })
+  return { wrapper, store: useSettingsStore(pinia) }
+}
+
+/** 开关状态(取 naive NSwitch 的 aria-checked) */
+function switchChecked(wrapper: VueWrapper) {
+  return wrapper.find('[role="switch"]').attributes('aria-checked')
 }
 
 describe('config 通用设置', () => {
@@ -208,6 +228,104 @@ describe('config 维护模式', () => {
       maintenanceMode: false,
       maintenanceMessage: '数据库升级,预计 30 分钟',
     })
+    wrapper.unmount()
+  })
+})
+
+describe('config 用户体验改进计划', () => {
+  it('单开关布局:无保存按钮,退出先二次确认再提交 {telemetryEnabled:false}', async () => {
+    const { wrapper, store } = mountTelemetry()
+    await waitForSettingsLoaded(store)
+    await nextTick()
+
+    // 结构就是一个开关 + label 后的问号图标,没有保存按钮
+    expect(wrapper.findAll('.n-switch')).toHaveLength(1)
+    expect(wrapper.findAll('button').filter((btn) => btn.text().includes('保存'))).toHaveLength(0)
+    expect(wrapper.find('[aria-label="用户体验改进计划说明"]').exists()).toBe(true)
+    expect(switchChecked(wrapper)).toBe('true')
+
+    await wrapper.find('.n-switch').trigger('click')
+    await vi.waitFor(() => expect(message.success).toHaveBeenCalledWith('已退出用户体验改进计划'))
+
+    // 退出是用户可感知的行为变更:先确认,确认后只提交开关一键
+    expect(useConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '退出用户体验改进计划' }),
+    )
+    expect(vi.mocked(updateAdminSettings).mock.calls[0][0]).toEqual({ telemetryEnabled: false })
+    expect(updateAdminSettings).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('退出确认取消:不发请求,开关保持开启', async () => {
+    vi.mocked(useConfirm).mockRejectedValueOnce(new Error('cancel'))
+    const { wrapper, store } = mountTelemetry()
+    await waitForSettingsLoaded(store)
+    await nextTick()
+
+    await wrapper.find('.n-switch').trigger('click')
+    await flushPromises()
+
+    expect(useConfirm).toHaveBeenCalled()
+    expect(updateAdminSettings).not.toHaveBeenCalled()
+    expect(switchChecked(wrapper)).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('开启计划:不弹二次确认,直接提交', async () => {
+    settingsRow = { ...settingsRow, telemetryEnabled: false }
+    const { wrapper, store } = mountTelemetry()
+    await waitForSettingsLoaded(store)
+    await nextTick()
+    expect(switchChecked(wrapper)).toBe('false')
+
+    await wrapper.find('.n-switch').trigger('click')
+    await vi.waitFor(() => expect(message.success).toHaveBeenCalledWith('已加入用户体验改进计划'))
+
+    expect(useConfirm).not.toHaveBeenCalled()
+    expect(vi.mocked(updateAdminSettings).mock.calls[0][0]).toEqual({ telemetryEnabled: true })
+    wrapper.unmount()
+  })
+
+  it('回显缺省:后端未下发 telemetryEnabled 时开关默认开启', async () => {
+    // 构造旧版后端/旧缓存形状:回显不含 telemetryEnabled 键
+    settingsRow = { ...settingsRow }
+    delete (settingsRow as { telemetryEnabled?: boolean }).telemetryEnabled
+    const { wrapper, store } = mountTelemetry()
+    await waitForSettingsLoaded(store)
+    await nextTick()
+
+    expect(switchChecked(wrapper)).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('保存失败:开关回滚到切换前,不留「界面已关/后端未改」的偏差', async () => {
+    vi.mocked(updateAdminSettings).mockRejectedValueOnce(new Error('boom'))
+    const { wrapper, store } = mountTelemetry()
+    await waitForSettingsLoaded(store)
+    await nextTick()
+
+    await wrapper.find('.n-switch').trigger('click')
+    await flushPromises()
+
+    await vi.waitFor(() => expect(switchChecked(wrapper)).toBe('true'))
+    expect(message.success).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('点击问号图标新窗口打开说明文档,不再弹窗', async () => {
+    const { wrapper, store } = mountTelemetry()
+    await waitForSettingsLoaded(store)
+    await nextTick()
+
+    // 说明文案已迁到文档站:图标是外链,a11y 文案沿用原名
+    const link = wrapper.find('[aria-label="用户体验改进计划说明"]')
+    expect(link.element.tagName).toBe('A')
+    expect(link.attributes('href')).toBe('https://docs.llmpod.ai/telemetry')
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    // 跳转不占用设置区:不弹窗,也不触发保存
+    expect(useDialog).not.toHaveBeenCalled()
+    expect(updateAdminSettings).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

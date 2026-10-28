@@ -4,8 +4,8 @@
  * - 服务端注入 index.html 的 window.__LLMPOD_SETTINGS__（theme.boot.js 桥接消费，
  *   注入侧额外携带只读附加键 serverVersion / first_guide，见 LlmpodSettingsSeed）
  *
- * 11 字段全量、键序固定（后端测试锁定）；除 maintenanceMode 外均可空，
- * null / 空串 = 未配置，前端回落各自默认值。字段约束（hex / mode 枚举 /
+ * 12 字段全量、键序固定（后端测试锁定）；除 maintenanceMode / telemetryEnabled 外
+ * 均可空，null / 空串 = 未配置，前端回落各自默认值。字段约束（hex / mode 枚举 /
  * scheme 白名单 / 限长）由后端写路径净化，前端拿到即合法值。
  */
 export interface LlmpodSettings {
@@ -31,6 +31,11 @@ export interface LlmpodSettings {
   maintenanceMode: boolean
   /** 维护文案；null 时展示默认「系统维护中」 */
   maintenanceMessage: string | null
+  /**
+   * 用户体验改进计划（匿名遥测）开关；缺省 true，键必有。
+   * 旧缓存种子/旧版后端可能不带此键，消费方按 `?? true` 回落默认开启。
+   */
+  telemetryEnabled: boolean
 }
 
 declare global {

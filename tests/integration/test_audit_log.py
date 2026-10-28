@@ -173,6 +173,89 @@ class TestAuditLogQueryRoutes:
         assert captured["exclude_tenant_scope"] is True
 
 
+class TestAuditLogLabelFields:
+    """原字段中文翻译：命中译中文 / 未知回退英文 / 空资源透传 / 筛选入参仍英文。"""
+
+    @staticmethod
+    def _row(action, resource_type):
+        """全字段 fake 行（SimpleNamespace 走 from_attributes）。"""
+        return SimpleNamespace(
+            id=1,
+            actor_type="user",
+            actor_id=8,
+            actor_name="operator",
+            tenant_id=0,
+            action=action,
+            result="success",
+            resource_type=resource_type,
+            resource_id="1",
+            detail={},
+            ip_address=None,
+            created_at="2026-10-24T00:00:00Z",
+        )
+
+    async def test_admin_route_translates_fields(self, client, monkeypatch):
+        """admin 列表：action/resource_type 出参为中文，未知代码回退英文原串，
+        resource_type=None 透传 None；筛选入参原样传英文代码（DB 等值过滤）。"""
+        rows = [
+            self._row("upgrade_batch", "node"),
+            self._row("wat", "mystery"),
+            self._row("bootstrap", None),
+        ]
+        captured = {}
+
+        async def fake_list(db, *, action=None, **kw):
+            captured["action"] = action
+            return rows, len(rows)
+
+        monkeypatch.setattr("llmpod.apps.webserver.routes.admin.audit_logs.list_audit_logs", fake_list)
+
+        async def _allow(*a, **k):
+            return True
+
+        monkeypatch.setattr("llmpod.apps.webserver.auth.deps.user_has_permission", _allow)
+        app.dependency_overrides[get_current_user] = _platform_admin
+
+        response = await client.get("/api/v1/admin/audit-logs", params={"action": "upgrade_batch"})
+        assert response.status_code == 200
+        items = response.json()["data"]["items"]
+        # 命中：出参译为中文
+        assert items[0]["action"] == "批量升级"
+        assert items[0]["resource_type"] == "节点"
+        # 未知代码：回退英文原串
+        assert items[1]["action"] == "wat"
+        assert items[1]["resource_type"] == "mystery"
+        # 空资源：透传 None
+        assert items[2]["action"] == "节点引导"
+        assert items[2]["resource_type"] is None
+        # 筛选入参仍是英文代码（后端按 DB 存储值等值过滤）
+        assert captured["action"] == "upgrade_batch"
+
+    async def test_tenant_route_translates_fields(self, client, monkeypatch):
+        """tenant 列表：租户形状（AuditLogTenantOut）同样翻译。"""
+        rows = [self._row("create", "api_key")]
+
+        async def fake_list(db, **kw):
+            return rows, len(rows)
+
+        monkeypatch.setattr("llmpod.apps.webserver.routes.tenant.audit_logs.list_audit_logs", fake_list)
+
+        async def _allow(*a, **k):
+            return True
+
+        monkeypatch.setattr("llmpod.apps.webserver.auth.deps.user_has_permission", _allow)
+        app.dependency_overrides[get_current_user] = _tenant_user
+
+        response = await client.get("/api/v1/tenant/audit-logs")
+        assert response.status_code == 200
+        item = response.json()["data"]["items"][0]
+        assert item["action"] == "创建"
+        assert item["resource_type"] == "API Key"
+        # 租户形状照旧不外露 actor_type / tenant_id
+        assert "actor_type" not in item
+        assert "tenant_id" not in item
+
+
 class TestPermissionDeniedAudit:
     """权限拒绝（403）在抛 PermissionDenied 前落审计。"""
 

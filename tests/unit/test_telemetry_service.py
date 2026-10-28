@@ -43,6 +43,16 @@ def fake_db():
     return FakeSession()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_settings_cache():
+    """report_if_due 现读全局设置（get_settings 触进程级 5s TTL 缓存），用例前后清空防串值。"""
+    from llmpod.services.settings_service import clear_settings_cache
+
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
 # ---------------------------------------------------------------------------
 # 桩构造（ORM 行须填满 orm_schema 可能提取的列）
 # ---------------------------------------------------------------------------
@@ -415,6 +425,48 @@ class TestDailyGate:
         await report_if_due()  # 同日下一 tick：门控未消费，仍正常遥测
         assert len(sent) == 2
         assert fake_db.all(SystemConfig)[0].value["last_report_date"] == sent[1].reported_at.date().isoformat()
+
+    @staticmethod
+    def _switch_off(monkeypatch):
+        """把界面遥测开关 stub 为关（真 get_settings 走 TTL 缓存，stub 才能保证隔离）。"""
+        from llmpod.services.settings_service import SettingsPayload
+
+        async def fake_get_settings(db):
+            return SettingsPayload(telemetryEnabled=False)
+
+        monkeypatch.setattr(svc, "get_settings", fake_get_settings)
+
+    async def test_settings_switch_off_skips_tick(self, monkeypatch, fake_db):
+        """管理界面开关关闭：不发送，且零 DB 写——连 telemetry_instance 行都不建。"""
+        self._patch_db(monkeypatch, fake_db)
+        self._switch_off(monkeypatch)
+        from llmpod.models.system_config import SystemConfig
+
+        sent = []
+
+        async def fake_send(payload):
+            sent.append(payload)
+            return True
+
+        monkeypatch.setattr(svc, "send_report", fake_send)
+        await report_if_due()
+        assert sent == []
+        assert fake_db.all(SystemConfig) == []  # 检查位于 ensure_instance_state 之前
+
+    async def test_settings_switch_off_blocks_force(self, monkeypatch, fake_db):
+        """开关关闭时启动首轮直发（force=True）同样被拦。"""
+        self._patch_db(monkeypatch, fake_db)
+        self._switch_off(monkeypatch)
+
+        sent = []
+
+        async def fake_send(payload):
+            sent.append(payload)
+            return True
+
+        monkeypatch.setattr(svc, "send_report", fake_send)
+        await report_if_due(force=True)
+        assert sent == []
 
 
 def SystemConfig_row(value: dict):

@@ -880,7 +880,8 @@ async def reconcile_runtime_instances(deployment_id: str) -> None:
 
     TODO(探测健康)：当前触发集是「推论健康」的补集——Instance.status 非 READY 即认为
     异常（信号源为 Node monitor 容器 inspect + task 上报）。node 掉线时 monitor 停报，
-    实例仍 READY 就永远不会进本循环，部署保持 running。未来实现探测健康（周期对
+    实例仍 READY 就永远不会进本循环，部署保持 running（端点摘流/健康灯降级由投影的
+    节点离线感知承担）。未来实现探测健康（周期对
     ModelEndpoint 逐行探活 api_base/health——权威清单在端点表，非部署单值代表地址）
     后，探测失败也应并入本恢复路径（见 controller 触发点 TODO）。
     """

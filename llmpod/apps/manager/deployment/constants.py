@@ -60,7 +60,7 @@ class EngineStatus(StrEnum):
     PROVISIONING = "provisioning"  # 分片全部待启动
     STARTING = "starting"  # 分片启动中（含部分就绪）
     READY = "ready"  # 全部分片 READY（head 健康）
-    DOWN = "down"  # 任一分片死（崩溃/失败/停止）
+    DOWN = "down"  # 任一分片死（崩溃/失败/停止）或宿主节点离线（投影判死，容器行不动）
 
 
 class ReplicaStatus(StrEnum):

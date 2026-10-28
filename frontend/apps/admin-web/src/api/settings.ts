@@ -3,7 +3,7 @@ import { request } from './request'
 
 /**
  * 管理端回显数据（GET /api/v1/admin/settings）：
- * 全局设置 11 字段 + 更新元数据，不走 TTL 缓存，回显即库中最新值。
+ * 全局设置 12 字段 + 更新元数据，不走 TTL 缓存，回显即库中最新值。
  */
 export interface AdminSettingsData extends LlmpodSettings {
   /** 最后更新人用户 ID（可空） */
@@ -24,7 +24,7 @@ export function getAdminSettings(): Promise<AdminSettingsData> {
   return request({ url: '/admin/settings', method: 'GET' })
 }
 
-/** 部分更新全局设置（POST /api/v1/admin/settings/update），响应 data = 合并后全量（11 字段） */
+/** 部分更新全局设置（POST /api/v1/admin/settings/update），响应 data = 合并后全量（12 字段） */
 export function updateAdminSettings(data: SettingsUpdatePayload): Promise<LlmpodSettings> {
   return request({ url: '/admin/settings/update', method: 'POST', data })
 }

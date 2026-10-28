@@ -31,6 +31,11 @@ export function useStore() {
     }
   }
 
+  /** 遥测开关回显：缺省 true（旧缓存种子/旧版后端不带该键时按默认开启） */
+  function resolveTelemetry(settings: LlmpodSettings | null): boolean {
+    return settings?.telemetryEnabled ?? true
+  }
+
   /** 保存通用组：站点名(空白回落「LLMPod」不落 null)、描述(空串转 null=清空回落关于页默认副标) */
   function saveGeneral(model: GeneralModel) {
     return settingsStore.save({
@@ -47,5 +52,18 @@ export function useStore() {
     })
   }
 
-  return { settingsStore, toGeneralModel, toMaintenanceModel, saveGeneral, saveMaintenance }
+  /** 保存遥测开关：只提交开关一键，其余设置字段保持后端原值不动（开关即改即存，无保存按钮） */
+  function saveTelemetry(telemetryEnabled: boolean) {
+    return settingsStore.save({ telemetryEnabled })
+  }
+
+  return {
+    settingsStore,
+    toGeneralModel,
+    toMaintenanceModel,
+    resolveTelemetry,
+    saveGeneral,
+    saveMaintenance,
+    saveTelemetry,
+  }
 }

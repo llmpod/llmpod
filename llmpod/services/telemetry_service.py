@@ -26,6 +26,11 @@
 
 节奏：每小时 tick 一次，「今日（本地日期）尚未成功遥测」才构建并发送，
 成功后把当日日期落库；站点幂等键与客户端门控正好一天一行。
+
+开关双层闸：env ``LLMPOD_TELEMETRY_ENABLED`` 为部署级总闸（false = 后台
+任务不启动）；总闸放行时由管理界面「设置 → 用户体验改进计划」运行时开关
+（``settings`` 单 key 的 ``telemetryEnabled``，缺省开）控制，每个 tick 现读、
+关闭期间零采集零上报，变更于下一 tick 生效（≤1 小时）。
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ from llmpod.models.model_endpoint import ModelEndpoint
 from llmpod.models.node import Node
 from llmpod.models.route import Route
 from llmpod.models.system_config import SystemConfig
+from llmpod.services.settings_service import get_settings
 from llmpod.utils.time import now_local
 
 # 官网遥测端点（产品级固定值，随代码发版变更；不做部署配置——与更新检查
@@ -386,6 +392,10 @@ async def report_if_due(*, force: bool = False) -> None:
     force=True（启动首轮）跳过门控直发且**不落日期**——不吃当天的遥测额度，
     当天后续 tick 仍会正常再发一次并落日期。进程每次启动都直发一次（重启
     多次即多发多次，站点按日幂等，同日重复只是刷新当日行）。
+
+    界面开关（``telemetryEnabled``）关闭时不发——force 直发同样遵守；
+    检查位于 ``ensure_instance_state`` 之前，关闭期间零 DB 写（连实例
+    标识都不生成），变更于下一 tick 生效。
     """
     from llmpod.db.pg import get_db_context
 
@@ -393,6 +403,8 @@ async def report_if_due(*, force: bool = False) -> None:
     # 不会把次日日期写上而跳过整个次日
     now = now_local()
     async with get_db_context() as db:
+        if not (await get_settings(db)).telemetryEnabled:
+            return  # 界面开关关闭：不建实例标识、不采集、不发送
         state = await ensure_instance_state(db)
         if not force and state.last_report_date == now.date().isoformat():
             return

@@ -2,32 +2,13 @@ import { lazyRetryable, useTheme } from '@repo/hooks'
 import type * as echarts from 'echarts/core'
 
 /**
- * echarts(core+charts+components+renderers 约 580KB)按需加载:
+ * echarts(仅注册三屏用到的图表,实测 589KB / gzip 196KB)按需加载:
  * 图表容器就绪、数据到达后才触发,不进 dashboard 落地页首屏关键路径。
+ * 模块内静态命名导入(见 ./echarts-lazy 注释),tree-shaking 完整生效。
  * 失败即清缓存(lazyRetryable):发版后旧 chunk hash 404 时下次调用重新拉取,
  * 不会把 rejected Promise 永久缓存在模块级,导致会话内图表不可恢复。
  */
-export const ensureEcharts = lazyRetryable(async () => {
-  const [core, charts, components, renderers] = await Promise.all([
-    import('echarts/core'),
-    import('echarts/charts'),
-    import('echarts/components'),
-    import('echarts/renderers'),
-  ])
-  // 三屏按需注册(新增图表类型在此追加,保持 tree-shaking)
-  core.use([
-    charts.LineChart,
-    charts.BarChart,
-    charts.HeatmapChart,
-    components.GridComponent,
-    components.TooltipComponent,
-    components.LegendComponent,
-    components.VisualMapComponent,
-    components.GraphicComponent,
-    renderers.CanvasRenderer,
-  ])
-  return core
-})
+export const ensureEcharts = lazyRetryable(() => import('./echarts-lazy').then((mod) => mod.default))
 
 export type ChartOption = echarts.EChartsCoreOption
 

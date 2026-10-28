@@ -42,6 +42,10 @@ export default defineConfig(({ command, mode }) => {
         ),
       },
     },
+    build: {
+      // gzip 全量体积计算拖慢构建,上传/体积分析时按需临时开启
+      reportCompressedSize: false,
+    },
     server: {
       port: 5174,
       // 端口被占时直接报错退出，避免静默递增端口导致 portal proxy 目标错位

@@ -13,7 +13,6 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     LmCard: typeof import('@repo/naive-ui')['LmCard']
-    LmFooterText: typeof import('@repo/naive-ui')['LmFooterText']
     LmGlobalSearch: typeof import('@repo/naive-ui')['LmGlobalSearch']
     LmLayout: typeof import('@repo/naive-ui')['LmLayout']
     LmLogo: typeof import('@repo/naive-ui')['LmLogo']
@@ -25,7 +24,6 @@ declare module 'vue' {
     LmThemeModeCard: typeof import('@repo/naive-ui')['LmThemeModeCard']
     NAlert: typeof import('naive-ui')['NAlert']
     NAvatar: typeof import('naive-ui')['NAvatar']
-    NBadge: typeof import('naive-ui')['NBadge']
     NButton: typeof import('naive-ui')['NButton']
     NCard: typeof import('naive-ui')['NCard']
     NDatePicker: typeof import('naive-ui')['NDatePicker']
@@ -37,7 +35,6 @@ declare module 'vue' {
     NEmpty: typeof import('naive-ui')['NEmpty']
     NIcon: typeof import('naive-ui')['NIcon']
     NProgress: typeof import('naive-ui')['NProgress']
-    NSelect: typeof import('naive-ui')['NSelect']
     NSkeleton: typeof import('naive-ui')['NSkeleton']
     NSpin: typeof import('naive-ui')['NSpin']
     NSwitch: typeof import('naive-ui')['NSwitch']
@@ -55,7 +52,6 @@ declare module 'vue' {
 // For TSX support
 declare global {
   const LmCard: typeof import('@repo/naive-ui')['LmCard']
-  const LmFooterText: typeof import('@repo/naive-ui')['LmFooterText']
   const LmGlobalSearch: typeof import('@repo/naive-ui')['LmGlobalSearch']
   const LmLayout: typeof import('@repo/naive-ui')['LmLayout']
   const LmLogo: typeof import('@repo/naive-ui')['LmLogo']
@@ -67,7 +63,6 @@ declare global {
   const LmThemeModeCard: typeof import('@repo/naive-ui')['LmThemeModeCard']
   const NAlert: typeof import('naive-ui')['NAlert']
   const NAvatar: typeof import('naive-ui')['NAvatar']
-  const NBadge: typeof import('naive-ui')['NBadge']
   const NButton: typeof import('naive-ui')['NButton']
   const NCard: typeof import('naive-ui')['NCard']
   const NDatePicker: typeof import('naive-ui')['NDatePicker']
@@ -79,7 +74,6 @@ declare global {
   const NEmpty: typeof import('naive-ui')['NEmpty']
   const NIcon: typeof import('naive-ui')['NIcon']
   const NProgress: typeof import('naive-ui')['NProgress']
-  const NSelect: typeof import('naive-ui')['NSelect']
   const NSkeleton: typeof import('naive-ui')['NSkeleton']
   const NSpin: typeof import('naive-ui')['NSpin']
   const NSwitch: typeof import('naive-ui')['NSwitch']

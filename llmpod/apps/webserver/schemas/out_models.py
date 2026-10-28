@@ -15,7 +15,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from pydantic import ConfigDict, Field, create_model, BaseModel
+from pydantic import ConfigDict, Field, create_model, BaseModel, field_validator
 from sqlalchemy import inspect as sa_inspect
 
 from llmpod.apps.manager.deployment.schemas import DeploymentConfig, InstanceSpec
@@ -34,6 +34,7 @@ from llmpod.models.system_config import SystemConfig
 from llmpod.models.tenant import Tenant
 from llmpod.models.user import User
 from llmpod.models.wallet import Wallet
+from llmpod.services import audit_service
 
 # 推理部署资源模型
 from llmpod.models.model import Model
@@ -156,12 +157,44 @@ BalanceTransactionOut: type[BaseModel] = orm_schema(BalanceTransaction)
 # 审计日志：detail 已脱敏（password/token→***），tenant 侧可见字段均安全；
 # 租户侧查询已按 tenant_id 强制过滤，无跨租户泄露面。租户侧独立形状：
 # actor_type（user|system，系统内部视角）与 tenant_id（本就=自己租户，冗余）不外露。
-AuditLogOut: type[BaseModel] = orm_schema(AuditLog)
-AuditLogTenantOut: type[BaseModel] = orm_schema(
-    AuditLog,
-    exclude=["actor_type", "tenant_id"],
-    descriptions={"actor_id": "操作者用户ID（含管理员代操作，操作者名见 actor_name）"},
-)
+# action/resource_type 出参译为中文（audit_service 词表，未命中回退英文原串）；
+# 筛选入参与 DB 存储仍是英文代码，不受影响。
+class _AuditLogLabelMixin(BaseModel):
+    """审计行展示文案：action/resource_type 响应时译为中文。"""
+
+    @field_validator("action", mode="before", check_fields=False)
+    @classmethod
+    def _translate_action(cls, v):
+        return audit_service.action_label(v)
+
+    @field_validator("resource_type", mode="before", check_fields=False)
+    @classmethod
+    def _translate_resource_type(cls, v):
+        return audit_service.resource_type_label(v)
+
+
+_AUDIT_LABEL_DESCRIPTIONS = {
+    "action": "操作（出参为中文名称；筛选入参与库存储仍为英文代码）",
+    "resource_type": "资源类型（出参为中文名称；筛选入参与库存储仍为英文代码）",
+}
+
+
+class AuditLogOut(_AuditLogLabelMixin, orm_schema(AuditLog, descriptions=_AUDIT_LABEL_DESCRIPTIONS)):
+    """审计日志（平台域视角）。"""
+
+
+class AuditLogTenantOut(
+    _AuditLogLabelMixin,
+    orm_schema(
+        AuditLog,
+        exclude=["actor_type", "tenant_id"],
+        descriptions={
+            "actor_id": "操作者用户ID（含管理员代操作，操作者名见 actor_name）",
+            **_AUDIT_LABEL_DESCRIPTIONS,
+        },
+    ),
+):
+    """审计日志（租户侧形状）。"""
 
 
 class RequestLogDetailOut(RequestLogOut):

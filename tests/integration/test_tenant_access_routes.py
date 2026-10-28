@@ -18,7 +18,6 @@ from datetime import datetime, timezone
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.exc import IntegrityError
 
 from llmpod.app import app
 from llmpod.db import get_db
@@ -73,13 +72,6 @@ async def session():
     app.dependency_overrides.clear()
 
 
-def _flush_boom(s: OpSession):
-    async def _raise():
-        raise IntegrityError("INSERT ...", {}, Exception("uq_role_tenant_code"))
-
-    s.flush = _raise  # type: ignore[method-assign]
-
-
 async def _no_audit(_entry):
     return None
 
@@ -120,14 +112,32 @@ class TestRoleCrud:
         assert data["permission_ids"] == []
 
     async def test_create_role_conflict(self, client: AsyncClient, session):
-        _flush_boom(session)
-        resp = await client.post(f"{BASE}/roles", json={"name": "dup"})
+        resp = await client.post(f"{BASE}/roles", json={"name": "role-21"})
         assert resp.status_code == 409
+        assert resp.json()["error_code"] == "CONFLICT"
+        assert len(session.all(Role)) == 3  # 拒绝后不新增行（预置 21/22/23）
+
+    async def test_create_role_same_name_other_tenant_ok(self, client: AsyncClient, session):
+        """role-23 仅存在于平台域，本租户同名不冲突——查重必须带 tenant_id 过滤。"""
+        resp = await client.post(f"{BASE}/roles", json={"name": "role-23"})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["tenant_id"] == TENANT_ID
 
     async def test_update_role(self, client: AsyncClient, session):
         resp = await client.post(f"{BASE}/roles/21/update", json={"name": "renamed"})
         assert resp.status_code == 200
         assert resp.json()["data"]["name"] == "renamed"
+
+    async def test_update_role_conflict(self, client: AsyncClient, session):
+        resp = await client.post(f"{BASE}/roles/21/update", json={"name": "role-22"})
+        assert resp.status_code == 409
+        assert resp.json()["error_code"] == "CONFLICT"
+
+    async def test_update_role_keep_name_ok(self, client: AsyncClient, session):
+        """改名与原名相同不算冲突（查重排除自身）。"""
+        resp = await client.post(f"{BASE}/roles/21/update", json={"name": "role-21"})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["name"] == "role-21"
 
     async def test_update_role_empty_body_422(self, client: AsyncClient, session):
         resp = await client.post(f"{BASE}/roles/21/update", json={})

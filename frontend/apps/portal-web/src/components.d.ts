@@ -12,7 +12,6 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     LmLottie: typeof import('@repo/naive-ui')['LmLottie']
-    LmSelect: typeof import('@repo/naive-ui')['LmSelect']
     NAlert: typeof import('naive-ui')['NAlert']
     NButton: typeof import('naive-ui')['NButton']
     NIcon: typeof import('naive-ui')['NIcon']

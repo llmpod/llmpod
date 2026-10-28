@@ -365,6 +365,7 @@ def audit_action(
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        _AUDIT_WRITE_VOCAB.add((action, resource))
         sig = inspect.signature(func)
         if "user" not in sig.parameters:
             raise TypeError(
@@ -438,6 +439,70 @@ def audit_action(
         return wrapper
 
     return decorator
+
+
+# ---- 展示文案（中文）：资源/操作代码 → 审计列表页文案 ----
+# 词表是开放的：@audit_action 各路由串之外，「权限拒绝」落账（auth/deps）会写入
+# RBAC 注册表里的全量 resource/action 串，未命中的 key 一律回退英文原串。
+# 出参翻译在 webserver 的 AuditLogOut/AuditLogTenantOut（field_validator）做；
+# 筛选入参与 DB 存储仍是英文代码，本表只管展示。
+# 写路径词表登记：装饰器应用时（路由 import 期）记录 (action, resource)，漂移守卫测试
+# 据此全量断言 ⊆ 标签表——新增审计端点忘补词表时 CI 直接红（运行时未命中回退英文，不炸）。
+_AUDIT_WRITE_VOCAB: set[tuple[str, str]] = set()
+
+
+_RESOURCE_TYPE_LABELS: dict[str, str] = {
+    "node": "节点",
+    "cluster": "集群",
+    "model": "模型",
+    "model_deployment": "部署",
+    "endpoint": "端点",
+    "publish": "发布",
+    "user": "用户",
+    "tenant": "租户",
+    "access": "角色权限",
+    "api_key": "API Key",
+    "wallet": "钱包",
+    "settings": "全局设置",
+    "system": "系统配置",
+    "menus": "菜单偏好",
+    "audit_log": "审计日志",
+    "dashboard": "数据看板",
+    "gpu": "GPU",
+    "inference_debug": "在线调试",
+    "inference_image": "推理镜像",
+    "request_log": "调用日志",
+    "upload": "切片上传",
+}
+
+_ACTION_LABELS: dict[str, str] = {
+    "create": "创建",
+    "update": "更新",
+    "delete": "删除",
+    "login": "登录",
+    "logout": "登出",
+    "upgrade": "升级",
+    "upgrade_batch": "批量升级",
+    "bootstrap": "节点引导",
+    "probe": "探测",
+    "execute": "执行",
+    # 以下只会出现在「权限拒绝」行（RBAC action 串）
+    "read": "查看",
+    "write": "写入",
+    "exec": "执行",
+}
+
+
+def resource_type_label(value: str | None) -> str | None:
+    """资源类型代码 → 中文标签；None 透传 None；未命中回退英文原串。"""
+    if value is None:
+        return None
+    return _RESOURCE_TYPE_LABELS.get(value, value)
+
+
+def action_label(value: str) -> str:
+    """操作代码 → 中文标签；未命中回退英文原串。"""
+    return _ACTION_LABELS.get(value, value)
 
 
 async def list_audit_logs(

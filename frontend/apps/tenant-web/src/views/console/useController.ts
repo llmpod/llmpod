@@ -12,21 +12,13 @@ import { useAuthStore } from '@/store/auth'
 import { useStore } from './useStore'
 
 /**
- * echarts(core+charts+components+renderers 约 500KB)按需加载:
+ * echarts(仅注册 BarChart,实测 490KB / gzip 164KB)按需加载:
  * 趋势图在骨架屏卸载、数据到达后才挂载,不在首屏关键路径上静态打包。
+ * 模块内静态命名导入(见 ./echarts-lazy 注释),tree-shaking 完整生效。
  * 失败即清缓存(lazyRetryable):发版后旧 chunk hash 404 时下次调用重新拉取,
  * 不把 rejected Promise 永久缓存在模块级,导致会话内图表不可恢复。
  */
-const ensureEcharts = lazyRetryable(async () => {
-  const [core, charts, components, renderers] = await Promise.all([
-    import('echarts/core'),
-    import('echarts/charts'),
-    import('echarts/components'),
-    import('echarts/renderers'),
-  ])
-  core.use([charts.BarChart, components.GridComponent, components.TooltipComponent, renderers.CanvasRenderer])
-  return core
-})
+const ensureEcharts = lazyRetryable(() => import('./echarts-lazy').then((mod) => mod.default))
 
 /** 定时刷新间隔:工作台整屏聚合每 30s 静默拉一轮 */
 const REFRESH_INTERVAL_MS = 30_000

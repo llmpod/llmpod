@@ -16,6 +16,7 @@ from llmpod.models.node import Node
 from llmpod.models.cluster import Cluster
 from llmpod.models.gpu import Gpu
 from llmpod.services.cluster_service import get_cluster_name_map
+from llmpod.services.deployment_projection import reproject_after_node_transition
 from llmpod.services.version_service import parse_version
 from llmpod.tunnel.schemas.system import GpuInfo, NodeReport
 from llmpod.apps.webserver.schemas.out_models import GpuRuntimeOut
@@ -138,6 +139,10 @@ async def register_node(
         await _audit_ip_change(node_id, hostname, previous_ip, ip)
 
     await db.flush()
+
+    # 回线恢复面：节点重新在线 ⇒ 其上分片按可服务重算投影（离线期间被摘流的
+    # 端点回流）。与 mark_node_offline 的重算对称。
+    await reproject_after_node_transition(db, node_id)
     return Registration(node_id=node_id, is_first=is_first)
 
 
@@ -249,6 +254,10 @@ async def mark_node_offline(node_id: str, db: AsyncSession):
         gpu.status = GpuStatus.OFFLINE
 
     await db.flush()
+
+    # 离线感知投影：该节点宿主的部署按不可服务重算（引擎/副本判死、端点摘流、
+    # 健康灯降级）。容器行（权威依据）不动——自愈触发集不因此扩大，节点回线重算即恢复。
+    await reproject_after_node_transition(db, node_id)
 
 
 async def touch_node_heartbeat(node_id: str, db: AsyncSession, version: str | None = None) -> None:

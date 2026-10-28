@@ -72,9 +72,10 @@ def clear_settings_cache() -> None:
 class SettingsPayload(BaseModel):
     """全局设置载荷（camelCase 字段名即对外 API 契约）。
 
-    按消费域分四组。品牌 / 主题两组随 index.html 种子注入 localStorage
+    按消费域分组。品牌 / 主题两组随 index.html 种子注入 localStorage
     （品牌 → ``app_brand``，主题 → ``app_remote_theme``），让配置全员首屏生效。
-    除 ``maintenanceMode`` 外均可空：``None`` / 空串 = 未配置，前端回落各自默认值；
+    除布尔字段（两态语义见 ``_BOOL_FIELDS``）外均可空：
+    ``None`` / 空串 = 未配置，前端回落各自默认值；
     限长与格式约束见上方 ``_MAX_LEN`` 等常量表（勿在注释里重复，防漂移）。
     """
 
@@ -96,6 +97,14 @@ class SettingsPayload(BaseModel):
     # 维护模式：开启后登录返回 503，网关租户 Key 全拒（平台直发 Key 放行）
     maintenanceMode: bool = False
     maintenanceMessage: str | None = None  # 维护提示文案；空则回落默认文案
+
+    # 用户体验改进计划：false = 管理端每日匿名遥测停发（下一 tick 生效，≤1 小时）；
+    # 部署级总闸仍为 env LLMPOD_TELEMETRY_ENABLED（false 时后台任务不启动，本开关无效）
+    telemetryEnabled: bool = True
+
+
+# 布尔字段（两态：缺省=不动 / 真值=覆写；读侧只认真 bool，写侧非 bool raise）
+_BOOL_FIELDS = frozenset({"maintenanceMode", "telemetryEnabled"})
 
 
 def _safe_url_or_text(value: str) -> bool:
@@ -139,7 +148,7 @@ def sanitize_settings(value: Any) -> SettingsPayload:
         if name not in value or value[name] is None:
             continue
         raw = value[name]
-        if name == "maintenanceMode":
+        if name in _BOOL_FIELDS:
             if isinstance(raw, bool):
                 cleaned[name] = raw
             continue
@@ -249,9 +258,11 @@ async def update_settings(
     ``payload`` 应为调用方 ``model_dump(exclude_unset=True)`` 的产物：
 
     - 键缺省 → 保持库中值不动；
-    - 键为 ``None`` / 空串 → 清空该字段（回落前端默认）；
-    - 键有值 → 覆写；**非法值 raise 422**（非 hex 主色 / 非法 mode / 危险 scheme /
-      超长），绝不静默清空已存的合法值。
+    - 文本字段：``None`` / 空串 → 清空该字段（回落前端默认）；有值 → 严格校验后覆写；
+    - 布尔字段：只接受 ``true`` / ``false``；``None`` / 空串 / 其他类型 raise 422，
+      不支持清空；
+    - 非法值 raise 422（非 hex 主色 / 非法 mode / 危险 scheme / 超长），
+      绝不静默清空已存的合法值。
 
     合并基 = 库中当前行（非 TTL 缓存），避免并发/近时更新以过期值互相覆盖。
     本函数只 ``flush``，``commit`` 归路由层（services 不持有请求域事务边界）。
@@ -264,7 +275,7 @@ async def update_settings(
         if name not in payload:
             continue
         raw = payload[name]
-        if name == "maintenanceMode":
+        if name in _BOOL_FIELDS:
             if not isinstance(raw, bool):
                 _raise_invalid(name, raw, "需布尔值")
             merged[name] = raw

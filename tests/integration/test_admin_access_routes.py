@@ -18,7 +18,6 @@ from datetime import datetime, timezone
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.exc import IntegrityError
 
 from llmpod.app import app
 from llmpod.config.constants import PLATFORM_TENANT_ID
@@ -73,15 +72,6 @@ async def session():
     app.dependency_overrides[get_current_user] = lambda: admin_session()
     yield s
     app.dependency_overrides.clear()
-
-
-def _flush_boom(s: OpSession):
-    """把会话 flush 换成 IntegrityError（模拟唯一约束冲突 → 路由 409 分支）。"""
-
-    async def _raise():
-        raise IntegrityError("INSERT ...", {}, Exception("uq_role_tenant_code"))
-
-    s.flush = _raise  # type: ignore[method-assign]
 
 
 async def _no_audit(_entry):
@@ -154,15 +144,32 @@ class TestRoleCrud:
         assert any(r.id == data["id"] for r in session.all(Role))
 
     async def test_create_role_conflict(self, client: AsyncClient, session):
-        _flush_boom(session)
-        resp = await client.post("/api/v1/admin/access/roles", json={"name": "dup"})
+        resp = await client.post("/api/v1/admin/access/roles", json={"name": "role-11"})
         assert resp.status_code == 409
         assert resp.json()["error_code"] == "CONFLICT"
+        assert len(session.all(Role)) == 3  # 拒绝后不新增行（预置 11/12/13）
+
+    async def test_create_role_same_name_other_tenant_ok(self, client: AsyncClient, session):
+        """role-13 仅存在于租户 5，平台域同名不冲突——查重必须带 tenant_id 过滤。"""
+        resp = await client.post("/api/v1/admin/access/roles", json={"name": "role-13"})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["tenant_id"] == PLATFORM_TENANT_ID
 
     async def test_update_role(self, client: AsyncClient, session):
         resp = await client.post("/api/v1/admin/access/roles/11/update", json={"name": "renamed"})
         assert resp.status_code == 200
         assert resp.json()["data"]["name"] == "renamed"
+
+    async def test_update_role_conflict(self, client: AsyncClient, session):
+        resp = await client.post("/api/v1/admin/access/roles/11/update", json={"name": "role-12"})
+        assert resp.status_code == 409
+        assert resp.json()["error_code"] == "CONFLICT"
+
+    async def test_update_role_keep_name_ok(self, client: AsyncClient, session):
+        """改名与原名相同不算冲突（查重排除自身）。"""
+        resp = await client.post("/api/v1/admin/access/roles/11/update", json={"name": "role-11"})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["name"] == "role-11"
 
     async def test_update_role_empty_body_422(self, client: AsyncClient, session):
         resp = await client.post("/api/v1/admin/access/roles/11/update", json={})

@@ -40,6 +40,10 @@ export default defineConfig(({ command, mode }) => {
         '@repo/naive-ui': fileURLToPath(new URL('../../packages/naive-ui/src', import.meta.url)),
       },
     },
+    build: {
+      // gzip 全量体积计算拖慢构建,上传/体积分析时按需临时开启
+      reportCompressedSize: false,
+    },
     server: {
       port: 5175,
       // 端口被占时直接报错退出，避免静默递增端口导致 proxy 目标错位

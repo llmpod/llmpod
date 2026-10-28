@@ -111,6 +111,21 @@ class TestSanitize:
         assert out.siteName is None
         assert out.maintenanceMode is False
 
+    def test_bool_fields_preserved_and_defaulted(self):
+        """两布尔字段显式取值原样保留（False 不被 None 过滤误伤）；缺省各自回落默认。"""
+        out = sanitize_settings({"telemetryEnabled": False, "maintenanceMode": True})
+        assert out.telemetryEnabled is False
+        assert out.maintenanceMode is True
+        # 缺省方向：遥测默认开（存量部署行为不变），维护默认关
+        empty = sanitize_settings({})
+        assert empty.telemetryEnabled is True
+        assert empty.maintenanceMode is False
+
+    def test_telemetry_non_bool_dropped(self):
+        """读侧容忍脏数据：非 bool 的 telemetryEnabled 丢弃后回落默认开（fail-open）。"""
+        for bad in ("false", 0, "yes", 1):
+            assert sanitize_settings({"telemetryEnabled": bad}).telemetryEnabled is True
+
     def test_empty_string_normalized_to_none(self):
         out = sanitize_settings({"siteName": "", "mode": ""})
         assert out.siteName is None
@@ -190,6 +205,40 @@ class TestThreeWayMerge:
         assert len(db.added) == 1
         assert db.added[0].key == "settings"
         assert db.added[0].updated_by == 2
+
+    async def test_telemetry_toggle_off_merges(self):
+        """关开关只动遥测键，其余字段保留且新值落库。"""
+        db = _FakeSession(_Row({"siteName": "x", "telemetryEnabled": True}))
+        out = await update_settings(db, {"telemetryEnabled": False}, updated_by=1)
+        assert out.telemetryEnabled is False
+        assert out.siteName == "x"
+        assert db.row.value["telemetryEnabled"] is False
+
+    async def test_telemetry_absent_key_kept(self):
+        """布尔字段同样遵守「缺省=不动」：不传 telemetryEnabled 就不改库中值。"""
+        db = _FakeSession(_Row({"telemetryEnabled": False}))
+        out = await update_settings(db, {"maintenanceMode": True}, updated_by=1)
+        assert out.telemetryEnabled is False
+        assert db.row.value["telemetryEnabled"] is False
+
+    async def test_telemetry_non_bool_raises(self):
+        """写侧纵深防御：非 bool 值 raise 且不清库中值。
+
+        HTTP 路径上显式 null / 非法串已由 pydantic 请求模型先行拦截（422），
+        此处锁定直接调 service 的防护口径（与 maintenanceMode 一致）。
+        """
+        db = _FakeSession(_Row({"telemetryEnabled": True}))
+        for bad in (None, "off", 1):
+            with pytest.raises(LLMPodValidationError):
+                await update_settings(db, {"telemetryEnabled": bad}, updated_by=1)
+        assert db.row.value["telemetryEnabled"] is True
+
+    async def test_legacy_row_defaults_telemetry_on(self):
+        """存量行（无遥测键）合并其他字段后：缺省=开且随合并写回（升级不改行为）。"""
+        db = _FakeSession(_Row({"siteName": "x"}))
+        out = await update_settings(db, {"footerText": "f"}, updated_by=1)
+        assert out.telemetryEnabled is True
+        assert db.row.value["telemetryEnabled"] is True
 
 
 class TestCache:

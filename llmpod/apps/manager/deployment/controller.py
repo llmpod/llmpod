@@ -164,10 +164,12 @@ class DeploymentController:
         # RUNNING 部署的运行期自愈：崩溃实例自动重启（reconcile_runtime_instances 自身
         # 幂等 + 双守卫，非 RUNNING / 停止竞态时 no-op）。
         #
-        # TODO(探测健康)：当前对「部署是否健康」是**推论**而非**探测**——唯一信号是
+        # TODO(探测健康)：当前对「部署是否健康」是**推论**而非**探测**——常规信号是
         # Instance.status ∈ RUNTIME_ABNORMAL（由 Node monitor 容器 inspect 上报 CRASHED
-        # 驱动）。node 掉线时 monitor 无法上报，Manager 只能假定容器还活着，部署一直显示
-        # running 直到用户 stop/delete。未来应加端点级主动探测——周期对 ModelEndpoint
+        # 驱动）；node 掉线时 monitor 无法上报，但状态翻转写点会把其宿主分片按死投影
+        # （端点摘流、健康灯降级，见 deployment_projection 节点离线感知），只是实例行
+        # 仍 READY、不会进本自愈循环——部署保持 running 由用户决定去留，节点永久离线
+        # 时 stop/delete 收敛。未来应加端点级主动探测——周期对 ModelEndpoint
         # 逐行 HTTP GET api_base/health（权威清单在端点表，不依赖部署单值 api_endpoint
         # 代表地址），探测失败同样进入本恢复循环。
         for did in runtime_dids - self._active.keys():

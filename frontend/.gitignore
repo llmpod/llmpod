@@ -26,6 +26,9 @@ pnpm-debug.log*
 # icon verification scratch (downloaded brand assets & trace scripts)
 .tmp-icons/
 
+# 慢网加载性能探测脚手架(playwright-core 探针、截图、结果 JSON)
+.tmp-perf/
+
 # pnpm store
 .pnpm-store/
 
