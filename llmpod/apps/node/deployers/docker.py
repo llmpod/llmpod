@@ -317,12 +317,17 @@ class DockerDeployer(Deployer):
         - None → None（不分配 GPU，不带 device_requests）
         - [] 空表 → [DeviceRequest(count=-1)]（全部 GPU）
         - [0, 1] → [DeviceRequest(device_ids=["0", "1"])]
+
+        capability 固定申请 ``compute + utility``：``libnvidia-ml.so``（NVML）属于
+        utility，引擎靠它探测设备、采指标。nvidia-container-toolkit 1.19 之前只认这里
+        显式申请的能力（不会被镜像里的 ``NVIDIA_DRIVER_CAPABILITIES`` 兜住），只申请
+        compute 会导致容器内 ``nvmlInit()`` 失败，引擎启动即报无法识别设备。
         """
         if gpus is None:
             return None
         if len(gpus) == 0:
-            return [DeviceRequest(count=-1, capabilities=[["compute"]])]
-        return [DeviceRequest(device_ids=[str(i) for i in gpus], capabilities=[["compute"]])]
+            return [DeviceRequest(count=-1, capabilities=[["compute", "utility"]])]
+        return [DeviceRequest(device_ids=[str(i) for i in gpus], capabilities=[["compute", "utility"]])]
 
     @staticmethod
     def _rewrite_model_host_path(host: str, store_dir: str, host_store_dir: str) -> str:

@@ -35,6 +35,9 @@ class TestSpecToRunKwargs:
         assert len(dr) == 1
         # docker SDK DeviceRequest 内部 PascalCase key（DeviceIDs）
         assert list(dr[0]["DeviceIDs"]) == ["2", "3"]
+        # utility 与 compute 同属一个能力集：NVML 只在 utility 下注入，缺了引擎
+        # 探测不到设备（老版 nvidia-container-toolkit 不认环境变量兜底）
+        assert dr[0]["Capabilities"] == [["compute", "utility"]]
 
     def test_gpus_empty_means_all(self):
         # [] 空表 = 全部 GPU（docker count=-1）
@@ -42,6 +45,7 @@ class TestSpecToRunKwargs:
         dr = kw["device_requests"]
         assert len(dr) == 1
         assert dr[0]["Count"] == -1
+        assert dr[0]["Capabilities"] == [["compute", "utility"]]
 
     def test_gpus_none(self):
         kw = _spec_to_run_kwargs(_spec(gpus=None))
