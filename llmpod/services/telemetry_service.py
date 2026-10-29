@@ -8,7 +8,7 @@
     POST https://llmpod.ai/api/telemetry/report   （无鉴权，成功恒 204）
     {
       "schema": 2,
-      "instance_id": "...",           # 首次启动生成，32 hex，存 SystemConfig
+      "instance_id": "...",           # 宿主标识派生（卸载重装同值）或随机，32 hex，存 SystemConfig
       "version": "26.9.20",
       "installed_at": "...",          # 首代定格，永不改写
       "reported_at": "...",           # 实例本地时间；站点按其日期做幂等键
@@ -36,10 +36,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import platform
+import re
 import secrets
 from datetime import date, datetime
+from pathlib import Path
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -70,10 +73,55 @@ TELEMETRY_REPORT_URL = "https://llmpod.ai/api/telemetry/report"
 # SystemConfig 存储 key；value 形状见 _state_value
 TELEMETRY_CONFIG_KEY = "telemetry_instance"
 
+# 实例 ID 形状：32 位小写 hex（derive_instance_id 的派生与随机路径同为此形；
+# 站点契约放宽到 8–64 任意字符，此处收紧以拒绝被改写成奇怪值的行）
+INSTANCE_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+
 TELEMETRY_SCHEMA_VERSION = 2
 TELEMETRY_TICK_SECONDS = 3600.0  # 每小时检查一次当日是否已报
 TELEMETRY_SEND_TIMEOUT_SECONDS = 10.0  # 单次 POST 超时
 TELEMETRY_MAX_BODY_BYTES = 512 * 1024  # 站点遥测体上限
+
+# 宿主机器标识来源，按优先级逐个试读，首个非占位值参与哈希：
+#   /etc/host-machine-id            —— compose 把宿主 /etc/machine-id 只读挂载到此处
+#   /etc/machine-id                 —— 裸机/开发直跑：本机 systemd 机器 ID
+#   /var/lib/dbus/machine-id        —— dbus 侧同值文件（前者缺失时兜底）
+#   /sys/class/dmi/id/product_uuid  —— 主板/整机 UUID（容器内经 sysfs 直读宿主值）
+# 全不可读（部分虚拟机/云主机禁用 DMI）则回退随机——强行拼软件侧标识会把
+# 「重装」混进「新装机」统计。
+_MACHINE_ID_SOURCES = (
+    "/etc/host-machine-id",
+    "/etc/machine-id",
+    "/var/lib/dbus/machine-id",
+    "/sys/class/dmi/id/product_uuid",
+)
+
+# 占位值黑名单：全零是「未生成/未配置」，03000200-… 是 oVMF/QEMU 未配置
+# UUID 时的默认值——多台机器共享同一占位值，拿来派生会把它们并成一台。
+_PLACEHOLDER_MACHINE_IDS = frozenset(
+    {
+        "0" * 32,
+        "00000000-0000-0000-0000-000000000000",
+        "03000200-0400-0500-0006-000700080009",
+    }
+)
+
+
+def derive_instance_id() -> str:
+    """从宿主机器标识派生 32 hex 实例 ID；无可用来源则随机。
+
+    首选哈希派生而非纯随机：实例身份跟着宿主机走，容器化部署卸载重装
+    （数据卷一并清掉）后仍派生出同一 ID，站点统计不把重装当新装机。
+    出站的只是加盐哈希，宿主标识原文不出机。
+    """
+    for path in _MACHINE_ID_SOURCES:
+        try:
+            raw = Path(path).read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            continue  # 来源不存在/不可读，试下一个
+        if raw and raw not in _PLACEHOLDER_MACHINE_IDS:
+            return hashlib.sha256(("llmpod:" + raw).encode()).hexdigest()[:32]
+    return secrets.token_hex(16)
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +319,8 @@ async def build_payload(db: AsyncSession, state: TelemetryInstanceState, reporte
 
 
 class TelemetryInstanceState(BaseModel):
-    """遥测实例标识。instance_id 首次启动生成后不变；installed_at 同步定格。"""
+    """遥测实例标识。instance_id 落库后沿用；行被清（卸载重装）时由宿主
+    机器标识重新派生出同值，installed_at 重新定格为本次安装时间。"""
 
     instance_id: str
     installed_at: datetime
@@ -304,7 +353,7 @@ async def ensure_instance_state(db: AsyncSession) -> TelemetryInstanceState:
             installed_at = datetime.fromisoformat(str(value.get("installed_at") or ""))
         except ValueError:
             installed_at = None
-    id_valid = 8 <= len(instance_id) <= 64
+    id_valid = instance_id and INSTANCE_ID_PATTERN.fullmatch(instance_id)
     if id_valid and installed_at is not None:
         return TelemetryInstanceState(
             instance_id=instance_id,
@@ -313,7 +362,7 @@ async def ensure_instance_state(db: AsyncSession) -> TelemetryInstanceState:
         )
     # 首次（行缺失）或内容损坏：缺啥补啥后落库
     state = TelemetryInstanceState(
-        instance_id=instance_id if id_valid else secrets.token_hex(16),
+        instance_id=instance_id if id_valid else derive_instance_id(),
         installed_at=installed_at or now_local(),
         last_report_date=(str(value.get("last_report_date") or "") if id_valid else ""),
     )

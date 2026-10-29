@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
@@ -261,7 +262,7 @@ class TestInstanceState:
 
     async def test_initial_boot_generates_and_persists(self, fake_db):
         state = await ensure_instance_state(fake_db)
-        assert len(state.instance_id) == 32  # token_hex(16) → 32 hex 字符（站点限 8–64）
+        assert len(state.instance_id) == 32  # 派生（sha256 截断）与随机（token_hex(16)）同为 32 hex
         assert state.installed_at is not None
         assert state.last_report_date == ""
         from llmpod.models.system_config import SystemConfig
@@ -330,6 +331,51 @@ class TestInstanceState:
         assert row.value["instance_id"] == original_id
         assert row.value["installed_at"] == original_installed
         assert len(fake_db.all(SystemConfig)) == 1  # 原地更新不加新行
+
+
+class TestDeriveInstanceId:
+    """宿主机器标识派生：优先级、占位值拒绝、卸载重装同值、全缺回退随机。"""
+
+    def test_derives_from_first_readable_source(self, tmp_path, monkeypatch):
+        host_id = tmp_path / "host-machine-id"
+        host_id.write_text("6c39609d71874a58a6984d07a23d436a\n")
+        monkeypatch.setattr(svc, "_MACHINE_ID_SOURCES", (str(host_id), str(tmp_path / "dbus-machine-id")))
+        derived = svc.derive_instance_id()
+        assert derived == hashlib.sha256(b"llmpod:6c39609d71874a58a6984d07a23d436a").hexdigest()[:32]
+
+    def test_skips_missing_file_to_next_source(self, tmp_path, monkeypatch):
+        """首选来源不存在：落到次选（DMI），同一来源集合内自动降级。"""
+        dmi = tmp_path / "product_uuid"
+        dmi.write_text("03000200-0400-0500-0006-000700080010\n")
+        monkeypatch.setattr(svc, "_MACHINE_ID_SOURCES", (str(tmp_path / "machine-id"), str(dmi)))
+        assert (
+            svc.derive_instance_id() == hashlib.sha256(b"llmpod:03000200-0400-0500-0006-000700080010").hexdigest()[:32]
+        )
+
+    def test_placeholder_values_rejected(self, tmp_path, monkeypatch):
+        """全零 / oVMF 默认 UUID 等占位值不参与派生（多机共享会把它们并成一台）。"""
+        all_zero = tmp_path / "machine-id"
+        all_zero.write_text("0" * 32 + "\n")
+        good = tmp_path / "product_uuid"
+        good.write_text("03000200-0400-0500-0006-000700080010\n")
+        monkeypatch.setattr(svc, "_MACHINE_ID_SOURCES", (str(all_zero), str(good)))
+        derived = svc.derive_instance_id()
+        assert derived != "0" * 32
+        assert len(derived) == 32  # 落到次选，不是随机回退也能从好来源派生
+
+    def test_all_sources_missing_falls_back_to_random(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(svc, "_MACHINE_ID_SOURCES", (str(tmp_path / "none-1"), str(tmp_path / "none-2")))
+        first = svc.derive_instance_id()
+        second = svc.derive_instance_id()
+        assert len(first) == 32 and len(second) == 32
+        assert first != second  # 随机回退，非稳定派生
+
+    def test_reinstall_same_host_derives_same_id(self, tmp_path, monkeypatch):
+        """卸载重装（行清掉重来）：同一宿主标识两次派生同值——固定实例 ID 的核心保证。"""
+        host_id = tmp_path / "host-machine-id"
+        host_id.write_text("6c39609d71874a58a6984d07a23d436a\n")
+        monkeypatch.setattr(svc, "_MACHINE_ID_SOURCES", (str(host_id),))
+        assert svc.derive_instance_id() == svc.derive_instance_id()
 
 
 class TestDailyGate:

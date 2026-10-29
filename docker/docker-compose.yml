@@ -121,6 +121,7 @@ services:
       - "${HOST_IP:-0.0.0.0}:${WEBSERVER_PORT:-8080}:${WEBSERVER_PORT:-8080}"
     volumes:
       - webserver-data:/app/data
+      - /etc/machine-id:/etc/host-machine-id:ro
       # 模型仓库（local 源上传/内容指纹/文件服务下发根）。容器内 /data/models 是
       # 集群级不变量，不作配置；本值只调宿主侧路径（manager 机大盘在别处时改）
       - ${MODEL_HOST_DIR:-/data/models}:/data/models
