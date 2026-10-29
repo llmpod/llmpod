@@ -386,11 +386,14 @@ fi
 # 互联 IP 由参数、环境变量或菜单指定；自动化安装必须传入地址。
 # 虚拟接口前缀与 collectors/system.py 保持一致。
 VIRTUAL_IFACE_PREFIXES="docker br- veth virbr kube cni flannel calico tunl cbr0"
+# Docker 自建网卡（docker0 / br-<id> / veth*）不进候选清单：管理端跑在容器里，
+# 这些地址即便同机也多半不可达，列出来只会让人配一个打不通的互联 IP。
+HIDDEN_IFACE_PREFIXES="docker br- veth"
 
-is_virtual_iface() {
-    local p
-    for p in $VIRTUAL_IFACE_PREFIXES; do
-        case "$1" in "$p"*) return 0 ;; esac
+iface_has_prefix() {
+    local prefixes="$1" iface="$2" p
+    for p in $prefixes; do
+        case "$iface" in "$p"*) return 0 ;; esac
     done
     return 1
 }
@@ -418,15 +421,15 @@ VIRT_IFACES=(); VIRT_IPS=()
 if command -v ip &> /dev/null; then
     while read -r iface addr; do
         if [ "$iface" = "lo" ] || [ -z "$addr" ] || ! valid_ipv4 "$addr"; then continue; fi
-        if is_virtual_iface "$iface"; then
+        if iface_has_prefix "$HIDDEN_IFACE_PREFIXES" "$iface"; then continue; fi
+        if iface_has_prefix "$VIRTUAL_IFACE_PREFIXES" "$iface"; then
             VIRT_IFACES+=("$iface"); VIRT_IPS+=("$addr")
         else
             REAL_IFACES+=("$iface"); REAL_IPS+=("$addr")
         fi
     done < <(ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, a, "/"); print $2, a[1]}')
-fi
-if [ ${#REAL_IPS[@]} -eq 0 ] && [ ${#VIRT_IPS[@]} -eq 0 ]; then
-    # 没有 ip 命令时从 hostname -I 获取地址。
+else
+    # 没有 ip 命令时从 hostname -I 获取地址（拿不到网卡名，无法按前缀过滤）。
     while read -r addr; do
         if [ -n "$addr" ] && valid_ipv4 "$addr"; then REAL_IFACES+=("?"); REAL_IPS+=("$addr"); fi
     done < <(hostname -I 2>/dev/null | tr ' ' '\n')
