@@ -123,6 +123,9 @@ class ReadinessConfig(BaseModel):
     initial_delay_sec: float = 0.0
     interval_sec: float = 10.0
     timeout_sec: float = 600.0
+    # 超时后容器仍在运行是否继续等：大模型冷编译/图捕获可能远超 timeout_sec，
+    # 只有容器退出（引擎崩溃）才判失败，避免把慢启动误杀成部署失败
+    wait_while_running: bool = True
 
 
 class PullImagePayload(BaseModel):

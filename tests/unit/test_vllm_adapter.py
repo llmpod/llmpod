@@ -40,6 +40,87 @@ class TestGenerateStartArgs:
         assert "--nnodes" not in args
         assert "--headless" not in args
 
+    def test_default_concurrency_args(self, adapter):
+        """合并后补平台默认：--max-num-seqs 32 + decode-only CUDA graph（两者都直接关系
+        冷启动时长——捕获尺寸随 max_num_seqs 派生）。"""
+        entry = image_catalog.ImageEntry(id="t", engine="vllm", arch="nvidia", engine_version="0.27.1", image="x")
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            entry,
+            {},
+        )
+        assert args[args.index("--max-num-seqs") + 1] == "32"
+        assert json.loads(args[args.index("--compilation-config") + 1]) == {"cudagraph_mode": "FULL_DECODE_ONLY"}
+
+    def test_old_engine_skips_cudagraph_mode(self, adapter):
+        """0.11 之前的镜像没有 cudagraph_mode 键（收到未知键会拒启）：只补并发上限。"""
+        entry = image_catalog.ImageEntry(id="t", engine="vllm", arch="nvidia", engine_version="0.9.0", image="x")
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            entry,
+            {},
+        )
+        assert "--max-num-seqs" in args
+        assert "--compilation-config" not in args
+
+    def test_unknown_engine_version_skips_cudagraph_mode(self, adapter):
+        """版本未知（无 catalog 条目）一律不补：未知键被拒启的代价远大于少一项优化。"""
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            None,
+            {},
+        )
+        assert "--max-num-seqs" in args
+        assert "--compilation-config" not in args
+
+    def test_user_overrides_concurrency_args(self, adapter):
+        """用户显式声明时让位：并发数接管；--enforce-eager 与 compilation-config 互斥。"""
+        entry = image_catalog.ImageEntry(id="t", engine="vllm", arch="nvidia", engine_version="0.27.1", image="x")
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            entry,
+            {"extra_args": ["--max-num-seqs", "128", "--enforce-eager"]},
+        )
+        assert args.count("--max-num-seqs") == 1
+        assert args[args.index("--max-num-seqs") + 1] == "128"
+        assert "--compilation-config" not in args
+
+    def test_catalog_enforce_eager_wins_over_cudagraph_default(self, adapter):
+        """catalog 条目自带 --enforce-eager 时不补 --compilation-config
+        （两者同时给 vLLM 直接拒启），并发上限仍保留。"""
+        entry = image_catalog.ImageEntry(
+            id="t",
+            engine="vllm",
+            arch="nvidia",
+            engine_version="0.27.1",
+            image="x",
+            params={"args": ["--enforce-eager"]},
+        )
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            entry,
+            {},
+        )
+        assert "--enforce-eager" in args
+        assert "--compilation-config" not in args
+        assert "--max-num-seqs" in args
+
+    def test_user_compilation_config_kept(self, adapter):
+        """用户显式给 compilation 配置：系统不注入、也不撤掉用户那条。"""
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            None,
+            {"extra_args": ["--compilation-config", '{"cudagraph_mode":"PIECEWISE"}']},
+        )
+        assert args.count("--compilation-config") == 1
+        assert args[args.index("--compilation-config") + 1] == '{"cudagraph_mode":"PIECEWISE"}'
+
     def test_task_generate_no_flag(self, adapter):
         """task=generate（默认）：无池化 flag / 无 tool-calling 之外的注入（回归守卫：防重新引入已弃用的 --task）。"""
         args = adapter.generate_start_args(
@@ -816,8 +897,12 @@ class TestBuildEnv:
         assert "GLOO_SOCKET_IFNAME" not in env
 
     def test_engine_ready_timeout(self, adapter):
+        # 与 health_check 联动但保底一小时：平台 readiness 已改成「容器活着就一直等」，
+        # 引擎自身不该更早放弃
         env = adapter.build_env(InstanceSpec(nnodes=1), Topology(), EngineConfig(), health_timeout_s=900)
-        assert env["VLLM_ENGINE_READY_TIMEOUT_S"] == "900"
+        assert env["VLLM_ENGINE_READY_TIMEOUT_S"] == "3600"
+        env = adapter.build_env(InstanceSpec(nnodes=1), Topology(), EngineConfig(), health_timeout_s=7200)
+        assert env["VLLM_ENGINE_READY_TIMEOUT_S"] == "7200"
 
     def test_cann_visible_devices_all_assigned(self, adapter):
         """cann 多卡：ASCEND_VISIBLE_DEVICES 曝全部分配的 NPU（与 device_config 挂载同口径）。

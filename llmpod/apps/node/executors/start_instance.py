@@ -11,10 +11,15 @@ Node 自治判定 Ready（Manager 只做 gate）：``deploy(spec)`` 起容器（
   loop 快失败，配合 restart_policy=no）——无 HTTP 端口的 headless worker。
 
 探活循环每 tick 先查 cancel（再查存活——避免与 STOP_INSTANCE 的 stop 竞态时把
-「被停止」误报为「崩溃」），容器退出/restart-loop/超时一律 **stop-only（不 rm）**
+「被停止」误报为「崩溃」），容器退出/restart-loop 一律 **stop-only（不 rm）**
 保留崩溃容器——日志文件随容器保留至 ``rm`` 前，前端点容器日志按钮经 RPC（
 ``NodeService.tail_log`` / ``ContainerService.logs``）即可取全量崩溃输出，无需持久化
 引擎 stdout。
+
+超时（``readiness.timeout_sec``）语义由 ``readiness.wait_while_running`` 决定：
+为真（缺省）时超时只告警、容器活着就继续等——大模型冷启动（权重加载 + 编译 +
+CUDA graph 捕获）在慢卡上可以远超预算，只有容器退出才算失败；为假时沿用旧语义，
+超时即 stop-only 保留容器并判失败。
 
 取消路径仍 stop+rm（用户主动取消，无需留痕）。崩溃/超时容器的最终清理由部署级
 ``cleanup_deployment_containers``（label 扫除）/重试时同名 409-replace 兜底——stopped
@@ -156,11 +161,19 @@ class StartInstanceExecutor(Executor):
                 return
             # 存活判定：inspect 异常（docker daemon 瞬时抖动）≠ 容器退出——跳过本轮，不误判崩溃，
             # 仅 inspect 成功且 Running=False 才算引擎崩溃（抓日志尾部后判失败，不等探活超时）。
-            # inspect 持续失败受下方 deadline 超时约束，不会无限轮询。
+            # ContainerGone 例外：容器已被外部删除，没有可等的东西，直接判失败（否则会空等
+            # 到任务看门狗）。
             exit_code: int | None = None
             inspect_ok = True
             try:
                 state = await self._deployer.inspect(container_name)
+            except ContainerGone:
+                await report(
+                    TaskStatus.FAILED,
+                    message=f"容器 {container_name} 已不存在（readiness 期间被外部删除）",
+                    instance_status=InstanceStatus.FAILED,
+                )
+                return
             except Exception as e:
                 inspect_ok = False
                 state = None
@@ -224,19 +237,30 @@ class StartInstanceExecutor(Executor):
                 stable_hits = 0
 
             if loop.time() >= deadline:
-                # 超时保留容器（只 stop 不 rm）：供 RPC 取日志排查「卡在哪」（引擎半加载等）。
-                await self._stop_container(container_name)
-                if mode == "stable_running":
-                    msg = f"readiness 超时（{timeout:.0f}s）：容器未达到连续 {_GATE_CONSECUTIVE} 次稳定运行"
+                if readiness.wait_while_running:
+                    # 容器还活着就不判失败：大模型冷启动（权重加载 + torch.compile +
+                    # CUDA graph 捕获）在慢卡上可以远超预算，只有容器退出才是真失败
+                    # （上方 inspect 分支已覆盖）。此后不再判超时，只留取消与存活两条出口。
+                    log.warning(
+                        "readiness 超过 %.0fs 仍未就绪，容器仍在运行——继续等待（容器退出才判失败）: %s",
+                        timeout,
+                        container_name,
+                    )
+                    deadline = float("inf")
                 else:
-                    msg = f"readiness 超时（{timeout:.0f}s）: {url}"
-                    if last_probe_error:
-                        msg += f"（最后一次探测: {last_probe_error}）"
-                # instance_status 必须走命名参数通道（驱动 instance 行落 FAILED）：
-                # 塞 extra 无任何消费方，实例行会停在 RUNNING，续驱/自愈只认死态行，
-                # 该分片从此无人重下发（本文件其余失败分支均走命名参数，此处对齐）
-                await report(TaskStatus.FAILED, message=msg, instance_status=InstanceStatus.FAILED)
-                return
+                    # 超时保留容器（只 stop 不 rm）：供 RPC 取日志排查「卡在哪」（引擎半加载等）。
+                    await self._stop_container(container_name)
+                    if mode == "stable_running":
+                        msg = f"readiness 超时（{timeout:.0f}s）：容器未达到连续 {_GATE_CONSECUTIVE} 次稳定运行"
+                    else:
+                        msg = f"readiness 超时（{timeout:.0f}s）: {url}"
+                        if last_probe_error:
+                            msg += f"（最后一次探测: {last_probe_error}）"
+                    # instance_status 必须走命名参数通道（驱动 instance 行落 FAILED）：
+                    # 塞 extra 无任何消费方，实例行会停在 RUNNING，续驱/自愈只认死态行，
+                    # 该分片从此无人重下发（本文件其余失败分支均走命名参数，此处对齐）
+                    await report(TaskStatus.FAILED, message=msg, instance_status=InstanceStatus.FAILED)
+                    return
             if await _sleep_cancelable(interval, cancel_event):
                 await self._cancel_cleanup(container_name, report)
                 return

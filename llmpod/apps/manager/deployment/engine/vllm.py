@@ -15,10 +15,26 @@ from llmpod.apps.manager.deployment.engine.base import (
     hf_nccl_env,
     nvidia_device_config,
 )
-from llmpod.apps.manager.deployment.image_catalog import engine_vocab
+from llmpod.apps.manager.deployment.image_catalog import engine_vocab, version_key
 from llmpod.apps.manager.deployment.schemas import DeviceConfig, EngineConfig, InstanceSpec, Topology
 from llmpod.config.enums import ModelType
 from llmpod.core.exceptions import LLMPodValidationError
+
+# 并发序列上限的平台默认值：它决定 CUDA graph 要捕获多少个 batch 尺寸（见 assemble_args）。
+DEFAULT_MAX_NUM_SEQS = 32
+
+# --compilation-config 的 cudagraph_mode 键 vLLM 0.11 起才有（更早是
+# use_cudagraph/full_cuda_graph 那一套，收到未知键会被拒启）。
+_CUDAGRAPH_MODE_MIN_VERSION = (0, 11, 0)
+
+# 引擎自身等待 worker/engine 就绪的上限（VLLM_ENGINE_READY_TIMEOUT_S）。平台侧
+# readiness 已改成「容器活着就一直等」，引擎内部不该更早放弃，故给个保底小时数；
+# 用户把健康检查超时调得更大时随之放大。
+_ENGINE_READY_TIMEOUT_FLOOR_S = 3600
+
+# 合并结果里已有任一 CUDA graph 开关时，平台不再补 --compilation-config：
+# 同时给 --enforce-eager 会让 vLLM 语义冲突拒启。
+_CUDAGRAPH_FLAGS = {"--compilation-config", "-O", "--enforce-eager"}
 
 
 class VLLMAdapter(EngineAdapter):
@@ -309,6 +325,9 @@ class VLLMAdapter(EngineAdapter):
         engine_config: EngineConfig,
         health_timeout_s: int = 600,
     ) -> dict:
+        # 引擎内部等待就绪的上限：与 health_check 联动但保底一小时（平台侧已改成
+        # 容器活着就一直等，引擎不该比平台先放弃）
+        ready_timeout = str(max(int(health_timeout_s), _ENGINE_READY_TIMEOUT_FLOOR_S))
         if (instance.gpu_arch or "nvidia") == "cann":
             # Ascend：只设适配器能定的那部分。显存分配策略（PYTORCH_NPU_ALLOC_CONF）留给
             # 镜像 catalog 声明——本层是 system 层，会盖掉 image 层，在这里写死等于让 catalog
@@ -319,13 +338,11 @@ class VLLMAdapter(EngineAdapter):
                 # 全部分配到的 NPU 逗号串——与 build_device_config 的 /dev/davinci* 挂载
                 # 同一口径：只曝第一张会让 vllm-ascend 可见设备数 < tp，多卡部署初始化必败
                 "ASCEND_VISIBLE_DEVICES": ",".join(str(i) for i in (instance.assigned_gpus or [0])),
-                # ready timeout 与 health_check.timeout_seconds 联动（与 nvidia 路径同口径）
-                "VLLM_ENGINE_READY_TIMEOUT_S": str(health_timeout_s),
+                "VLLM_ENGINE_READY_TIMEOUT_S": ready_timeout,
             }
             return env
         env = hf_nccl_env(engine_config, instance, cls.default_nccl_ifname)
-        # engine ready timeout 与 health_check.timeout_seconds 联动
-        env["VLLM_ENGINE_READY_TIMEOUT_S"] = str(health_timeout_s)
+        env["VLLM_ENGINE_READY_TIMEOUT_S"] = ready_timeout
         return env
 
     # ---- 启动参数----
@@ -436,6 +453,39 @@ class VLLMAdapter(EngineAdapter):
         """
         vram_percent = getattr(instance, "vram_percent", None) or VLLMAdapter.default_gpu_memory_utilization
         return ["--gpu-memory-utilization", str(vram_percent)]
+
+    def assemble_args(
+        self,
+        instance: InstanceSpec,
+        topology: Topology,
+        image_entry,
+        engine_params: dict,
+    ) -> list[str]:
+        """三层合并之后，再补平台默认的并发上限与 CUDA graph 模式。
+
+        放在合并之后而不是 ``generate_start_args`` 里，是因为「用户/镜像是否已经声明」
+        只有合并结果说了算；在生成侧判断看不到 image 层，会多出一套并行的让位逻辑。
+
+        - ``--max-num-seqs``：决定 CUDA graph 要捕获多少个 batch 尺寸（vLLM 缺省 256
+          → 50+ 个），直接关系冷启动时长；合并结果里没有就补 32。
+        - ``--compilation-config {"cudagraph_mode": "FULL_DECODE_ONLY"}``：只捕获 decode
+          图、prefill 不捕获，换更快的冷启动（代价是 prefill/mixed 少一层 piecewise
+          图）。该键 vLLM 0.11 起才有，版本未知一律不补——未知键会被拒启，宁可少
+          优化。已有任一 CUDA graph 开关（用户或镜像声明）时也不补。
+        """
+        args = super().assemble_args(instance, topology, image_entry, engine_params)
+        flags: set[str] = set()
+        for token in args:
+            if token.startswith("-"):
+                flags.add(token.split("=", 1)[0])
+        if "--max-num-seqs" not in flags:
+            args += ["--max-num-seqs", str(DEFAULT_MAX_NUM_SEQS)]
+        engine_version = image_entry.engine_version if image_entry else None
+        known_recent = bool(engine_version) and version_key(engine_version) >= _CUDAGRAPH_MODE_MIN_VERSION
+        is_ascend = (instance.gpu_arch or "nvidia") == "cann"  # vllm-ascend 走 --enforce-eager 语义
+        if known_recent and not is_ascend and not flags & _CUDAGRAPH_FLAGS:
+            args += ["--compilation-config", json.dumps({"cudagraph_mode": "FULL_DECODE_ONLY"})]
+        return args
 
     def generate_start_args(
         self,

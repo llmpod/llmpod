@@ -224,11 +224,13 @@ class TestExecute:
         assert dep.remove_calls == []
 
     async def test_readiness_timeout_failed(self):
+        # wait_while_running=False：旧语义，超时直接判失败（缺省已改为「容器活着就继续等」）
         readiness = {
             "url": "http://10.0.1.5:8000/health",
             "initial_delay_sec": 0,
             "interval_sec": 0.01,
             "timeout_sec": 0.02,
+            "wait_while_running": False,
         }
         dep = FakeDeployer()
 
@@ -248,6 +250,56 @@ class TestExecute:
         # 超时保留容器供 RPC 取日志排查「卡在哪」：只 stop 不 rm
         assert dep.stop_calls == ["llmpod-dep-i1"]
         assert dep.remove_calls == []
+
+    async def test_readiness_timeout_keeps_waiting_while_running(self):
+        """缺省 wait_while_running=True：容器活着就继续等，只有 cancel/容器退出才是出口。"""
+        readiness = {
+            "url": "http://10.0.1.5:8000/health",
+            "initial_delay_sec": 0,
+            "interval_sec": 0.01,
+            "timeout_sec": 0.02,
+        }
+        dep = FakeDeployer()  # 容器始终 running
+
+        async def prober(url):
+            return False
+
+        ex = StartInstanceExecutor(dep, prober=prober)
+        events, report = _collect()
+        cancel = asyncio.Event()
+        run = asyncio.create_task(ex.execute(_task(readiness=readiness), None, report, cancel))
+        await asyncio.sleep(0.2)  # 远超 timeout_sec：旧的超时路径此时早已 FAILED
+        assert not run.done(), "容器仍在运行，不应按超时判失败"
+        assert dep.stop_calls == [], "继续等待期间不应停容器"
+
+        cancel.set()
+        await asyncio.wait_for(run, timeout=1)
+        assert events[-1]["status"] == "CANCELLED"
+        # 取消路径 stop+rm（用户主动取消，无需留痕）
+        assert dep.stop_calls == ["llmpod-dep-i1"]
+        assert dep.remove_calls == [("llmpod-dep-i1", True)]
+
+    async def test_readiness_container_deleted_fails(self):
+        """readiness 期间容器被外部删除（ContainerGone）→ 立即判失败，不空等看门狗。"""
+        from llmpod.apps.node.exceptions import ContainerGone
+
+        class _Deleted(FakeDeployer):
+            async def inspect(self, name):
+                raise ContainerGone("no such container")
+
+        dep = _Deleted()
+
+        async def prober(url):
+            return False
+
+        ex = StartInstanceExecutor(dep, prober=prober)
+        events, report = _collect()
+        readiness = dict(_READINESS, interval_sec=0.01)
+        await asyncio.wait_for(ex.execute(_task(readiness=readiness), None, report, asyncio.Event()), timeout=2)
+
+        assert events[-1]["status"] == "FAILED"
+        assert "已不存在" in events[-1]["message"]
+        assert events[-1]["extra"]["instance_status"] == "FAILED"
 
     async def test_cancel_before_deploy(self):
         dep = FakeDeployer()
@@ -412,13 +464,14 @@ class TestExecuteStable:
         assert dep.remove_calls == []
 
     async def test_stable_timeout(self):
-        """始终抖动（Restarting）未达连续稳定 → 超时 FAILED。"""
+        """始终抖动（Restarting）未达连续稳定 → 超时 FAILED（wait_while_running=False 的旧语义）。"""
         dep = FakeDeployer(inspect_seq=[_stable_state(restarting=True)] * 10)
         ex = StartInstanceExecutor(dep)
         events, report = _collect()
         readiness = dict(_STABLE_READINESS)
         readiness["timeout_sec"] = 0.05
         readiness["interval_sec"] = 0.02  # 每 tick 睡 20ms，3 tick 后撞超时
+        readiness["wait_while_running"] = False
         await ex.execute(_task(readiness=readiness), None, report, asyncio.Event())
         assert events[-1]["status"] == "FAILED"
         assert "稳定运行" in events[-1]["message"]

@@ -693,7 +693,7 @@ class TestResolve:
         """镜像版本下拉按返回顺序渲染——同组内版本必须从新到旧，无版本条目排在组尾。"""
         items = list_entries(engine="vllm", arch="nvidia")
         versions = [e.engine_version for e in items if e.engine_version]
-        assert versions == sorted(versions, key=image_catalog._ver_key, reverse=True)
+        assert versions == sorted(versions, key=image_catalog.version_key, reverse=True)
         unversioned_at = next((i for i, e in enumerate(items) if not e.engine_version), len(items))
         assert all(e.engine_version for e in items[:unversioned_at])
 

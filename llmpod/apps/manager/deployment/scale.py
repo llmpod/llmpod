@@ -91,6 +91,10 @@ _SCALE_POLL_INTERVAL_S = 5.0
 # 扩容容器阶段（PULL/START 到 READY）的总预算：模型已在盘、镜像多已缓存，给健康
 # 检查预算的两倍；超时判扩容失败走回滚，防离线节点把 SCALING 永久挂死
 _DRIVE_TIMEOUT_MARGIN = 2.0
+# 扩容容器阶段的预算地板：START 的 readiness 已改成「容器活着就一直等」，慢启动
+# （冷编译/图捕获）可能超过健康检查预算的两倍，扩容不该比新副本自己更早放弃。
+# 本预算只防离线节点把 SCALING 永久挂死，不是启动限时。
+_DRIVE_TIMEOUT_FLOOR_S = 3600
 # 扩容 staging 总预算：对齐 ENSURE_MODEL 看门狗（placement 建任务处同值）——staging
 # 等的就是该任务，预算比它短会先于内层任务错误中止；此预算只兜「任务滞留无人置
 # 终态把 SCALING 永久锁死（只能重启 manager 解锁）」，不是下载限时
@@ -698,7 +702,7 @@ async def _drive_new_replicas(deployment_id: str) -> None:
 
     与 reconciler 的差异：只驱动新份（spec 分界），部署 phase 不动（SCALING 由
     _run_scale 维护）；attempt 超限或总预算超时抛错（scale 失败 → 回滚新份）。
-    预算 = 健康检查超时 ×2：防离线节点把 SCALING 永久挂死。
+    预算 = 健康检查超时 ×2（不足一小时按一小时）：防离线节点把 SCALING 永久挂死。
 
     **不走 ``_ensure_start_tasks`` 的重试耗尽分支**：它调 ``fail_deployment`` 会把整个
     部署（含存量健康副本）停掉并标 failed，与「扩容失败只回滚新份」的分界冲突——故
@@ -706,7 +710,8 @@ async def _drive_new_replicas(deployment_id: str) -> None:
     """
     async with get_db_context() as db:
         dep, model, config, _replicas = await load_scale_context(db, deployment_id)
-        drive_timeout_s = config.health_check.timeout_seconds * _DRIVE_TIMEOUT_MARGIN
+        # 健康检查预算的两倍打底，再套一层地板（见 _DRIVE_TIMEOUT_FLOOR_S）
+        drive_timeout_s = max(config.health_check.timeout_seconds * _DRIVE_TIMEOUT_MARGIN, _DRIVE_TIMEOUT_FLOOR_S)
 
     deadline = asyncio.get_running_loop().time() + drive_timeout_s
 

@@ -261,8 +261,15 @@ class HealthCheck(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    timeout_seconds: int = Field(600, description="健康检查总超时（秒），超时判失败")
+    timeout_seconds: int = Field(
+        600,
+        description="健康检查总超时（秒）；wait_while_running 为真时只作告警阈值，容器退出才判失败",
+    )
     interval_seconds: int = Field(10, description="健康检查轮询间隔（秒）")
+    wait_while_running: bool = Field(
+        True,
+        description="超时后容器仍在运行则继续等待（大模型冷编译/图捕获常超出超时）",
+    )
 
 
 class EngineConfig(BaseModel):

@@ -468,6 +468,7 @@ def _start_payload(
             initial_delay_sec=READINESS_INITIAL_DELAY_S,
             interval_sec=READINESS_STABLE_INTERVAL_S,
             timeout_sec=config.health_check.timeout_seconds,
+            wait_while_running=config.health_check.wait_while_running,
         )
         endpoint = None  # headless worker 无服务端点
     else:
@@ -479,6 +480,7 @@ def _start_payload(
             initial_delay_sec=READINESS_INITIAL_DELAY_S,
             interval_sec=config.health_check.interval_seconds,
             timeout_sec=config.health_check.timeout_seconds,
+            wait_while_running=config.health_check.wait_while_running,
         )
         endpoint = f"http://{ip}:{port}"
     return StartInstancePayload(
@@ -551,11 +553,9 @@ async def _ensure_start_tasks(
                 node_id=irow.assigned_node,
                 task_type=TaskType.START_INSTANCE,
                 payload=_start_payload(dep, model, adapter, config, inst).model_dump(mode="json"),
-                # 看门狗：readiness 探活本身受 health_check.timeout_seconds 约束，
-                # 任务级上限再加一倍余量（容器创建/启动也计入），与 scale 的
-                # 驱动余量 _DRIVE_TIMEOUT_MARGIN 同口径；只兜挂死不误杀慢启动。
-                # config 为 None（扩容回滚等无 config 调用路径）回落固定 30 分钟
-                timeout_sec=(max(config.health_check.timeout_seconds * 2, 600) if config is not None else 1800),
+                # 看门狗不在此处指定，走任务类型默认值（START 为小时级）：readiness 已改成
+                # 「容器活着就一直等」，按 health_check 推算的上限会在 node 侧还在等的
+                # 时候先把它掐掉
             )
             if task is None:
                 if denial == "concurrent":

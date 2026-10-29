@@ -86,6 +86,10 @@ TASK_HANG_TIMEOUTS: dict[str, int] = {
     TaskType.PULL_IMAGE: 2 * 3600,
     # 停止 = docker stop（≤10s）+ 上报，5 分钟绰绰有余
     TaskType.STOP_INSTANCE: 300,
+    # 启动 = 起容器 + readiness 探活。探活本身「容器活着就一直等」（只有容器退出才
+    # 判失败），这里只兜 executor 的 await 永不返回（docker SDK 卡死）；取小时级，
+    # 不参与就绪判定，避免误杀大模型冷编译/图捕获的慢启动
+    TaskType.START_INSTANCE: 6 * 3600,
 }
 
 # PULL 看门狗随镜像体积分桶：每 GB 15min + 半小时地板，2h 封顶——小镜像

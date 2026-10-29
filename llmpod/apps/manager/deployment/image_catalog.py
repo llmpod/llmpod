@@ -152,7 +152,7 @@ def engine_vocab(engine: str, engine_version: str | None) -> EngineVocab | None:
     return _load_vocabs().get((engine, str(engine_version)))
 
 
-def _ver_key(v: str) -> tuple[int, ...]:
+def version_key(v: str) -> tuple[int, ...]:
     """版本号 → 可比较整数元组：'595.84'→(595,84)，'25.2.3'→(25,2,3)，'570'→(570,)。"""
     parts: list[int] = []
     for tok in str(v).replace("rc", ".").split("."):
@@ -167,7 +167,7 @@ def _driver_ok(constraint: str | None, driver_version: str | None) -> bool:
         return True
     if not driver_version:
         return True  # 节点未上报驱动 → 不按 driver 过滤（保守放行，由具体性排序兜底）
-    dv = _ver_key(driver_version)
+    dv = version_key(driver_version)
     for clause in str(constraint).split(","):
         clause = clause.strip()
         op = ""
@@ -175,7 +175,7 @@ def _driver_ok(constraint: str | None, driver_version: str | None) -> bool:
             if clause.startswith(cand):
                 op = cand
                 break
-        target = _ver_key(clause[len(op) :].strip())
+        target = version_key(clause[len(op) :].strip())
         if op == ">=" and not dv >= target:
             return False
         if op == ">" and not dv > target:
@@ -297,7 +297,7 @@ def _sort_groups_by_version(entries: list[ImageEntry]) -> list[ImageEntry]:
         unversioned: list[ImageEntry] = []
         for entry in group:
             if entry.engine_version:
-                versioned.append((_ver_key(entry.engine_version), entry))
+                versioned.append((version_key(entry.engine_version), entry))
             else:
                 unversioned.append(entry)
         versioned.sort(key=lambda pair: pair[0], reverse=True)
