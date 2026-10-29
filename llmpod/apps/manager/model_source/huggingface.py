@@ -178,6 +178,7 @@ def build_model_files(
         quantization=inference.infer_quant(config, names, gguf_header),
         size_gb=size_gb,
         num_layers=shape.num_layers,
+        kv_layers=shape.kv_layers,
         num_attention_heads=shape.num_attention_heads,
         num_kv_heads=shape.num_kv_heads,
         head_dim=shape.head_dim,

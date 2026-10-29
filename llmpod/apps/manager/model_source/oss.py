@@ -95,6 +95,7 @@ class OSSInspector(ModelInspector):
             is_moe=gguf_meta.is_moe if gguf_meta is not None else False,
             quantization=inference.infer_quant({}, names, gguf_meta),
             num_layers=shape.num_layers,
+            kv_layers=shape.kv_layers,
             num_attention_heads=shape.num_attention_heads,
             num_kv_heads=shape.num_kv_heads,
             head_dim=shape.head_dim,

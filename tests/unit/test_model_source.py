@@ -792,6 +792,30 @@ class TestInferArchShape:
         assert inference.infer_num_attention_heads({"num_attention_heads": True}) is None
         assert inference.infer_num_kv_heads({"num_key_value_heads": True}) is None
 
+    def test_kv_layers_full_attention_only(self):
+        # 混合线性注意力：32 层里只有 8 层是 full_attention（其余存定长状态，不占 KV）
+        layer_types = ["linear_attention"] * 3 + ["full_attention"] + ["linear_attention"] * 3 + ["full_attention"]
+        cfg = {"num_hidden_layers": 32, "layer_types": layer_types * 4}
+        assert inference.infer_kv_layers(cfg) == 8
+
+    def test_kv_layers_counts_sliding_attention(self):
+        # 滑动窗口注意力同样存 KV，只有线性注意力层不存
+        cfg = {"num_hidden_layers": 32, "layer_types": ["sliding_attention", "full_attention"] * 16}
+        assert inference.infer_kv_layers(cfg) == 32
+
+    def test_kv_layers_from_interval(self):
+        # 只给 full_attention_interval 时按层数折算（每 4 层 1 层全注意力）
+        assert inference.infer_kv_layers({"num_hidden_layers": 32, "full_attention_interval": 4}) == 8
+
+    def test_kv_layers_interval_uses_floor(self):
+        # 30 层、每 4 层 1 层：全注意力在索引 3,7,…,27 共 7 层（向上取整会多算一层）
+        assert inference.infer_kv_layers({"num_hidden_layers": 30, "full_attention_interval": 4}) == 7
+
+    def test_kv_layers_falls_back_to_num_layers(self):
+        # 普通全注意力模型：两者相等
+        assert inference.infer_kv_layers({"num_hidden_layers": 28}) == 28
+        assert inference.infer_kv_layers({}) is None
+
 
 class TestNeedsTrustRemoteCode:
     def test_auto_map_means_yes(self):

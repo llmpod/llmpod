@@ -137,8 +137,8 @@ class TestEstimateWithDtype:
 
     def test_formula_path_via_arch_meta(self):
         meta = R.KVArchMeta(num_layers=32, num_kv_heads=8, head_dim=128)
-        # 真公式 @8192/1 字节 = 2GB
-        assert estimate_required_vram(10.0, 8192, dtype_bytes=1.0, arch_meta=meta) == 12.0
+        # 真公式 @8192/1 字节/默认 1 条满长 = 0.5GB
+        assert estimate_required_vram(10.0, 8192, dtype_bytes=1.0, arch_meta=meta) == 10.5
 
     def test_ratio_ignored_without_kv(self):
         """无 KV cache（embedding/rerank）时精度档无意义，权重不随精度变。"""

@@ -153,6 +153,28 @@ def infer_num_layers(config: dict) -> int | None:
     return _first_positive_int(_llm_configs(config), ("num_hidden_layers", "n_layer", "num_layers"))
 
 
+def infer_kv_layers(config: dict) -> int | None:
+    """有 KV cache 的层数：混合线性注意力模型只有部分层存 KV。
+
+    取值顺序：``layer_types`` 里非 ``linear_attention`` 的层数（全注意力与滑动窗口
+    注意力都存 KV）→ ``full_attention_interval`` 折算（每 N 层 1 层全注意力，取整
+    除法）→ 全注意力模型等于总层数。KV 估算按这个数算：按全层算会高估（Qwen3.5 是
+    4 层 1 全注意力），漏掉滑动窗口层会低估。
+    """
+    layers = infer_num_layers(config)
+    for cfg in _llm_configs(config):
+        layer_types = cfg.get("layer_types")
+        if isinstance(layer_types, list) and layer_types:
+            kv_layers = sum(1 for item in layer_types if item != "linear_attention")
+            if kv_layers > 0:
+                return kv_layers
+        interval = _first_positive_int([cfg], ("full_attention_interval",))
+        if interval and interval > 1 and layers:
+            # 第 interval 层起每 N 层一个全注意力层，个数是 layers // interval
+            return layers // interval
+    return layers
+
+
 def infer_num_attention_heads(config: dict) -> int | None:
     """attention head 数（``num_attention_heads`` / llama.cpp 口径的 ``n_head``）。
 
@@ -210,13 +232,14 @@ def needs_trust_remote_code(config: dict) -> bool:
 
 @dataclass(frozen=True)
 class ArchShape:
-    """架构形状五元组：KV 真公式、逐层 offload、TP 整除校验的共同输入；取不到的为 None。"""
+    """架构形状：KV 真公式、逐层 offload、TP 整除校验的共同输入；取不到的为 None。"""
 
     num_layers: int | None = None
     num_attention_heads: int | None = None
     num_kv_heads: int | None = None
     head_dim: int | None = None
     max_context: int | None = None
+    kv_layers: int | None = None
 
 
 def arch_shape(config: dict, gguf_meta=None, *, prefer_gguf: bool = False) -> ArchShape:
@@ -236,6 +259,7 @@ def arch_shape(config: dict, gguf_meta=None, *, prefer_gguf: bool = False) -> Ar
             num_kv_heads=infer_num_kv_heads(config),
             head_dim=infer_head_dim(config),
             max_context=infer_max_context(config),
+            kv_layers=infer_kv_layers(config),
         )
     if gguf_meta is None:
         return ArchShape()

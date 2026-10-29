@@ -40,8 +40,8 @@ class ParallelShape:
     def from_model(cls, model) -> "ParallelShape":
         """从 Model 行（或任何带同名字段的对象）取形状；未探测过的字段为 None。"""
         return cls(
-            num_attention_heads=_positive(getattr(model, "num_attention_heads", None)),
-            num_kv_heads=_positive(getattr(model, "num_kv_heads", None)),
+            num_attention_heads=positive_int(getattr(model, "num_attention_heads", None)),
+            num_kv_heads=positive_int(getattr(model, "num_kv_heads", None)),
         )
 
     @property
@@ -63,7 +63,7 @@ def shape_for(adapter, model) -> ParallelShape:
     return ParallelShape.from_model(model)
 
 
-def _positive(value) -> int | None:
+def positive_int(value) -> int | None:
     """只认正整数：0/负数/非整数（含 bool）一律当未知。"""
     if isinstance(value, bool):
         return None

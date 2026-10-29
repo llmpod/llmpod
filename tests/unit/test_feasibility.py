@@ -340,17 +340,21 @@ class TestAssessFeasibility:
         )
         assert report.required_vram_gb == 10.5
 
-        # 真公式：2 × 4 × 8192 × 32 层 × 8 KV head × 128 dim × 1B = 2GB → 12.0
-        report = await feas.assess_feasibility(
-            db=None,
-            model_size_gb=10.0,
-            model_type="llm",
-            model_format="safetensors",
-            context_size=8192,
-            kv_dtype_bytes=1.0,
-            arch_meta=resource.KVArchMeta(num_layers=32, num_kv_heads=8, head_dim=128),
-        )
-        assert report.required_vram_gb == 12.0
+        # 真公式：2 × n_seq × 8192 × 32 层 × 8 KV head × 128 dim × 1B；
+        # 默认按一条满长 = 0.5GB → 10.5，显式 4 条满长 = 2GB → 12.0
+        meta = resource.KVArchMeta(num_layers=32, num_kv_heads=8, head_dim=128)
+        for n_parallel, expected in ((None, 10.5), (4, 12.0)):
+            report = await feas.assess_feasibility(
+                db=None,
+                model_size_gb=10.0,
+                model_type="llm",
+                model_format="safetensors",
+                context_size=8192,
+                kv_dtype_bytes=1.0,
+                arch_meta=meta,
+                n_parallel=n_parallel,
+            )
+            assert report.required_vram_gb == expected
 
     async def test_not_deployable_when_required_exceeds_cap(self, monkeypatch):
         import llmpod.apps.manager.deployment.feasibility as feas

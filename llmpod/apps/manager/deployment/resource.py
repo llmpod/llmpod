@@ -22,14 +22,18 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
+from llmpod.apps.manager.deployment.parallel import positive_int
+
 # —— 启发式兜底（架构元数据缺失时用；数值与历史口径一致，勿随意改）——
 KV_BASE_RATIO = 0.1
 KV_BASE_CONTEXT = 8192
 
 # 未指定 KV 精度档时的元素字节数（f16/bf16 满额）
 DEFAULT_KV_DTYPE_BYTES = 2.0
-# KV 真公式的并发序列数默认值（业界通行口径；可由 kv_cache.n_parallel 覆盖）
-DEFAULT_N_PARALLEL = 4
+# KV 真公式的并发序列数默认值：平台按「能不能装下一条满长请求」判定可部署性，与引擎
+# 启动校验同口径（vLLM 只要求 KV 池至少容纳一条 max_model_len）。要按更高并发估峰值
+# 时由 kv_cache.n_parallel 显式覆盖。
+DEFAULT_N_PARALLEL = 1
 # 单池可用上限（与账本 DEFAULT_GPU_MEMORY_UTILIZATION 同源，留 10% 给框架/激活/页缓存）
 DEFAULT_HEADROOM = 0.9
 
@@ -57,14 +61,19 @@ class KVArchMeta:
     num_layers: int
     num_kv_heads: int
     head_dim: int
+    # 有 KV 的层数：混合线性注意力模型（如 Qwen3.5 的 GDN，4 层里只有 1 层全注意力）
+    # 只有部分层存 KV，按全层算会高估数倍；None/非法值回退 num_layers（非混合模型两者相等）
+    kv_layers: int | None = None
 
     @classmethod
     def from_model(cls, model) -> "KVArchMeta | None":
-        """从 Model 行取三字段；缺失/非正数 → None（调用方退启发式）。"""
-        values = tuple(getattr(model, name, None) for name in ("num_layers", "num_kv_heads", "head_dim"))
-        if any(not isinstance(v, int) or isinstance(v, bool) or v <= 0 for v in values):
+        """从 Model 行取架构字段；前三项缺失/非正数 → None（调用方退启发式）。"""
+        num_layers = positive_int(getattr(model, "num_layers", None))
+        num_kv_heads = positive_int(getattr(model, "num_kv_heads", None))
+        head_dim = positive_int(getattr(model, "head_dim", None))
+        if num_layers is None or num_kv_heads is None or head_dim is None:
             return None
-        return cls(*values)
+        return cls(num_layers, num_kv_heads, head_dim, positive_int(getattr(model, "kv_layers", None)))
 
 
 def kv_cache_gb(
@@ -79,14 +88,18 @@ def kv_cache_gb(
     """KV cache 占用（GiB）。全仓唯一的 KV 计算入口。
 
     - 无自回归 KV cache（embedding/rerank）或上下文未知 → 0；
-    - ``arch_meta`` 齐备 → 真公式 ``2 × n_parallel × ctx × layers × kv_heads × head_dim × dtype_bytes``；
+    - ``arch_meta`` 齐备 → 真公式
+      ``2 × n_parallel × ctx × kv_layers × kv_heads × head_dim × dtype_bytes``；
     - ``arch_meta`` 缺失 → 启发式 ``W × 0.1 × (ctx/8192) × (dtype_bytes/2)``（精度档按字节数线性折算）。
 
-    **``n_parallel`` 是这套估算最弱的一环**：它是「同时驻留多少条序列」的假设（默认
-    ``DEFAULT_N_PARALLEL``），与该服务运行期的真实并发（引擎的 ``--max-num-seqs``、实际
-    到达率、上下文长度分布）没有任何绑定。KV 估算因此是大致量级而非精确值——同一模型在
-    n=4 与 n=256 下能差两个数量级。要真正改进，得先回答「这个数是为『够不够启动』服务，
-    还是为『峰值占用』服务」，而不是继续细化公式。
+    ``kv_layers`` 是**有 KV 的层数**：混合线性注意力模型（GDN/Mamba 层）只有部分层存 KV，
+    按全层算会高估数倍，把本该放行的部署误拒。
+
+    **这个数是「够不够装下 n_parallel 条满长请求」的容量估算，不是引擎启动时的实际占用**：
+    引擎按 ``gpu_memory_utilization`` 把权重之外的显存整块切成 KV 池，池子大小与
+    ``max_model_len`` 无关；启动校验只要求池子装得下一条满长。因此判定可部署性时
+    ``n_parallel`` 取默认的 1（对齐引擎校验）；用户显式配 ``kv_cache.n_parallel`` 才按
+    更高并发估峰值——那是容量口径，不是准入口径。
 
     MLA 类架构（DeepSeek 压缩 KV）不走真公式：它没有 ``num_kv_heads``×``head_dim`` 这个口径，
     落到上面的启发式是**偏高估**的一侧——只会让边界部署被误拒，比低估放行后 OOM 安全。
@@ -99,7 +112,7 @@ def kv_cache_gb(
             2
             * n_seq
             * int(context_size)
-            * arch_meta.num_layers
+            * (arch_meta.kv_layers or arch_meta.num_layers)
             * arch_meta.num_kv_heads
             * arch_meta.head_dim
             * float(dtype_bytes)

@@ -62,6 +62,10 @@ class ModelFiles(BaseModel):
 
     # —— 架构形状（KV cache 真公式 + 逐层 offload + TP 整除校验的输入；提取不到留 None）——
     num_layers: int | None = Field(default=None, description="层数（GGUF block_count / config num_hidden_layers）")
+    kv_layers: int | None = Field(
+        default=None,
+        description="有 KV cache 的层数（混合线性注意力模型少于 num_layers）；KV 估算用，缺失按 num_layers",
+    )
     num_attention_heads: int | None = Field(
         default=None, description="attention head 数（GGUF head_count / config num_attention_heads）；TP 整除校验用"
     )

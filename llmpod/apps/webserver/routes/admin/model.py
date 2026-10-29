@@ -190,6 +190,7 @@ class UpdateModelRequest(BaseModel):
     format: str | None = Field(None, description="格式：safetensors|gguf|pytorch；不传则不修改")
     quantization: str | None = Field(None, description="量化方案：awq|gptq|q4_k_m|none；不传则不修改")
     num_layers: int | None = Field(None, description="层数（KV 估算与逐层 offload 用）；不传则不修改")
+    kv_layers: int | None = Field(None, description="有 KV cache 的层数（混合线性注意力模型少于层数）；不传则不修改")
     num_attention_heads: int | None = Field(None, description="attention head 数（TP 整除校验用）；不传则不修改")
     num_kv_heads: int | None = Field(None, description="KV head 数；不传则不修改")
     head_dim: int | None = Field(None, description="每 head 维度；不传则不修改")
@@ -381,6 +382,7 @@ async def create_model(
         quantization=files.quantization,
         # 架构形状：KV cache 真公式、逐层 offload、TP 整除校验的输入（探测不到为 None）
         num_layers=files.num_layers,
+        kv_layers=files.kv_layers,
         num_attention_heads=files.num_attention_heads,
         num_kv_heads=files.num_kv_heads,
         head_dim=files.head_dim,
@@ -491,6 +493,8 @@ async def update_model(
         m.quantization = updates["quantization"]
     if "num_layers" in updates:
         m.num_layers = updates["num_layers"]
+    if "kv_layers" in updates:
+        m.kv_layers = updates["kv_layers"]
     if "num_attention_heads" in updates:
         m.num_attention_heads = updates["num_attention_heads"]
     if "num_kv_heads" in updates:

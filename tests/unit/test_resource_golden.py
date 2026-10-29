@@ -57,7 +57,7 @@ def test_kv_cache_gb_golden():
             "heuristic_8k_f16": resource.kv_cache_gb(14.5, 8192),
             "heuristic_128k_f16": resource.kv_cache_gb(14.5, 131072),
             "heuristic_128k_fp8": resource.kv_cache_gb(14.5, 131072, dtype_bytes=1.0),
-            "formula_gqa_8k_f16_n4": resource.kv_cache_gb(14.5, 8192, arch_meta=GQA_META),
+            "formula_gqa_8k_f16_default": resource.kv_cache_gb(14.5, 8192, arch_meta=GQA_META),
             "formula_gqa_8k_f16_n64": resource.kv_cache_gb(14.5, 8192, arch_meta=GQA_META, n_parallel=64),
             "formula_gqa_32k_fp8_n16": resource.kv_cache_gb(
                 14.5, 32768, arch_meta=GQA_META, dtype_bytes=1.0, n_parallel=16

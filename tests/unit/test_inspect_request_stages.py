@@ -164,7 +164,7 @@ class TestVramEstimationInputs:
         assert result["data"]["recommendation"]["vram_per_gpu_gb"] == 1.1
 
     async def test_kv_dtype_fp8_halves_cache(self):
-        """KV 精度档 fp8_e4m3（1 字节）→ KV 项减半：10GB + 4GB KV → 12GB（f16 口径 14GB）。"""
+        """KV 精度档 fp8_e4m3（1 字节）→ KV 项减半：10GB + 1GB KV → 11GB（f16 口径 10GB+0.5GB）。"""
         m = Model(
             id=1,
             name="m",
@@ -178,8 +178,8 @@ class TestVramEstimationInputs:
         s = _seed(m, _node("n1"), _gpu(1, "g1"))
         base = await _inspect(s)
         fp8 = await _inspect(s, engine_params={"extra_args": ["--kv-cache-dtype", "fp8_e4m3"]})
-        assert base["data"]["recommendation"]["vram_per_gpu_gb"] == 14.0
-        assert fp8["data"]["recommendation"]["vram_per_gpu_gb"] == 12.0
+        assert base["data"]["recommendation"]["vram_per_gpu_gb"] == 11.0
+        assert fp8["data"]["recommendation"]["vram_per_gpu_gb"] == 10.5
 
     async def test_max_context_clamps_recommendation(self):
         """模型自带上限 4096 → 推荐 ctx 钳到 4096（KV 项随之变小），并给超限提示。"""

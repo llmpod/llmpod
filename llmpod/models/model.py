@@ -50,6 +50,11 @@ class Model(Base, IntIdMixin, TimestampMixin):
     num_layers: Mapped[int | None] = mapped_column(
         Integer, nullable=True, comment="层数（offload 层数粒度 + KV cache 真公式，可空）"
     )
+    kv_layers: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="有 KV cache 的层数（混合线性注意力模型少于层数；KV 估算用，空=按层数）",
+    )
     num_attention_heads: Mapped[int | None] = mapped_column(
         Integer, nullable=True, comment="attention head 数（TP 整除校验；vLLM 要求能被 tp 整除，可空）"
     )

@@ -367,7 +367,11 @@ class KVCacheConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    n_parallel: int | None = Field(None, gt=0, description="并发序列数（KV 真公式用；None=默认 4）")
+    n_parallel: int | None = Field(
+        None,
+        gt=0,
+        description="并发序列数（KV 真公式用）；None=按一条满长（与引擎启动校验同口径），显式给定则按该并发估峰值",
+    )
 
 
 class CpuLaneConfig(BaseModel):

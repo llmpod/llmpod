@@ -10,8 +10,10 @@ from types import SimpleNamespace
 from llmpod.apps.manager.deployment import resource as R
 
 
-def _model(num_layers=None, num_kv_heads=None, head_dim=None):
-    return SimpleNamespace(num_layers=num_layers, num_kv_heads=num_kv_heads, head_dim=head_dim)
+def _model(num_layers=None, num_kv_heads=None, head_dim=None, kv_layers=None):
+    return SimpleNamespace(
+        num_layers=num_layers, num_kv_heads=num_kv_heads, head_dim=head_dim, kv_layers=kv_layers
+    )
 
 
 def _cand(node_id, vram, ram):
@@ -35,18 +37,26 @@ class TestKVCacheGb:
         assert R.kv_cache_gb(10.0, 8192, dtype_bytes=0.5) == 0.25
 
     def test_formula_uses_arch_meta(self):
-        # 2 × n_seq(4) × 8192 × 32 层 × 8 KV head × 128 dim × 1B = 2 GiB
+        # 2 × n_seq(默认 1：装下一条满长) × 8192 × 32 层 × 8 KV head × 128 dim × 1B = 0.5 GiB
         meta = R.KVArchMeta(num_layers=32, num_kv_heads=8, head_dim=128)
-        assert R.kv_cache_gb(10.0, 8192, dtype_bytes=1.0, arch_meta=meta) == 2.0
+        assert R.kv_cache_gb(10.0, 8192, dtype_bytes=1.0, arch_meta=meta) == 0.5
         # f16 翻倍
-        assert R.kv_cache_gb(10.0, 8192, dtype_bytes=2.0, arch_meta=meta) == 4.0
-        # 并发序列数可覆盖
-        assert R.kv_cache_gb(10.0, 8192, dtype_bytes=1.0, arch_meta=meta, n_parallel=2) == 1.0
+        assert R.kv_cache_gb(10.0, 8192, dtype_bytes=2.0, arch_meta=meta) == 1.0
+        # 并发序列数可覆盖（按 N 条满长估峰值）
+        assert R.kv_cache_gb(10.0, 8192, dtype_bytes=1.0, arch_meta=meta, n_parallel=4) == 2.0
+
+    def test_formula_uses_kv_layers_for_hybrid(self):
+        """混合线性注意力模型只有部分层存 KV：按 kv_layers 算，否则高估数倍。"""
+        hybrid = R.KVArchMeta(num_layers=32, num_kv_heads=4, head_dim=256, kv_layers=8)
+        # 2 × 1 × 65536 × 8 层 × 4 head × 256 dim × 2B = 2 GiB
+        assert R.kv_cache_gb(8.68, 65536, arch_meta=hybrid) == 2.0
+        full_attention = R.KVArchMeta(num_layers=32, num_kv_heads=4, head_dim=256)
+        assert R.kv_cache_gb(8.68, 65536, arch_meta=full_attention) == 8.0
 
     def test_formula_ignores_weight(self):
         """真公式只由架构参数与上下文决定，与权重规模无关。"""
         meta = R.KVArchMeta(num_layers=32, num_kv_heads=8, head_dim=128)
-        assert R.kv_cache_gb(100.0, 8192, dtype_bytes=1.0, arch_meta=meta) == 2.0
+        assert R.kv_cache_gb(100.0, 8192, dtype_bytes=1.0, arch_meta=meta) == 0.5
 
 
 class TestKVArchMeta:
@@ -56,6 +66,11 @@ class TestKVArchMeta:
         assert R.KVArchMeta.from_model(_model(32, 0, 128)) is None
         assert R.KVArchMeta.from_model(_model()) is None
         assert R.KVArchMeta.from_model(SimpleNamespace()) is None
+
+    def test_from_model_carries_kv_layers(self):
+        assert R.KVArchMeta.from_model(_model(32, 8, 128, 8)) == R.KVArchMeta(32, 8, 128, 8)
+        # 非法/缺失 → 回退按全层（修复前的口径）
+        assert R.KVArchMeta.from_model(_model(32, 8, 128, 0)) == R.KVArchMeta(32, 8, 128, None)
 
 
 # ============ 逐层表 + 三约束 ============
