@@ -306,10 +306,11 @@ class Settings(BaseSettings):
     telemetry_enabled: bool = True
 
     # ===== 跨域资源共享 =====
-    # 默认空 = 同源策略（前端由本服务托管，同源访问不受影响）；需要浏览器跨域
-    # 直连（如独立前端域名）时显式配置来源白名单。["*"] 仍可显式配置（无 Cookie
-    # 会话，实际风险有限），但不再作为默认值。
-    cors_origins: list[str] = []
+    # 两平面（管理端 webserver / API 网关 proxyserver）共用，默认 ["*"] 放行：
+    # 租户端在线调试由浏览器直连网关端口（与管理端不同端口即跨源），收紧默认
+    # 会直接打断功能；本平台无 Cookie 会话（token 走 Authorization 头、网关走
+    # API Key），通配符实际风险有限。要收紧时显式配来源白名单。
+    cors_origins: list[str] = ["*"]
 
     # ===== 日志 =====
     log_level: str = "info"

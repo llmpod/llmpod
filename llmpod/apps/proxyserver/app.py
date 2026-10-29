@@ -237,8 +237,9 @@ def create_proxy_app(cfg: Settings | None = None) -> FastAPI:
         redoc_url="/redoc" if cfg.docs_enabled else None,
         openapi_url="/openapi.json" if cfg.docs_enabled else None,
     )
-    # CORS 与 webserver 同源配置（LLMPOD_CORS_ORIGINS）：SDK 服务端调用不依赖 CORS，
-    # 浏览器直连网关时按配置放行/拦截（默认空 = 同源，跨域直连需显式配来源白名单）。
+    # CORS 与 webserver 共用配置（LLMPOD_CORS_ORIGINS，默认 ["*"]）：SDK 服务端
+    # 调用不依赖 CORS；租户端在线调试由浏览器直连网关端口（与管理端不同端口
+    # 即跨源），默认放行保证该功能可用。
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_origins,

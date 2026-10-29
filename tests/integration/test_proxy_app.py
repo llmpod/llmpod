@@ -282,6 +282,23 @@ class TestRequestIdHeader:
         assert resp.status_code == 400
         assert resp.headers["x-request-id"]
 
+    async def test_preflight_allowed_by_default(self, client):
+        """跨域默认放行（cors_origins=["*"]）：租户端在线调试由浏览器直连网关端口
+        （与管理端不同端口即跨源），拦截 preflight 会直接打断该功能。"""
+        c, *_ = client
+        resp = await c.options(
+            "/v1/chat/completions",
+            headers={
+                "Origin": "http://192.168.1.10:8080",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.headers["access-control-allow-origin"] == "*"
+        # 通配符来源下不回显凭据头（浏览器规范要求，同时本项目也无 Cookie 会话）
+        assert resp.headers.get("access-control-allow-credentials") != "true"
+
     async def test_body_over_cap_413_before_auth(self, client, monkeypatch):
         """请求体超上限在读 body 阶段即拒（413），先于鉴权——匿名大 body 不再
         被全量缓冲。Content-Length 路径与 chunked 路径都要拦。"""
