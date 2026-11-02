@@ -1,0 +1,329 @@
+"""MindIE 适配器单测。
+
+MindIE 是文件驱动引擎（config.json + mindieservice_daemon），与 CLI 参数型引擎
+（vllm/sglang）不同：generate_start_args 产出 bash 引导脚本 + $0 占位两个
+positional token，容器 argv 为 `/bin/bash -c <脚本> bash <用户flags...>`。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+import pytest
+
+from llmpod.apps.manager.deployment import image_catalog
+from llmpod.apps.manager.deployment.engine import get_adapter, registered_engines
+from llmpod.apps.manager.deployment.engine.mindie import MindIEAdapter
+from llmpod.apps.manager.deployment.schemas import EngineConfig, InstanceSpec, Topology
+from llmpod.core.exceptions import LLMPodValidationError
+
+
+@pytest.fixture
+def adapter():
+    # get_adapter 注入 engine_name；裸实例化该键为空串
+    return get_adapter("mindie")
+
+
+def _conf_from_script(script: str) -> dict:
+    """从引导脚本里抠出 config.json 并还原（heredoc 定界符 LLMPOD_CONF_EOF）。"""
+    start = script.index("<<'LLMPOD_CONF_EOF'\n") + len("<<'LLMPOD_CONF_EOF'\n")
+    end = script.index("\nLLMPOD_CONF_EOF", start)
+    return json.loads(script[start:end])
+
+
+class TestRegistry:
+    def test_registered(self):
+        assert "mindie" in registered_engines()
+
+
+class TestGenerateStartArgs:
+    def test_single_gpu_config(self, adapter):
+        """单卡：脚本内 config.json 各字段按 instance 渲染（结构对齐 3.1.0 出厂模板）。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/models/Qwen", served_model_name="qwen", port=1025, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        assert len(args) == 2  # [引导脚本, $0 占位]
+        script, zero = args
+        assert zero == "bash"
+        assert "--config-file" in script  # daemon 只认 --config-file（M1 真机 strings 实证）
+        conf = _conf_from_script(script)
+        # 出厂模板顶层四段（M1 真机核验的结构，嵌套错误 daemon 拒启或静默空配）
+        assert set(conf) == {"Version", "ServerConfig", "BackendConfig", "LogConfig", "EnableDynamicAdjustTimeoutConfig"}
+        server = conf["ServerConfig"]
+        assert server["port"] == 1025
+        assert server["ipAddress"] == "0.0.0.0"
+        assert server["httpsEnabled"] is False
+        assert server["allowAllZeroIpListening"] is True
+        assert server["managementPort"] == 1026
+        assert server["metricsPort"] == 1027
+        backend = conf["BackendConfig"]
+        assert backend["npuDeviceIds"] == [[0]]
+        assert "worldSize" not in backend  # worldSize 只在模型条目上（出厂模板同构）
+        model = backend["ModelDeployConfig"]["ModelConfig"][0]
+        assert model["modelWeightPath"] == "/models/Qwen"
+        assert model["modelName"] == "qwen"
+        assert model["worldSize"] == 1
+        # 键名对齐出厂模板（M1 真机模板实证；此前误写 interNodePk 被 daemon 静默忽略）
+        assert "interNodeTlsPk" in backend and "interNodePk" not in backend
+
+    def test_bootstrap_patches_torch_dtype(self, adapter):
+        """310P 不支持 bfloat16：引导脚本幂等改写模型 config.json 为 fp16（M1 实测）。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/models/Qwen", served_model_name="q", port=1025, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        script = args[0]
+        assert 'sed -i \'s/"torch_dtype": *"bfloat16"/"torch_dtype": "float16"/\' /models/Qwen/config.json' in script
+        # sed 行以 || true 收尾：模型卷意外只读时失败不阻断，daemon 以原始报错暴露
+        sed_line = next(ln for ln in script.splitlines() if ln.startswith("sed -i"))
+        assert sed_line.endswith("|| true")
+
+    def test_port_defaults_to_1025(self, adapter):
+        """port=None：回落 MindIE 出厂业务端口 1025（reconciler 端口单源）。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=None, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        server = _conf_from_script(args[0])["ServerConfig"]
+        assert server["port"] == 1025
+        assert server["managementPort"] == 1026
+        assert server["metricsPort"] == 1027
+
+    def test_multi_gpu_logical_renumber(self, adapter):
+        """多卡：npuDeviceIds 用逻辑重编号 0..N-1（物理选卡由设备直通承担）。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(
+                model_path="/m",
+                served_model_name="m",
+                port=1030,
+                nnodes=1,
+                assigned_gpus=[2, 3],
+            ),
+            Topology(tp=2),
+            {},
+        )
+        conf = _conf_from_script(args[0])
+        backend = conf["BackendConfig"]
+        assert backend["npuDeviceIds"] == [[0, 1]]
+        model = backend["ModelDeployConfig"]["ModelConfig"][0]
+        assert model["worldSize"] == 2
+
+    def test_heredoc_special_chars_survive(self, adapter):
+        """模型名含 ``"``/``$``/反引号：heredoc 引号定界符零展开，json.loads 仍可还原。"""
+        nasty = 'Qwen"$(rm -rf /)`id`$HOME'
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/m", served_model_name=nasty, port=1025, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        conf = _conf_from_script(args[0])
+        assert conf["BackendConfig"]["ModelDeployConfig"]["ModelConfig"][0]["modelName"] == nasty
+
+
+class TestAssembleArgs:
+    """三层合并后保持 ``bash -c`` argv 形态：[脚本, $0 占位, 用户flags...]。"""
+
+    def test_script_and_zero_placeholder_first(self, adapter):
+        entry = image_catalog.ImageEntry(id="t", engine="mindie", arch="cann", image="x")
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=1025, nnodes=1),
+            Topology(tp=1),
+            entry,
+            {"extra_args": ["--some-flag", "v"]},
+        )
+        assert len(args) >= 3
+        assert args[0].startswith("set -e\n")  # 脚本体在首位（bash -c 的脚本体）
+        assert args[1] == "bash"  # $0 占位紧随（否则首个用户 flag 被 bash 吃掉）
+        i = args.index("--some-flag")
+        assert args[i + 1] == "v"
+        assert i > 1  # 用户 flag 落在 "$@" 区（尾部）
+
+    def test_protected_config_flag_dropped(self, adapter):
+        entry = image_catalog.ImageEntry(id="t", engine="mindie", arch="cann", image="x")
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=1025, nnodes=1),
+            Topology(tp=1),
+            entry,
+            {"extra_args": ["--config-file", "/evil.json", "--ok"]},
+        )
+        assert "--config-file" not in args and "/evil.json" not in args
+        assert "--ok" in args
+
+
+class TestTopologyConflict:
+    def test_multinode_rejected(self, adapter):
+        """nnodes>1 → 冲突文案（自动回落序据此剔除 cann）。"""
+        conflict = adapter.topology_conflict("cann", Topology(tp=1, nnodes=2))
+        assert conflict is not None and "多机" in conflict
+
+    def test_pp_rejected(self, adapter):
+        conflict = adapter.topology_conflict("cann", Topology(tp=1, pp=2))
+        assert conflict is not None and "pp" in conflict
+
+    def test_single_node_tp_ok(self, adapter):
+        """单机 tp>1 不冲突（worldSize=npu 数表达）。"""
+        assert adapter.topology_conflict("cann", Topology(tp=2, pp=1, nnodes=1)) is None
+
+    def test_non_cann_no_opinion(self, adapter):
+        """非 cann 架构不表态（供混布回落序共用）。"""
+        assert adapter.topology_conflict("nvidia", Topology(tp=1, pp=2)) is None
+
+    def test_pp_instance_raises_on_generate(self, adapter):
+        """pp>1 实例在组装期硬拒（三重保险的最后一道）。"""
+        with pytest.raises(LLMPodValidationError, match="pp"):
+            adapter.generate_start_args(
+                InstanceSpec(model_path="/m", served_model_name="m", port=1025, nnodes=1, pp=2),
+                Topology(tp=1, pp=2),
+                {},
+            )
+
+    def test_multinode_instance_raises_on_generate(self, adapter):
+        with pytest.raises(LLMPodValidationError, match="多机"):
+            adapter.generate_start_args(
+                InstanceSpec(model_path="/m", served_model_name="m", port=1025, nnodes=2),
+                Topology(tp=1, nnodes=2),
+                {},
+            )
+
+
+class TestBuildDeviceConfig:
+    def test_cann(self):
+        dc = MindIEAdapter.build_device_config(InstanceSpec(assigned_gpus=[0]), "cann")
+        assert dc.runtime == "ascend"
+        assert dc.gpus is None  # NPU 走 runtime + extra_devices，不走 nvidia device_requests
+        assert any("/dev/davinci0" in d for d in dc.extra_devices)
+        # 管理设备三件套（manager/devmm_svm/hisi_hdc）不可缺
+        for dev in ("/dev/davinci_manager", "/dev/devmm_svm", "/dev/hisi_hdc"):
+            assert any(d.startswith(dev) for d in dc.extra_devices), dev
+        assert dc.privileged is False
+        # 宿主 driver/dcmi 只读挂载五条
+        assert len(dc.driver_mounts) == 5
+
+    def test_multi_npu_devices(self):
+        dc = MindIEAdapter.build_device_config(InstanceSpec(assigned_gpus=[2, 3]), "cann")
+        assert any("/dev/davinci2" in d for d in dc.extra_devices)
+        assert any("/dev/davinci3" in d for d in dc.extra_devices)
+
+    def test_unsupported_arch(self):
+        with pytest.raises(NotImplementedError):
+            MindIEAdapter.build_device_config(InstanceSpec(), "nvidia")
+
+
+class TestBuildEnv:
+    def test_visible_devices_comma_joined(self, adapter):
+        env = adapter.build_env(
+            InstanceSpec(nnodes=1, gpu_arch="cann", assigned_gpus=[1, 3]),
+            Topology(tp=2),
+            EngineConfig(),
+        )
+        assert env["ASCEND_VISIBLE_DEVICES"] == "1,3"
+        assert env["ASCEND_RT_VISIBLE_DEVICES"] == "1,3"
+
+    def test_no_gpus_defaults_first(self, adapter):
+        env = adapter.build_env(
+            InstanceSpec(nnodes=1, gpu_arch="cann"),
+            Topology(),
+            EngineConfig(),
+        )
+        assert env["ASCEND_VISIBLE_DEVICES"] == "0"
+
+    def test_no_pytorch_alloc_conf(self, adapter):
+        """MindIE 非 torch 分配器：不注入 PYTORCH_NPU_ALLOC_CONF（vllm cann 分支才有）。"""
+        env = adapter.build_env(
+            InstanceSpec(nnodes=1, gpu_arch="cann"),
+            Topology(),
+            EngineConfig(),
+        )
+        assert "PYTORCH_NPU_ALLOC_CONF" not in env
+
+    def test_slog_print_to_stdout(self, adapter):
+        """daemon 日志默认写文件：不设此变量容器日志空白（M1 实测），平台靠它收日志。"""
+        env = adapter.build_env(
+            InstanceSpec(nnodes=1, gpu_arch="cann"),
+            Topology(),
+            EngineConfig(),
+        )
+        assert env["ASCEND_SLOG_PRINT_TO_STDOUT"] == "1"
+
+
+class TestHealthCheck:
+    def test_ready_path_and_predicate(self, adapter):
+        path, pred = adapter.health_check()
+        # 业务口唯一可探路径（M1 实测：/health 等恒 404，权威探针在管理口够不着）
+        assert path == "/v1/models"
+
+        class _Resp:
+            def __init__(self, code):
+                self.status_code = code
+
+        assert pred(_Resp(200)) is True
+        # 业务口 404（路由不存在/未监听阶段）不算就绪
+        assert pred(_Resp(404)) is False
+        assert pred(_Resp(500)) is False
+
+
+class TestEstimateVramGb:
+    def test_default_formula(self, adapter):
+        """不覆写 base 口径：per-gpu = (权重 + KV)/并行度（与 FP16 落盘一致）。"""
+        assert adapter.estimate_vram_gb(10.0, Topology(tp=1)) == 10.0
+        assert adapter.estimate_vram_gb(10.0, Topology(tp=1, max_model_len=8192)) == 11.0
+
+
+class TestImageCatalog:
+    def test_catalog_entry_matches_310p(self):
+        """mindie-ascend-310p 条目五维匹配 310P3 卡（engine/arch/gpu_model/driver）。"""
+        image_catalog.reload()
+        entries = image_catalog.list_entries(engine="mindie", arch="cann", gpu_model="310P3", driver_version="25.2.3")
+        assert any(e.gpu_model == ["*310P*", "*300I*"] for e in entries)
+        # 条目 params.args 必须为空列表：image 层 positional 会渲染进 "$@" 传给 daemon
+        for e in entries:
+            assert (e.params.get("args") or []) == []
+
+    def test_schedulable_archs_keeps_cann(self, adapter):
+        """镜像目录命中时 cann 留在可调度架构（混布回落序的入口判据）。"""
+
+        class _Card:
+            node_id = "n1"
+            index = 0
+            status = "online"
+            arch = "cann"
+            name = "310P3"
+            driver_version = "25.2.3"
+
+            def __init__(self):
+                self.uuid = "c1"
+
+        archs = adapter.schedulable_archs(gpu_pool=[_Card()], engine_version=None)
+        assert "cann" in archs
+
+
+class TestCapabilityExposure:
+    def test_engines_route_lists_mindie(self):
+        """GET /admin/inference-images/engines 冒烟：mindie 装配不异常（防被静默吞）。"""
+        from llmpod.apps.webserver.routes.admin.inference_image import list_engines
+
+        payload = asyncio.run(list_engines(model_id=None, db=None))
+        by_engine = {item.engine: item for item in payload["data"]}
+        assert "mindie" in by_engine
+        item = by_engine["mindie"]
+        assert item.supported_gpu_archs == ["cann"]
+        assert item.supports_multinode is False
+        assert item.deployable is True
+        assert item.protected_flags == ["--config-file"]
+
+    def test_capability_class_attrs(self):
+        """类属性形态：单机单 LLM chat、无并行 flag、host 网络、1025 端口。"""
+        assert MindIEAdapter.supported_gpu_archs == ["cann"]
+        assert MindIEAdapter.supports_multinode is False
+        assert MindIEAdapter.supported_parallel == []
+        assert MindIEAdapter.entrypoint == ["/bin/bash", "-c"]
+        assert MindIEAdapter.default_port == 1025
+        assert MindIEAdapter.default_network_mode == "host"
+        assert MindIEAdapter.protected_flags == ["--config-file"]
+        assert MindIEAdapter.param_suggestions == []
+        assert MindIEAdapter.memory_utilization_flag == ""

@@ -6,6 +6,7 @@ from llmpod.apps.manager.deployment.engine.base import EngineAdapter
 from llmpod.apps.manager.deployment.engine.vllm import VLLMAdapter
 from llmpod.apps.manager.deployment.engine.sglang import SGLangAdapter
 from llmpod.apps.manager.deployment.engine.llamacpp import LlamaCppAdapter
+from llmpod.apps.manager.deployment.engine.mindie import MindIEAdapter
 from llmpod.core.exceptions import LLMPodValidationError
 
 # engine 名 → 适配器类（sglang/llamacpp 为能力声明就绪的占位，参数生成 v1 未实现）
@@ -13,6 +14,7 @@ _REGISTRY: dict[str, type[EngineAdapter]] = {
     "vllm": VLLMAdapter,
     "sglang": SGLangAdapter,
     "llamacpp": LlamaCppAdapter,
+    "mindie": MindIEAdapter,
 }
 
 
@@ -39,6 +41,7 @@ __all__ = [
     "VLLMAdapter",
     "SGLangAdapter",
     "LlamaCppAdapter",
+    "MindIEAdapter",
     "get_adapter",
     "registered_engines",
 ]
