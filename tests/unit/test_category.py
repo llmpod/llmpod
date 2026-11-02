@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from llmpod.apps.manager.deployment.category import CATEGORY_PATHS, category_to_path
+from llmpod.apps.manager.deployment.engine.mindie import MindIEAdapter
 from llmpod.apps.manager.deployment.engine.sglang import SGLangAdapter
 from llmpod.apps.manager.deployment.engine.vllm import VLLMAdapter
 
@@ -64,3 +65,11 @@ class TestAdapterProtocols:
         for adapter in (VLLMAdapter, SGLangAdapter):
             assert adapter.protocols_for("embedding") == ["openai"]
             assert adapter.protocols_for("rerank") == ["openai"]
+
+    def test_mindie_openai_only(self):
+        """MindIE 仅 openai 面：编排器据此只建 openai 端点行（M2 路由面口径）。
+
+        只断言 llm——MindIE fail-closed 只声明 llm（multimodal 等类别在
+        validate_category 就被拒，到不了 protocols_for 的端点投影）。
+        """
+        assert MindIEAdapter.protocols_for("llm") == ["openai"]
