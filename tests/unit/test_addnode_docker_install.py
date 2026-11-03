@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -53,14 +54,36 @@ def _run_install(tmp_path: Path, *, assume_yes: bool = False, skip: bool = False
         env["LLMPOD_BOOTSTRAP_ASSUME_YES"] = "1"
     if skip:
         env["LLMPOD_SKIP_DOCKER_INSTALL"] = "yes"
+    # 清理函数打桩：既不碰宿主 /etc/apt，也能断言安装流程确实调用了它。
+    script = (
+        match.group(0)
+        + '\nclean_invalid_docker_apt_list() { printf "cleanup %s\\n" "${1:-default}" >> "$MOCK_LOG"; }\n'
+        + "\ninstall_docker_if_missing && docker info"
+    )
     result = subprocess.run(
-        ["/bin/bash", "-c", match.group(0) + "\ninstall_docker_if_missing && docker info"],
+        ["/bin/bash", "-c", script],
         env=env,
         capture_output=True,
         text=True,
         timeout=10,
     )
     return result, log.read_text() if log.exists() else ""
+
+
+def _run_clean(tmp_path: Path, content: str):
+    """独立跑 docker.list 清理函数，传参指向临时文件，不碰宿主 /etc/apt。"""
+    source = TEMPLATE.read_text()
+    match = re.search(r"^clean_invalid_docker_apt_list\(\) \{.*?^\}$", source, re.M | re.S)
+    assert match
+    target = tmp_path / "docker.list"
+    target.write_text(content)
+    result = subprocess.run(
+        ["/bin/bash", "-c", match.group(0) + f"\nclean_invalid_docker_apt_list {shlex.quote(str(target))}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return result, target, tmp_path / "docker.list.invalid"
 
 
 def test_install_requires_confirmation_without_tty(tmp_path):
@@ -94,5 +117,46 @@ def test_install_uses_bt_script_then_checks_docker(tmp_path):
     result, calls = _run_install(tmp_path, assume_yes=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://download.bt.cn/install/0/docker_install.sh" in calls
-    assert "install mirrors.aliyun.com/docker-ce" in calls
+    # 源参数必须带协议前缀：BT 脚本原样拼进 deb 源行，裸主机名会写出
+    # 非法 docker.list 拖垮整机 apt（Ubuntu 22 实测）。
+    assert "install https://mirrors.aliyun.com/docker-ce" in calls
+    assert "cleanup default" in calls
     assert "systemctl enable --now docker" in calls
+
+
+def test_clean_moves_schemeless_docker_list(tmp_path):
+    """无协议前缀的 docker.list 被移开，原名保留 .invalid 供排查。"""
+    result, target, invalid = _run_clean(
+        tmp_path, "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] mirrors.aliyun.com/docker-ce/linux/ubuntu jammy stable\n"
+    )
+    assert result.returncode == 0
+    assert "警告" in result.stdout
+    assert not target.exists()
+    assert invalid.exists()
+
+
+def test_clean_keeps_valid_https_list(tmp_path):
+    result, target, invalid = _run_clean(
+        tmp_path, "deb [arch=amd64] https://mirrors.aliyun.com/docker-ce/linux/ubuntu jammy stable\n"
+    )
+    assert result.returncode == 0
+    assert target.exists()
+    assert not invalid.exists()
+
+
+def test_clean_keeps_file_mirror_list(tmp_path):
+    """本地 file:// 镜像源是合法形态，不能被清掉（离线环境依赖）。"""
+    result, target, invalid = _run_clean(
+        tmp_path, "deb [arch=amd64] file:///opt/mirror/docker-ce/linux/ubuntu jammy stable\n"
+    )
+    assert result.returncode == 0
+    assert target.exists()
+    assert not invalid.exists()
+
+
+def test_clean_ignores_missing_file(tmp_path):
+    result, target, invalid = _run_clean(tmp_path, "")
+    target.unlink()
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert not invalid.exists()

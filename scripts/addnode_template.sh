@@ -88,7 +88,20 @@ echo "集群 $CLUSTER_ID · 节点 $NODE_NAME · 容器 $CONTAINER_NAME"
 echo "镜像 $IMAGE"
 echo ""
 
-# Docker 安装流程与站点安装脚本保持一致。
+# Docker 缺失时下载宝塔安装脚本安装；镜像源参数必须带 https://——
+# 脚本把它原样拼进 deb 源行，缺协议前缀会写出非法源并拖垮整机 apt。
+# 移开无协议前缀的非法 docker.list 残留：apt 报 URI parse 后整机源都读不了。
+# 只处理「含 deb 行但没有任何 http(s)/ftp/file 前缀」的文件；安装脚本随后
+# 会写入正确的源行，合法文件（含本地 file:// 镜像源）不动。
+clean_invalid_docker_apt_list() {
+    local list="${1:-/etc/apt/sources.list.d/docker.list}"
+    [ -f "$list" ] || return 0
+    grep -q '^deb' "$list" || return 0
+    grep -Eq '^deb[[:space:]].*(https?|ftp|file)://' "$list" && return 0
+    mv -f "$list" "$list.invalid"
+    echo "警告: 已移开非法的 $list（源行缺少协议前缀，原文件保留为 $list.invalid）。"
+}
+
 install_docker_if_missing() {
     command -v docker > /dev/null 2>&1 && return 0
     echo "未检测到 Docker。"
@@ -127,6 +140,8 @@ install_docker_if_missing() {
             apt-get install -y wget || echo "警告: wget 安装失败，Docker 安装可能受影响。"
         fi
     fi
+    # 先清历史失败留下的非法源文件，避免安装脚本首轮 apt-get update 就被卡死。
+    clean_invalid_docker_apt_list
 
     local installer
     installer="$(mktemp /tmp/llmpod-docker.XXXXXX)" || return 1
@@ -137,7 +152,7 @@ install_docker_if_missing() {
         return 1
     fi
     echo "安装 Docker..."
-    bash "$installer" install mirrors.aliyun.com/docker-ce \
+    bash "$installer" install https://mirrors.aliyun.com/docker-ce \
         || echo "警告: 安装脚本返回错误，检查 Docker 是否可用。"
     rm -f "$installer"
     if ! command -v docker > /dev/null 2>&1; then
