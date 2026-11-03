@@ -181,6 +181,79 @@ if command -v lspci &> /dev/null \
     NVIDIA_HW_PRESENT=1
 fi
 
+# 检测到 NVIDIA GPU 但没有驱动：交互确认后用官网脚本安装；损坏驱动仍走人工。
+# y 安装、c 跳过 GPU、其他退出；非交互运行不允许自动装驱动（选版需要终端）。
+prompt_install_driver() {
+    if [ -n "${LLMPOD_BOOTSTRAP_ASSUME_YES:-}" ]; then
+        echo "错误: 非交互运行无法自动安装驱动；请交互执行引导命令，或设 LLMPOD_SKIP_NVIDIA_DRIVER_INSTALL=yes 跳过 GPU。"
+        exit 1
+    fi
+    if ! { [ -t 1 ] && { exec 3<>/dev/tty; } 2>/dev/null; }; then
+        echo "错误: 找不到可交互终端，无法选择驱动版本；请手动安装驱动后重跑引导命令。"
+        exit 1
+    fi
+    local answer
+    IFS= read -r -p "安装 NVIDIA 驱动？[y/N/c=跳过 GPU]: " -t 60 -u 3 answer || answer=""
+    case "$answer" in
+        y|Y|yes|YES) return 0 ;;
+        c|C) return 1 ;;
+        *) echo "已退出。"; exit 1 ;;
+    esac
+}
+
+# 下载官网驱动脚本落盘再执行；交互输入接 fd 3（终端），不读外层 curl|bash
+# 管道里的脚本内容。--yes 跳过安装器内部的二次确认（基础工具/装前确认），
+# 版本菜单保留为唯一选择点，选定后 DKMS 编译安装全自动。判定只认
+# nvidia-smi 实测，不解析脚本输出：退出码 0 也可能是取消，20 未必真需要
+# 重启（有装完即生效的先例）。需重启或未就绪时退出，提示重启后重跑同一条
+# 引导命令即可接着完成接入。
+install_nvidia_driver_and_verify() {
+    if ! command -v curl > /dev/null 2>&1; then
+        echo "错误: 找不到 curl，无法下载驱动安装脚本。"
+        exit 1
+    fi
+    local installer rc=0
+    installer="$(mktemp /var/tmp/llmpod-nvidia-install.XXXXXX)" || exit 1
+    if ! curl -fsSL --retry 3 --retry-delay 2 --max-time 60 \
+        https://llmpod.ai/src/download/nvidia-install.sh -o "$installer"; then
+        rm -f "$installer"
+        echo "错误: 驱动安装脚本下载失败，请检查网络后重跑引导命令。"
+        exit 1
+    fi
+    bash "$installer" --install --yes <&3 || rc=$?
+    rm -f "$installer"
+    if nvidia-smi -L &> /dev/null; then
+        echo "NVIDIA 驱动已就绪。"
+        return 0
+    fi
+    if [ "$rc" = "20" ]; then
+        echo "驱动文件已安装，需重启后生效。请重启机器，再重新执行同一条引导命令继续接入。"
+    else
+        echo "错误: 驱动未就绪（安装退出码 $rc，可能已取消或失败）。请查看上方输出，修复后重跑引导命令。"
+    fi
+    exit 1
+}
+
+# 无驱动分支的入口：跳过、安装或退出；装成功置 NVIDIA_DRIVER_OK=1。
+handle_missing_nvidia_driver() {
+    if [ "${LLMPOD_SKIP_NVIDIA_DRIVER_INSTALL:-no}" = "yes" ]; then
+        GPU_SKIP_REASON="已跳过 NVIDIA 驱动安装"
+        return
+    fi
+    if ! prompt_install_driver; then
+        GPU_SKIP_REASON="已跳过 NVIDIA 驱动安装"
+        return
+    fi
+    # 本轮已同意装驱动，后续 Toolkit 安装不再重复询问。
+    GPU_CONSENT_GIVEN=1
+    if [ "$(id -u 2>/dev/null)" != "0" ]; then
+        echo "错误: 自动安装驱动需要 root，请在引导命令前加 sudo 后重跑。"
+        exit 1
+    fi
+    install_nvidia_driver_and_verify
+    NVIDIA_DRIVER_OK=1
+}
+
 # 驱动不可用时，确认是否跳过 NVIDIA。
 NVIDIA_DRIVER_OK=0
 GPU_SKIP_REASON=""
@@ -194,10 +267,7 @@ if command -v nvidia-smi &> /dev/null; then
         GPU_SKIP_REASON="NVIDIA 驱动不可用"
     fi
 elif [ "$NVIDIA_HW_PRESENT" = "1" ]; then
-    bootstrap_confirm_or_exit \
-        "检测到 NVIDIA GPU，但找不到 nvidia-smi。" \
-        "请安装驱动。"
-    GPU_SKIP_REASON="NVIDIA 驱动未安装"
+    handle_missing_nvidia_driver
 fi
 
 # NVIDIA 官方仓库：仅在驱动正常、Docker 缺少 nvidia 运行时时安装。
@@ -252,7 +322,8 @@ prepare_nvidia_runtime() {
         exit 1
     fi
 
-    if [ -z "${LLMPOD_BOOTSTRAP_ASSUME_YES:-}" ]; then
+    # 本轮已确认过驱动安装的，GPU 接入意图明确，Toolkit 不再重复询问。
+    if [ -z "${LLMPOD_BOOTSTRAP_ASSUME_YES:-}" ] && [ -z "${GPU_CONSENT_GIVEN:-}" ]; then
         if ! { [ -t 1 ] && { exec 3<>/dev/tty; } 2>/dev/null; }; then
             echo "错误: Docker 缺少 nvidia 运行时，无法确认安装 Toolkit。"
             exit 1
