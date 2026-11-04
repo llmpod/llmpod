@@ -99,6 +99,24 @@ class TestGenerateStartArgs:
         # 覆写必须在 source 链之后（否则又被探测脏值盖回去）
         assert script.index("source /usr/local/Ascend/mindie/set_env.sh") < script.index("PYTORCH_INSTALL_PATH=")
 
+    def test_daemon_not_pid1(self, adapter):
+        """daemon 不能做容器 PID 1：PID 1 是 session leader，daemon 启动期 setpgid(0,0)
+        必 EPERM（MIE04E01011C）→ 容器 ExitCode 255（NPU 节点实测）。脚本须以「后台
+        拉起 + wait + 退出码透传」形态收尾，且绝不能出现 exec daemon。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/models/Qwen", served_model_name="q", port=1025, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        script = args[0]
+        lines = script.splitlines()
+        assert not any(ln.startswith("exec ") for ln in lines)  # exec 会把 daemon 变成 PID 1
+        daemon_line = next(ln for ln in lines if "mindieservice_daemon" in ln)
+        assert daemon_line.rstrip().endswith("&")  # 后台子进程
+        assert any(ln.startswith("wait ") for ln in lines)  # 父 bash 收尸、持容器存活
+        # 退出码透传：daemon 崩溃时容器退出码=daemon 退出码（readiness 判死活靠它）
+        assert lines[-1] == 'exit "$status"'
+
     def test_port_defaults_to_1025(self, adapter):
         """port=None：回落 MindIE 出厂业务端口 1025（reconciler 端口单源）。"""
         args = adapter.generate_start_args(
@@ -338,7 +356,7 @@ class TestCapabilityExposure:
         assert MindIEAdapter.supported_gpu_archs == ["cann"]
         assert MindIEAdapter.supports_multinode is False
         assert MindIEAdapter.supported_parallel == []
-        assert MindIEAdapter.entrypoint == ["/bin/bash", "-c"]
+        assert MindIEAdapter.entrypoint == ["/usr/local/bin/docker-entrypoint.sh", "/bin/bash", "-c"]
         assert MindIEAdapter.default_port == 1025
         assert MindIEAdapter.default_network_mode == "host"
         assert MindIEAdapter.protected_flags == ["--config-file"]

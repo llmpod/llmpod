@@ -8,8 +8,10 @@ positional token ``[引导脚本, "bash"]``，经 entrypoint ``/bin/bash -c`` �
 - ``args[1]="bash"`` 是 ``bash -c`` 的 **$0 占位**——没有它第一个用户 flag 会被 bash
   当脚本名吃掉；用户 extra_args 经三层合并落到尾部，由脚本里的 ``"$@"`` 透传 daemon。
 - 引导脚本：heredoc（引号定界符，零展开）落盘 config.json → ``chmod 640``（出厂模板
-  同为 640）→ best-effort source CANN/ATB/MindIE 环境（显式覆盖镜像 ENTRYPOINT，其
-  原入口的环境初始化由这里补偿）→ ``exec daemon --config-file <conf> "$@"``。
+  同为 640）→ 复用镜像官方入口 ``docker-entrypoint.sh`` 做环境初始化（其 source 的
+  ``cann-*/share/info/ascendnpu-ir/bin/set_env.sh`` 是 aie_ops / torch 库路径的唯一
+  来源，覆盖入口会缺它导致 daemon 启动即崩）→ 后台拉起 daemon + ``wait``——daemon
+  若为容器 PID 1，其 setpgid(0,0) 必 EPERM 崩溃（容器 255）。
 - config 结构对齐 3.1.0 出厂模板（M1 真机核验）：``ModelConfig`` 嵌套于
   ``BackendConfig.ModelDeployConfig`` 下、worldSize 只在模型条目上（BackendConfig
   无此键）、daemon 只认 ``--config-file``（无 ``--config``/``-c``）。系统层写死
@@ -75,7 +77,18 @@ def _bootstrap_script(conf: dict, model_path: str) -> str:
         + "export PYTORCH_INSTALL_PATH\n"
         + 'export LD_LIBRARY_PATH="$PYTORCH_INSTALL_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
         + f"cd {_SERVICE_HOME} 2>/dev/null || true\n"
-        + f'exec {_DAEMON_PATH} --config-file {_CONF_PATH} "$@"\n'
+        # daemon 不能做容器 PID 1：PID 1 是 session leader，daemon 启动期的 setpgid(0,0)
+        # 必返 EPERM（MIE04E01011C），视为致命错退出 → 容器 ExitCode 255（NPU 节点
+        # 实测）。改为后台子进程拉起 + wait 收尸；TERM 转发给它优雅退出，容器退出码
+        # 透传 daemon 退出码（readiness/事件面板靠它识别引擎崩溃）
+        + f'{_DAEMON_PATH} --config-file {_CONF_PATH} "$@" &\n'
+        + "child=$!\n"
+        + "trap 'kill -TERM \"$child\" 2>/dev/null' TERM INT\n"
+        + "status=0\n"
+        + "wait \"$child\" || status=$?\n"
+        + "wait \"$child\" 2>/dev/null\n"
+        + "trap - TERM INT\n"
+        + "exit \"$status\"\n"
     )
     return script
 
@@ -97,7 +110,10 @@ class MindIEAdapter(EngineAdapter):
     protected_flags = ["--config-file"]
     param_suggestions = []  # MindIE 调参项是 config 字段非 CLI flag，不诱导用户塞 flag
 
-    entrypoint = ["/bin/bash", "-c"]  # 显式覆盖镜像 ENTRYPOINT（脚本内补偿 source）
+    # 复用镜像官方入口（ascendhub mindie 镜像均带）：其 source 的 ascendnpu-ir
+    # set_env.sh 是 aie_ops / torch 库路径的唯一来源，覆盖掉会让 daemon 启动即崩
+    # （ExitCode 127）。入口最后 `exec "$@"`，对 bash -c 透明。
+    entrypoint = ["/usr/local/bin/docker-entrypoint.sh", "/bin/bash", "-c"]
 
     # 容器/服务默认值（host 网络同 vLLM cann 先例）
     default_port = 1025  # MindIE Service 业务端口出厂值
