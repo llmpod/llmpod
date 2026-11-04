@@ -276,14 +276,30 @@ class TestBuildEnv:
         )
         assert "PYTORCH_NPU_ALLOC_CONF" not in env
 
-    def test_slog_print_to_stdout(self, adapter):
-        """daemon 日志默认写文件：不设此变量容器日志空白（M1 实测），平台靠它收日志。"""
+    def test_no_slog_stdout_poison(self, adapter):
+        """绝不注入 ASCEND_SLOG_PRINT_TO_STDOUT：它让 libascend_hal.so 往 stdout 写驱动
+        日志，污染 ATB set_env.sh 的 ABI 探测 `$(...)`，误加载 cxx_abi_0 版 libatb.so
+        → warmup 建图 SIGSEGV（容器 134，NPU 节点 A/B 实验实锤，Qwen3-4B/Qwen2.5-1.5B
+        双模型复现）。CANN 日志走默认文件路径（容器可写层），排障能力不降。"""
         env = adapter.build_env(
             InstanceSpec(nnodes=1, gpu_arch="cann"),
             Topology(),
             EngineConfig(),
         )
-        assert env["ASCEND_SLOG_PRINT_TO_STDOUT"] == "1"
+        assert "ASCEND_SLOG_PRINT_TO_STDOUT" not in env
+
+    def test_bootstrap_pins_atb_cxx_abi(self, adapter):
+        """ATB 层 source 必须带 --cxx_abi=1：set_env.sh 的 get_cxx_abi_option() 用
+        `$(python3 -c 'import torch; ...') == "True"` 判 ABI，stdout 被任何日志污染即
+        误判 ABI=0 → 加载 cxx_abi_0 版 libatb.so，与 ABI1 编译的消费者混用，warmup
+        建图段错误（容器 134，NPU 节点实测）。--cxx_abi=1 让脚本跳过 torch 探测。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=1025, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        script = args[0]
+        assert "source /usr/local/Ascend/nnal/atb/set_env.sh --cxx_abi=1 2>/dev/null || true" in script
 
 
 class TestHealthCheck:

@@ -44,9 +44,16 @@ _SERVICE_HOME = "/usr/local/Ascend/mindie/latest/mindie-service"
 # best-effort source 清单：CANN toolkit + ATB + MindIE 三层各自带 set_env.sh，
 # 镜像内路径差异由 `|| true` 吸收（缺哪层跳哪层）
 _ENV_SOURCES = (
-    "/usr/local/Ascend/ascend-toolkit/set_env.sh",
-    "/usr/local/Ascend/nnal/atb/set_env.sh",
-    "/usr/local/Ascend/mindie/set_env.sh",
+    "source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null || true",
+    # ATB 层显式钉 cxx_abi=1：set_env.sh 的 get_cxx_abi_option() 用
+    # `$(python3 -c 'import torch; print(...)') == "True"` 判 ABI，任何 stdout 污染都会
+    # 击穿它——ASCEND_SLOG_PRINT_TO_STDOUT=1 时 libascend_hal.so 往 stdout 追加驱动
+    # 错误日志，捕获值变多行脏串 → 误判 ABI=0 → 加载 cxx_abi_0 版 libatb.so，与镜像内
+    # 全部 ABI1 编译的消费者混用，daemon 在 warmup 建图（GraphOperation 构造）内按 ABI0
+    # 字符串布局解析 ABI1 的 SSO 字符串 SIGSEGV（容器 134，NPU 节点 A/B 实验实锤）。
+    # --cxx_abi=1 让脚本跳过 torch 探测
+    "source /usr/local/Ascend/nnal/atb/set_env.sh --cxx_abi=1 2>/dev/null || true",
+    "source /usr/local/Ascend/mindie/set_env.sh 2>/dev/null || true",
 )
 # torch 安装路径（镜像实测）：mindie-llm set_env.sh 用 python3 -c 'import torch' 探测
 # 此路径，设备被节点代理占用（DCMI -8020）时探测仍会打印正确路径，但 CANN/driver 把
@@ -68,7 +75,7 @@ def _bootstrap_script(conf: dict, model_path: str) -> str:
         # Qwen 系官方权重 bf16 落盘——幂等改写模型 config.json 为 fp16（已是 fp16 则无操作）。
         # 模型卷 rw 挂载可写；意外只读时 || true 吸收，daemon 会以原始报错暴露
         f'sed -i \'s/"torch_dtype": *"bfloat16"/"torch_dtype": "float16"/\' {model_path}/config.json 2>/dev/null || true\n'
-        + "".join(f"source {s} 2>/dev/null || true\n" for s in _ENV_SOURCES)
+        + "".join(f"{s}\n" for s in _ENV_SOURCES)
         # source 链会把 PYTORCH_INSTALL_PATH 覆盖成多行脏值（见 _TORCH_INSTALL_PATH
         # 注释），空值兜底拦不住非空的脏值——不信任探测结果，直接覆写并把 torch/lib
         # 注入链接路径（ld.so 会跳过脏目录）。设备真被占时 daemon 会在设备初始化处
@@ -179,12 +186,15 @@ class MindIEAdapter(EngineAdapter):
         # 曝全部分配到的 NPU（与 build_device_config 的 davinci 挂载同口径）；npuDeviceIds
         # 用逻辑重编号（0..world-1），物理选卡由设备直通 + 本变量承担
         ids = ",".join(str(i) for i in (instance.assigned_gpus or [0]))
+        # 只曝设备可见性。绝不能注入 ASCEND_SLOG_PRINT_TO_STDOUT=1：它让 libascend_hal.so
+        # 往 stdout 写驱动日志，污染 ATB set_env.sh 的 ABI 探测命令替换（见 _ENV_SOURCES
+        # 注释），误加载 cxx_abi_0 版 libatb.so 导致 warmup 建图 SIGSEGV（容器 134，
+        # NPU 节点 A/B 实验实锤）——当初为「容器日志可见性」加的这行正是五环 134 的根因。
+        # CANN/mindie 日志走默认文件路径（容器可写层 /root/ascend/log），daemon 的 Python
+        # 级错误仍走 stderr 进容器日志，排障能力不降
         return {
             "ASCEND_VISIBLE_DEVICES": ids,
             "ASCEND_RT_VISIBLE_DEVICES": ids,
-            # daemon 日志默认写文件不进 stdout，容器日志会一片空白（M1 实测）；
-            # 此变量把 CANN/mindie 日志改道 stdout，平台「容器日志」功能才看得到东西
-            "ASCEND_SLOG_PRINT_TO_STDOUT": "1",
         }
 
     @classmethod
