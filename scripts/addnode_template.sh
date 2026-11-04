@@ -433,6 +433,29 @@ if [ "$NVIDIA_DRIVER_OK" = "1" ] && ! prepare_nvidia_runtime; then
     GPU_SKIP_REASON="已跳过 NVIDIA Container Toolkit"
 fi
 
+# Ascend 运行时只服务平台侧 MindIE 容器部署；节点代理自身靠手工设备挂载即可采集，
+# 故缺失时仅警告不中断（与 nvidia 的降级 CPU-only 语义不同）。
+ascend_runtime_available() {
+    docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"ascend"'
+}
+
+prepare_ascend_runtime() {
+    ascend_runtime_available && return 0
+    local setup="/usr/local/Ascend/Ascend-Docker-Runtime/script/ascend-docker-runtime-setup.sh"
+    if [ ! -f "$setup" ]; then
+        echo "警告: Docker 缺少 ascend 运行时，且未找到 Ascend Docker Runtime 安装（$setup）。"
+        echo "节点代理可正常运行并采集 NPU，但平台在该节点部署 MindIE 容器会失败"
+        echo "（Unknown runtime specified: ascend）。请安装后重跑本脚本。"
+        return 1
+    fi
+    # 已安装但注册丢失（如 daemon.json 被覆盖）：官方脚本会合并写入 daemon.json
+    # 并需重启 Docker 才生效（此时代理容器尚未创建，无连带影响）。
+    "$setup" install \
+        && systemctl restart docker \
+        && docker info > /dev/null 2>&1 \
+        && ascend_runtime_available
+}
+
 # 缺少设备节点时，确认是否跳过 Ascend。
 ASCEND_SKIP_REASON=""
 if command -v npu-smi &> /dev/null && ! ls /dev/davinci[0-9]* > /dev/null 2>&1; then
@@ -500,6 +523,9 @@ fi
 DAVINCI_DEVS=( $(ls /dev/davinci[0-9]* 2>/dev/null || true) )
 if [ ${#DAVINCI_DEVS[@]} -gt 0 ]; then
     echo "检测到 Ascend NPU: ${DAVINCI_DEVS[*]}"
+    if ! prepare_ascend_runtime; then
+        echo "警告: 已继续安装，但该节点暂无法部署 MindIE 推理容器（缺 ascend 运行时）。"
+    fi
     for dev in "${DAVINCI_DEVS[@]}" /dev/davinci_manager /dev/devmm_svm /dev/hisi_hdc; do
         RUN_FLAGS+=(--device "$dev:$dev:rwm")
     done
