@@ -103,13 +103,16 @@ def _run(
     return result, calls.read_text() if calls.exists() else ""
 
 
-def test_exit20_but_driver_works_continues(tmp_path):
-    """退出码 20 不等于必须重启：实测 nvidia-smi 已通就直接继续。"""
+def test_exit20_always_stops_for_reboot(tmp_path):
+    """安装器判定需重启（退出码 20）就立即收尾：即使模块此刻可加载也不再继续，
+    避免「提示重启后又打印就绪/GPU/IP 菜单」的自相矛盾输出。"""
     result, calls = _run(
         tmp_path, "install_nvidia_driver_and_verify", installer_rc="20", driver_ready=True
     )
-    assert result.returncode == 0
-    assert "NVIDIA 驱动已就绪" in result.stdout
+    assert result.returncode == 1
+    assert "需要重启后生效" in result.stdout or "请重启" in result.stdout
+    assert "重新运行添加节点命令" in result.stdout
+    assert "NVIDIA 驱动已就绪" not in result.stdout
     assert "--install --yes" in calls
     assert "MISSING --yes" not in calls
 
@@ -120,7 +123,7 @@ def test_exit20_without_driver_stops_with_rerun_hint(tmp_path):
     )
     assert result.returncode == 1
     assert "重启" in result.stdout
-    assert "重新执行同一条引导命令" in result.stdout
+    assert "重新运行添加节点命令" in result.stdout
 
 
 def test_exit0_without_driver_is_cancel(tmp_path):
