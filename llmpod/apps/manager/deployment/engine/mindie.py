@@ -263,6 +263,8 @@ class MindIEAdapter(EngineAdapter):
                 "metricsTlsCrlFiles": ["server_crl.pem"],
                 "inferMode": "standard",
                 "interCommTLSEnabled": False,
+                # 出厂原值 1121：interComm 只在 distDPServerEnabled（平台恒关）时使用，
+                # 不参与派生端口序列（+1/+2 只护 management/metrics）
                 "interCommPort": 1121,
                 "interCommTlsCaPath": "security/grpc/ca/",
                 "interCommTlsCaFiles": ["ca.pem"],

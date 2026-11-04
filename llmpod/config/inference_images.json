@@ -159,8 +159,6 @@
     },
     "llamacpp:b10975": {},
     "mindie:3.1.0": {
-      "parser_auto": false,
-      "metrics_flag": false,
       "multinode": false,
       "pp": false
     },
@@ -6548,15 +6546,14 @@
       "engine": "mindie",
       "arch": "cann",
       "gpu_model": [
-        "*310P*",
-        "*300I*"
+        "*310P*"
       ],
       "driver": ">=25.2",
       "engine_version": "3.1.0",
       "image": "swr.cn-south-1.myhuaweicloud.com/ascendhub/mindie:3.1.0-cann9.0.1-torch_npu2.9.0.post4-310p-openeuler24.03_lts-py3.11",
       "default": true,
       "params": {},
-      "notes": "MindIE Service 3.1.0（昇腾 310P/300I Duo，x86_64 多架构 manifest）；M1 真机核验：310P3 + 驱动 25.2.3 匿名 pull 成功、镜像内 CANN 9.0.1。params.args 必须为空：MindIE 适配器产出的 positional（引导脚本 + $0 占位）必须严格在前，image 层 args 会渲染进传给 daemon 的 $@ 区"
+      "notes": "MindIE Service 3.1.0（昇腾 310P 系，x86_64 多架构 manifest；300I Duo 同芯异名但未实测，fail-closed 不放行）；M1 真机核验：310P3 + 驱动 25.2.3 匿名 pull 成功、镜像内 CANN 9.0.1。params.args 必须为空：MindIE 适配器产出的 positional（引导脚本 + $0 占位）必须严格在前，image 层 args 会渲染进传给 daemon 的 $@ 区"
     }
   ]
 }

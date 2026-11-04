@@ -327,10 +327,15 @@ class TestEstimateVramGb:
 
 class TestImageCatalog:
     def test_catalog_entry_matches_310p(self):
-        """mindie-ascend-310p 条目五维匹配 310P3 卡（engine/arch/gpu_model/driver）。"""
+        """mindie-ascend-310p 条目五维匹配 310P3 卡（engine/arch/gpu_model/driver）。
+
+        gpu_model 只放行已实测的 *310P*（fail-closed）：300I Duo 与 310P 同芯异名，
+        但平台上未见该命名上报的卡，放行未实测卡型与适配器「只声明已验证的」哲学
+        相悖——实测有此类卡后再扩。
+        """
         image_catalog.reload()
         entries = image_catalog.list_entries(engine="mindie", arch="cann", gpu_model="310P3", driver_version="25.2.3")
-        assert any(e.gpu_model == ["*310P*", "*300I*"] for e in entries)
+        assert any(e.gpu_model == ["*310P*"] for e in entries)
         # 条目 params.args 必须为空列表：image 层 positional 会渲染进 "$@" 传给 daemon
         for e in entries:
             assert (e.params.get("args") or []) == []
