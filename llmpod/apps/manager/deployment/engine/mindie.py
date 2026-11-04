@@ -46,6 +46,12 @@ _ENV_SOURCES = (
     "/usr/local/Ascend/nnal/atb/set_env.sh",
     "/usr/local/Ascend/mindie/set_env.sh",
 )
+# torch 安装路径（镜像实测）：mindie-llm set_env.sh 用 python3 -c 'import torch' 探测
+# 此路径，设备被节点代理占用（DCMI -8020）时探测仍会打印正确路径，但 CANN/driver 把
+# 错误日志写进 **stdout**（2>/dev/null 挡不住），$(...) 连日志一起捕获成多行脏值 →
+# torch/lib 拼出非法目录进 LD_LIBRARY_PATH，daemon 报 libtorch_cpu.so 缺失退出 127。
+# 脏值非空，空值兜底（${VAR:-…}）拦不住，只能不信任探测结果、强制覆写为已核验路径
+_TORCH_INSTALL_PATH = "/usr/local/lib64/python3.11/site-packages/torch"
 
 
 def _bootstrap_script(conf: dict, model_path: str) -> str:
@@ -61,6 +67,13 @@ def _bootstrap_script(conf: dict, model_path: str) -> str:
         # 模型卷 rw 挂载可写；意外只读时 || true 吸收，daemon 会以原始报错暴露
         f'sed -i \'s/"torch_dtype": *"bfloat16"/"torch_dtype": "float16"/\' {model_path}/config.json 2>/dev/null || true\n'
         + "".join(f"source {s} 2>/dev/null || true\n" for s in _ENV_SOURCES)
+        # source 链会把 PYTORCH_INSTALL_PATH 覆盖成多行脏值（见 _TORCH_INSTALL_PATH
+        # 注释），空值兜底拦不住非空的脏值——不信任探测结果，直接覆写并把 torch/lib
+        # 注入链接路径（ld.so 会跳过脏目录）。设备真被占时 daemon 会在设备初始化处
+        # 以真实错误暴露（不再是误导性的 127）
+        + f"PYTORCH_INSTALL_PATH={_TORCH_INSTALL_PATH}\n"
+        + "export PYTORCH_INSTALL_PATH\n"
+        + 'export LD_LIBRARY_PATH="$PYTORCH_INSTALL_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
         + f"cd {_SERVICE_HOME} 2>/dev/null || true\n"
         + f'exec {_DAEMON_PATH} --config-file {_CONF_PATH} "$@"\n'
     )

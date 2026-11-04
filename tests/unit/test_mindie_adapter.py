@@ -82,6 +82,23 @@ class TestGenerateStartArgs:
         sed_line = next(ln for ln in script.splitlines() if ln.startswith("sed -i"))
         assert sed_line.endswith("|| true")
 
+    def test_bootstrap_repairs_clobbered_torch_path(self, adapter):
+        """mindie-llm set_env.sh 用 `import torch` 探测 PYTORCH_INSTALL_PATH：设备被节点
+        代理占用（DCMI -8020）时 CANN/driver 把错误日志写进 **stdout**，$(...) 连日志
+        一起捕获成多行脏值（非空！空值兜底 ${VAR:-…} 拦不住）→ torch/lib 拼出非法目录，
+        daemon 报 libtorch_cpu.so 缺失退出 127（NPU 节点实测）。脚本须在 source 链之后
+        **强制覆写**为已核验路径并把 torch/lib 注入 LD_LIBRARY_PATH。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/models/Qwen", served_model_name="q", port=1025, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        script = args[0]
+        assert "PYTORCH_INSTALL_PATH=/usr/local/lib64/python3.11/site-packages/torch" in script
+        assert 'export LD_LIBRARY_PATH="$PYTORCH_INSTALL_PATH/lib' in script
+        # 覆写必须在 source 链之后（否则又被探测脏值盖回去）
+        assert script.index("source /usr/local/Ascend/mindie/set_env.sh") < script.index("PYTORCH_INSTALL_PATH=")
+
     def test_port_defaults_to_1025(self, adapter):
         """port=None：回落 MindIE 出厂业务端口 1025（reconciler 端口单源）。"""
         args = adapter.generate_start_args(
