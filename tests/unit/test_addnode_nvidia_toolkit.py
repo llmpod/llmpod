@@ -198,11 +198,12 @@ def test_custom_node_name_reaches_container(tmp_path):
     assert any(call.startswith("run -d") and "-e LLMPOD_NODE_NAME=gpu-west-2" in call for call in calls)
 
 
-def test_invalid_node_name_stops_before_docker(tmp_path):
+def test_invalid_node_name_stops_before_container_actions(tmp_path):
     result, calls = _run_bootstrap(tmp_path, gpu_works=True, node_name="bad name")
     assert result.returncode != 0
     assert "节点名称格式无效" in result.stdout
-    assert calls == []
+    # 前置依赖检测先于参数校验：允许 docker info 探测，但不允许任何安装/容器动作。
+    assert calls == ["info"]
 
 
 @pytest.mark.parametrize("answer, expected", [("", "cloned-host"), ("gpu-west-2", "gpu-west-2")])

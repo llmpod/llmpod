@@ -48,45 +48,9 @@ valid_mount() {
         && { [ -z "$mode" ] || [[ "$mode" =~ ^[A-Za-z][A-Za-z,]{0,15}$ ]]; }
 }
 
-if [ -z "${LLMPOD_BOOTSTRAP_ASSUME_YES:-}" ] && { [ -t 1 ] && { exec 3<>/dev/tty; } 2>/dev/null; }; then
-    echo "确认安装参数；直接回车使用当前默认值。"
-    prompt_default "节点名称" NODE_NAME
-    prompt_default "节点互联 IP" NODE_IP
-    prompt_default "节点镜像" IMAGE
-    prompt_default "容器名" CONTAINER_NAME
-    prompt_default "数据卷" DATA_VOLUME
-    prompt_default "宿主机模型目录" MODEL_HOST_DIR
-    prompt_default "额外挂载（空格分隔）" EXTRA_MOUNTS_SPEC
-fi
-
-if ! [[ "$NODE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$ ]]; then
-    echo "错误: 节点名称格式无效，须以字母或数字开头，且仅含字母、数字、点、下划线或连字符（最多 255 字符）。"
-    exit 1
-fi
-if ! [[ "$IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$ ]] \
-    || ! [[ "$CONTAINER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
-    || ! valid_host_path "$DATA_VOLUME" || ! valid_abs_path "$MODEL_HOST_DIR"; then
-    echo "错误: 安装参数格式无效。"
-    exit 1
-fi
-if [ -n "$EXTRA_MOUNTS_SPEC" ]; then
-    read -r -a _mounts_to_validate <<< "$EXTRA_MOUNTS_SPEC"
-    if [ "${#_mounts_to_validate[@]}" -gt 16 ]; then
-        echo "错误: 额外挂载不能超过 16 项。"
-        exit 1
-    fi
-    for _mount_to_validate in "${_mounts_to_validate[@]}"; do
-        if ! valid_mount "$_mount_to_validate"; then
-            echo "错误: 额外挂载格式无效: $_mount_to_validate"
-            exit 1
-        fi
-    done
-fi
-
-echo "LLMPod 节点引导"
-echo "集群 $CLUSTER_ID · 节点 $NODE_NAME · 容器 $CONTAINER_NAME"
-echo "镜像 $IMAGE"
-echo ""
+# 前置依赖先检先装（Docker 等），确认可用后再进入参数确认与安装内容展示，
+# 避免用户填完参数才在长安装环节失败。
+echo "正在检测前置依赖...."
 
 # Docker 缺失时下载宝塔安装脚本安装；镜像源参数必须带 https://——
 # 脚本把它原样拼进 deb 源行，缺协议前缀会写出非法源并拖垮整机 apt。
@@ -103,8 +67,7 @@ clean_invalid_docker_apt_list() {
 }
 
 install_docker_if_missing() {
-    command -v docker > /dev/null 2>&1 && return 0
-    echo "未检测到 Docker。"
+    command -v docker > /dev/null 2>&1 && { echo "Docker 已就绪。"; return 0; }
 
     if [ "${LLMPOD_SKIP_DOCKER_INSTALL:-no}" = "yes" ]; then
         echo "请先安装 Docker，再重跑引导命令。"
@@ -117,7 +80,7 @@ install_docker_if_missing() {
             return 1
         fi
         local answer
-        IFS= read -r -p "安装 Docker？[y/N]: " -t 60 -u 3 answer || answer=""
+        IFS= read -r -p "缺少Docker，是否安装？[y/N]: " -t 60 -u 3 answer || answer=""
         case "$answer" in
             y|Y|yes|YES) ;;
             *) echo "已取消。请先安装 Docker 后重试。"; return 1 ;;
@@ -169,6 +132,47 @@ if ! docker info > /dev/null 2>&1; then
     echo "错误: Docker 服务不可用，或当前用户无权访问。"
     exit 1
 fi
+
+# 前置依赖就绪，进入参数确认与安装展示。
+# 互联 IP 不在此确认：后面有专门的网卡选择菜单（可手动输入），这里问了只会重复。
+if [ -z "${LLMPOD_BOOTSTRAP_ASSUME_YES:-}" ] && { [ -t 1 ] && { exec 3<>/dev/tty; } 2>/dev/null; }; then
+    echo "确认安装参数；直接回车使用当前默认值。"
+    prompt_default "节点名称" NODE_NAME
+    prompt_default "节点镜像" IMAGE
+    prompt_default "容器名" CONTAINER_NAME
+    prompt_default "数据卷" DATA_VOLUME
+    prompt_default "宿主机模型目录" MODEL_HOST_DIR
+    prompt_default "额外挂载（空格分隔）" EXTRA_MOUNTS_SPEC
+fi
+
+if ! [[ "$NODE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$ ]]; then
+    echo "错误: 节点名称格式无效，须以字母或数字开头，且仅含字母、数字、点、下划线或连字符（最多 255 字符）。"
+    exit 1
+fi
+if ! [[ "$IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$ ]] \
+    || ! [[ "$CONTAINER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
+    || ! valid_host_path "$DATA_VOLUME" || ! valid_abs_path "$MODEL_HOST_DIR"; then
+    echo "错误: 安装参数格式无效。"
+    exit 1
+fi
+if [ -n "$EXTRA_MOUNTS_SPEC" ]; then
+    read -r -a _mounts_to_validate <<< "$EXTRA_MOUNTS_SPEC"
+    if [ "${#_mounts_to_validate[@]}" -gt 16 ]; then
+        echo "错误: 额外挂载不能超过 16 项。"
+        exit 1
+    fi
+    for _mount_to_validate in "${_mounts_to_validate[@]}"; do
+        if ! valid_mount "$_mount_to_validate"; then
+            echo "错误: 额外挂载格式无效: $_mount_to_validate"
+            exit 1
+        fi
+    done
+fi
+
+echo "LLMPod 节点引导"
+echo "集群 $CLUSTER_ID · 节点 $NODE_NAME · 容器 $CONTAINER_NAME"
+echo "镜像 $IMAGE"
+echo ""
 
 bootstrap_confirm_or_exit() {
     local title="$1"; shift
