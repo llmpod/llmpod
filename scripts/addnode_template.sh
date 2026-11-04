@@ -218,6 +218,7 @@ GPU_SKIP_REASON=""
 if command -v nvidia-smi &> /dev/null; then
     if nvidia-smi -L &> /dev/null; then
         NVIDIA_DRIVER_OK=1
+        echo "NVIDIA 驱动已就绪。"
     else
         bootstrap_confirm_or_exit \
             "NVIDIA 驱动不可用（nvidia-smi -L 失败）。" \
@@ -332,11 +333,34 @@ install_nvidia_toolkit() {
 }
 
 nvidia_runtime_available() {
+    # daemon.json 里的运行时配置在 toolkit 被卸载后仍会保留（比如
+    # apt --purge remove nvidia* 这类通配清理），二进制存在才算可用。
+    command -v nvidia-container-runtime > /dev/null 2>&1 || return 1
     docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'
 }
 
+# Docker 28+ 的 --gpus 由 daemon 做 CDI 设备发现，缺 CDI 描述文件会直接报
+# 「failed to discover GPU vendor from CDI」。描述缺失或驱动版本变化时重新生成。
+ensure_nvidia_cdi_specs() {
+    local cdi_dir="${1:-/etc/cdi}" cdi_file driver_version
+    command -v nvidia-ctk > /dev/null 2>&1 || return 0
+    driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+    [ -n "$driver_version" ] || return 0
+    cdi_file="$cdi_dir/nvidia.yaml"
+    if [ -s "$cdi_file" ] && [ "$(cat "$cdi_dir/.driver-version" 2>/dev/null)" = "$driver_version" ]; then
+        return 0
+    fi
+    mkdir -p "$cdi_dir"
+    if nvidia-ctk cdi generate --output "$cdi_file" > /dev/null 2>&1; then
+        printf '%s\n' "$driver_version" > "$cdi_dir/.driver-version"
+    fi
+}
+
 prepare_nvidia_runtime() {
-    nvidia_runtime_available && return 0
+    if nvidia_runtime_available; then
+        ensure_nvidia_cdi_specs
+        return 0
+    fi
     if [ "${LLMPOD_SKIP_NVIDIA_TOOLKIT_INSTALL:-no}" = "yes" ]; then
         echo "错误: Docker 缺少 nvidia 运行时，请先安装 NVIDIA Container Toolkit。"
         exit 1
@@ -391,6 +415,7 @@ prepare_nvidia_runtime() {
         exit 1
     fi
     rm -f "$backup"
+    ensure_nvidia_cdi_specs
 }
 
 if [ "$NVIDIA_DRIVER_OK" = "1" ] && ! prepare_nvidia_runtime; then

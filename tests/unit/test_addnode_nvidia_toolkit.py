@@ -23,7 +23,12 @@ def _stub(path: Path, body: str) -> None:
 def _run(tmp_path: Path, *, ready: bool = False, restart_fails: bool = False, skip: bool = False):
     source = TEMPLATE.read_text()
     functions = []
-    for name in ("install_nvidia_toolkit", "nvidia_runtime_available", "prepare_nvidia_runtime"):
+    for name in (
+        "install_nvidia_toolkit",
+        "nvidia_runtime_available",
+        "ensure_nvidia_cdi_specs",
+        "prepare_nvidia_runtime",
+    ):
         match = re.search(rf"^{name}\(\) \{{.*?^\}}$", source, re.M | re.S)
         assert match
         functions.append(match.group(0))
@@ -39,6 +44,7 @@ def _run(tmp_path: Path, *, ready: bool = False, restart_fails: bool = False, sk
     for name in ("cp", "rm", "mktemp", "grep"):
         (bin_dir / name).symlink_to(shutil.which(name))
     _stub(bin_dir / "id", 'printf "0\\n"\n')
+    _stub(bin_dir / "nvidia-container-runtime", "exit 0\n")
     _stub(
         bin_dir / "docker",
         'if [ "$1" = "info" ] && [ "$2" = "--format" ]; then\n'
@@ -116,7 +122,8 @@ def _run_bootstrap(tmp_path: Path, *, gpu_works: bool, node_name: str | None = N
         '    run) if [ "$2" = "--rm" ] && [ "$MOCK_GPU_FAIL" = "1" ]; then exit 1; fi; printf "mock-id\\n" ;;\n'
         "esac\n",
     )
-    _stub(bin_dir / "nvidia-smi", 'printf "Mock GPU\\n"\n')
+    _stub(bin_dir / "nvidia-smi", 'case "$1" in -L) exit 0;; --query-gpu*) exit 1;; *) exit 0;; esac\n')
+    _stub(bin_dir / "nvidia-container-runtime", "exit 0\n")
     _stub(bin_dir / "hostname", 'printf "cloned-host\\n"\n')
     # curl 桩记录实际探测的 URL：候选带 /ws/node 固定路径，健康探测必须剥路径后
     # 打根 /health（此前桩成无路径 URL + exit 0，掩盖了拼接缺陷）
@@ -214,3 +221,39 @@ def test_interactive_node_name_accepts_default_or_edit(tmp_path, answer, expecte
     assert result.returncode == 0, result.stdout + result.stderr
     assert "节点名称（默认值: cloned-host，回车确认）" in result.stdout
     assert any(call.startswith("run -d") and f"-e LLMPOD_NODE_NAME={expected}" in call for call in calls)
+
+
+def test_cdi_specs_generated_and_cached(tmp_path):
+    """Docker 28+ 依赖 CDI 描述：缺失或驱动版本变化时生成，否则跳过。"""
+    source = TEMPLATE.read_text()
+    match = re.search(r"^ensure_nvidia_cdi_specs\(\) \{.*?^\}$", source, re.M | re.S)
+    assert match
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.log"
+    for name in ("head", "mkdir", "cat"):
+        (bin_dir / name).symlink_to(shutil.which(name))
+    _stub(bin_dir / "nvidia-smi", 'printf "580.196.07\\n"\n')
+    _stub(
+        bin_dir / "nvidia-ctk",
+        "out= prev=\n"
+        'for a in "$@"; do [ "$prev" = "--output" ] && out="$a"; prev="$a"; done\n'
+        'printf "nvidia-ctk %s\\n" "$*" >> "$MOCK_LOG"\n'
+        '[ -n "$out" ] && printf specs > "$out"\n'
+        "exit 0\n",
+    )
+    cdi = tmp_path / "cdi"
+    env = {**os.environ, "PATH": str(bin_dir), "MOCK_LOG": str(calls)}
+    script = match.group(0) + f"\nensure_nvidia_cdi_specs {cdi}\n"
+    for _ in range(2):
+        subprocess.run(["/bin/bash", "-c", script], env=env, capture_output=True, text=True, timeout=10)
+    out = cdi / "nvidia.yaml"
+    assert out.exists()
+    assert (cdi / ".driver-version").read_text().strip() == "580.196.07"
+    # 第二次同版本不重复生成
+    assert calls.read_text().count("cdi generate") == 1
+    # 驱动版本变化后重新生成
+    _stub(bin_dir / "nvidia-smi", 'printf "580.200.00\\n"\n')
+    subprocess.run(["/bin/bash", "-c", script], env=env, capture_output=True, text=True, timeout=10)
+    assert calls.read_text().count("cdi generate") == 2
+    assert (cdi / ".driver-version").read_text().strip() == "580.200.00"
