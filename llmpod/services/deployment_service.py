@@ -427,8 +427,7 @@ async def persist_running(
 
     重新 fetch dep（编排器持有的 dep 来自已关闭 session，detached）；endpoint 由编排器据适配器构造。
     若 dep 已被 stop/delete 抢先置终态（stopped/deleting/failed）则 raise——编排器据此不覆盖成 running。
-    endpoint 幂等（重复 finalize，如崩溃恢复后再进 FINALIZING）由编排器预查已有行提前返回；
-    本函数无条件 add——只在新 finalize 路径被调用（唯一调用方已保证不存在同键行）。
+    endpoint 幂等由编排器预查，只传缺失行；重启复用全部端点时列表为空，仍须恢复达成态。
 
     四层达成态**只认领本次达成的实例集合**：扩容场景下存量副本可能正 down/
     崩溃自愈中，盲盖会把投影链刚写下的真实状态抹掉（状态的权威来源在容器上报
@@ -599,7 +598,7 @@ async def delete_endpoints_with_bindings(db: AsyncSession, endpoints: list[Model
     """删端点行及其全部 RouteBinding 成员（先 binding 后 endpoint）。
 
     悬空绑定是不变量级风险：binding 指着已删端点会使 auto 路由永不清空 → 残留路由
-    （/v1/models 仍列、调用 503）。restart 换端点 / finalize 孤儿清理 / 缩容摘份 / 级联
+    （/v1/models 仍列、调用 503）。finalize 孤儿清理 / 缩容摘份 / 级联
     删部署一律走本函数，不逐处手写。
     """
     ep_ids = [e.id for e in endpoints]

@@ -475,12 +475,12 @@ class DeploymentOrchestrator:
             dep.status = DeploymentStatus.CREATING
             dep.health_status = None  # 运行时健康仅在 running 期有意义，重启重新起算
             dep.scale_target = None  # 上一轮在途扩缩意图作废（重启是新一轮部署）
-            # 删旧 endpoint 及其绑定成员（重部署 finalize 时重新产出 + 重新绑定）——
-            # 悬空成员会使 auto 路由永不清空 → 残留路由
+            # 同一副本/协议继续使用原端点，保留手工绑定、权重和开关；达成前先摘流。
             old_endpoints = list(
                 (await db.execute(select(ModelEndpoint).where(ModelEndpoint.deployment_id == deployment_id))).scalars()
             )
-            await deployment_service.delete_endpoints_with_bindings(db, old_endpoints)
+            for endpoint in old_endpoints:
+                endpoint.health_status = "down"
 
             # 清旧的 START_INSTANCE / STOP_INSTANCE task：restart 是新一轮部署。START task
             # 必须清——上一轮的 SUCCESS START task 会让 reconciler 幂等短路（prev SUCCESS →
@@ -1086,7 +1086,7 @@ class DeploymentOrchestrator:
         端点只挂 serving 引擎（role ∈ full/decode；prefill 永不出端点）——api_base 取
         该引擎 head 分片（node_rank=0）的 master_addr:port。幂等对账键 (replica_id,
         protocol)：FINALIZING 崩溃恢复重入补缺行、清不在当前副本集的孤儿行（防残留
-        端点进路由）；全齐则跳过重建，仅补路由绑定。已有端点行的展示名按当前副本集
+        端点进路由）；全齐则复用原行，更新重启后地址。已有端点行的展示名按当前副本集
         重算（多/单副本形态切换时改名，见 ``sync_endpoint_names``）。
 
         ``instances`` 是全量分片（端点寻址要看到存量份的 head）；``achieved_ids`` 是
@@ -1149,6 +1149,10 @@ class DeploymentOrchestrator:
         missing_keys = set(plan) - existing_keys
         # 孤儿清理：不在当前副本集（含改拓扑后的遗留行）不进路由——绑定一并删防悬空成员
         orphans = [ep for ep in existing if (ep.model_deployment_replica_id, ep.protocol) not in plan]
+        for ep in existing:
+            key = (ep.model_deployment_replica_id, ep.protocol)
+            if key in plan:
+                ep.api_base = plan[key][0]
 
         new_endpoints: list[ModelEndpoint] = []
         for replica_id, protocol in missing_keys:
@@ -1181,7 +1185,7 @@ class DeploymentOrchestrator:
         if orphans:
             await deployment_service.delete_endpoints_with_bindings(db, orphans)
 
-        if new_endpoints:
+        if new_endpoints or (plan and dep.status == DeploymentStatus.CREATING):
             # api_endpoint 代表地址 = 第一份副本（名片字段，权威清单在端点表）
             first_key = (replicas[0].replica_id, protocols[0])
             first_api_base = plan[first_key][0] if first_key in plan else None
@@ -1194,6 +1198,7 @@ class DeploymentOrchestrator:
             )
         else:
             log.info("deployment %s: ModelEndpoint 已全部建（%d 行），跳过重建", deployment_id[:8], len(existing))
+        await deployment_projection.project_upwards(db, deployment_id)
 
         # 路由查一次、成员逐协议 append（route 复用，避免每端点重复 SELECT）。路由名唯一索引
         # 并发冲突（uq_route_name）不翻部署为 failed——endpoint 已可用，发布缺失可由重入/管理员补。

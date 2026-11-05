@@ -147,7 +147,9 @@ async def project_upwards(db: AsyncSession, deployment_id: str) -> None:
     replica_status_by_id = {r.replica_id: r.status for r in replica_rows}
     for ep in endpoints:
         rid = ep.model_deployment_replica_id
-        target = "healthy" if rid is not None and replica_status_by_id.get(rid) == ReplicaStatus.SERVING else "down"
+        # restart 保留端点身份；FINALIZING 更新重分配的地址前，不得向旧端口送流量。
+        serving = dep.status == DeploymentStatus.RUNNING and replica_status_by_id.get(rid) == ReplicaStatus.SERVING
+        target = "healthy" if serving else "down"
         if ep.health_status != target:
             ep.health_status = target
 

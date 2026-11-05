@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import Delete
@@ -1267,7 +1268,7 @@ class TestReconcilerAdvance:
     def _pull_task(self, session, dep, status, attempt=1):
         import hashlib
 
-        image = "vllm/vllm-openai:v0.23.0"
+        image = "vllm/vllm-openai:v0.27.1"
         h = hashlib.sha256(image.encode()).hexdigest()[:16]
         return session.preload(
             Task(
@@ -1324,7 +1325,7 @@ class TestReconcilerAdvance:
         await advance_deployment(dep.deployment_id)
 
         assert ensures and ensures[0].type == TaskType.PULL_IMAGE
-        assert ensures[0].payload == {"image": "vllm/vllm-openai:v0.23.0"}
+        assert ensures[0].payload == {"image": "vllm/vllm-openai:v0.27.1"}
         assert ensures[0].resource_key.startswith("image:n1:")
         d = await session.get(ModelDeployment, dep.deployment_id)
         assert d.phase == "PULL_IMAGE"  # task 未完成，不推进
@@ -1348,7 +1349,7 @@ class TestReconcilerAdvance:
         await advance_deployment(dep.deployment_id)
 
         assert ensures and ensures[0].type == TaskType.PULL_IMAGE
-        # R575 命中 cu129 阶梯条目（实测地板 >=575；580+ 才走 cu130 默认），非默认 v0.23.0
+        # R575 命中 cu129 阶梯条目（实测地板 >=575；580+ 才走 cu130 默认）。
         assert ensures[0].payload == {"image": "vllm/vllm-openai:v0.27.1-cu129"}
 
     async def test_pull_success_advances_to_start_head(self, deployed_stack, monkeypatch):
@@ -1396,7 +1397,7 @@ class TestReconcilerAdvance:
         p = ensures[0].payload
         assert p["deployment_id"] == dep.deployment_id and p["instance_id"] == "i1"
         assert p["container_name"].startswith("llmpod-dep-aaaa")
-        assert p["spec"]["image"] == "vllm/vllm-openai:v0.23.0"
+        assert p["spec"]["image"] == "vllm/vllm-openai:v0.27.1"
         assert p["readiness"]["url"] == "http://10.0.1.5:8000/health"
         assert irow.status == "STARTING"
         d = await session.get(ModelDeployment, dep.deployment_id)
@@ -1582,6 +1583,80 @@ class TestReconcilerAdvance:
 
         route = await session.get(Route, 1)
         assert route.status == "published"
+
+    @pytest.mark.parametrize("auto_publish", [True, False])
+    @pytest.mark.parametrize("manual_status", ["published", "unpublished"])
+    async def test_restart_preserves_manual_bindings_and_refreshes_endpoint_address(
+        self, deployed_stack, monkeypatch, auto_publish, manual_status
+    ):
+        from llmpod.apps.proxyserver.snapshot import build_route_entry
+        from llmpod.services import deployment_projection
+
+        session, dep, _hub = deployed_stack
+        instance = self._instance(session, dep, status="READY", spec_extra={"assigned_gpu_uuids": ["g0"]})
+        dep.spec["publish"] = {"auto_publish": auto_publish}
+        self._set_phase(session, dep, "FINALIZING")
+        self._patch_dispatch(monkeypatch, [], [])
+        monkeypatch.setattr(
+            "llmpod.apps.manager.deployment.controller.get_controller", lambda: SimpleNamespace(wake=lambda: None)
+        )
+        await advance_deployment(dep.deployment_id)
+
+        endpoints = {ep.id: ep for ep in session._store[ModelEndpoint].values()}
+        route = session.preload(Route(id=40, name="manual-alias", status=manual_status, origin="manual"))
+        bindings = []
+        for index, endpoint in enumerate(endpoints.values()):
+            endpoint.enabled = True
+            bindings.append(
+                session.preload(
+                    RouteBinding(
+                        id=40 + index,
+                        route_id=route.id,
+                        endpoint_id=endpoint.id,
+                        weight=7 + index,
+                        priority=3 + index,
+                        enabled=index == 0,
+                    )
+                )
+            )
+        saved_bindings = [(b.id, b.endpoint_id, b.weight, b.priority, b.enabled) for b in bindings]
+
+        dep.status = "stopped"
+        instance.status = "STOPPED"
+        await deployment_projection.project_upwards(session, dep.deployment_id)
+        # 停止期间旧端口被另一个部署使用，重启必须更新地址后才恢复候选。
+        session.preload(
+            Instance(
+                instance_id="neighbor",
+                deployment_id="other",
+                role="full",
+                rank=0,
+                assigned_node="n1",
+                status="RUNNING",
+                spec={"port": 8000},
+            )
+        )
+        await get_orchestrator().restart(dep.deployment_id)
+        assert instance.spec["port"] == 8001
+        assert {ep.id for ep in session._store[ModelEndpoint].values()} == set(endpoints)
+        assert all(ep.health_status == "down" for ep in endpoints.values())
+
+        instance.status = "READY"
+        await deployment_projection.project_upwards(session, dep.deployment_id)
+        assert build_route_entry(route, bindings, endpoints).targets == ()
+
+        self._set_phase(session, dep, "FINALIZING")
+        await advance_deployment(dep.deployment_id)
+        assert dep.status == "running" and dep.health_status == "healthy"
+        assert dep.api_endpoint == "http://10.0.1.5:8001/v1"
+        assert {ep.id for ep in session._store[ModelEndpoint].values()} == set(endpoints)
+        assert all(ep.api_base == dep.api_endpoint and ep.health_status == "healthy" for ep in endpoints.values())
+        restored = [b for b in session._store[RouteBinding].values() if b.route_id == route.id]
+        assert [(b.id, b.endpoint_id, b.weight, b.priority, b.enabled) for b in restored] == saved_bindings
+        assert route.status == manual_status
+        targets = build_route_entry(route, restored, endpoints).targets
+        assert len(targets) == 1 and targets[0].api_base == "http://10.0.1.5:8001/v1"
+        assert targets[0].weight == 7 and targets[0].priority == 3
 
     async def test_advance_noop_when_stopped(self, deployed_stack, monkeypatch):
         session, dep, hub = deployed_stack
