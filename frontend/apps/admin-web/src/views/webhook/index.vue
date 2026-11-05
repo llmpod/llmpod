@@ -1,6 +1,6 @@
 <script setup lang="tsx">
 import { NTag } from 'naive-ui'
-import { useForm, FormInput, FormCustom, FormButton, message } from '@repo/hooks'
+import { useForm, FormInput, FormCustom, message } from '@repo/hooks'
 import { useController } from './useController'
 
 const { LmTableGroup, LmTable, LmPage, LmRefresh, LmColumn, openCreate } = useController()

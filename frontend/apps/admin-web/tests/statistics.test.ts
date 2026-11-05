@@ -383,7 +383,7 @@ describe('statistics useStore(/admin/dashboard/realtime 对接)', () => {
     expect(distributions.promptLen).toBeNull()
     expect(distributions.generationLen!.bars.map(bar => bar.count)).toEqual([5, 10, 5])
     expect(distributions.generationLen!.labels).toEqual(['<128', '4K', '>4K'])
-    expect(distributions.generationLen!.avgText).toBe('260 tok')
+    expect(distributions.generationLen!.avgText).toBe('260 tokens')
   })
 
   it('模型统计宽表:/models + /tokens 按 key 合并、长尾折叠行、合计行取窗口级口径', async () => {

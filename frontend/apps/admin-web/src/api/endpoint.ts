@@ -37,6 +37,8 @@ export interface EndpointData {
   enabled: boolean
   /** 健康状态：healthy | degraded | down */
   health_status: EndpointHealthStatus
+  /** 上游流向：local=本地部署投影，external=手工登记的外部端点（不依赖可空的 provider_name） */
+  upstream_type: 'local' | 'external'
   /** 最近一次部署投影同步时间（外部端点恒 null） */
   last_synced_at: string | null
   /** 创建时间（ISO8601，带时区） */

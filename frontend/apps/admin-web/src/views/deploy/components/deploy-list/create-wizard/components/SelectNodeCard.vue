@@ -20,16 +20,6 @@ const selectable = computed(() => store.selectableGpusOf(nodeItem.value.id))
 const selectedCount = computed(
   () => selectable.value.filter((gpu) => store.selectedGpuUuids.value.has(gpu.uuid)).length,
 )
-/** 该节点下已被其它副本占用的卡数(摘要补充口径:如「另 2 张已属其它副本」) */
-const ownedElsewhereCount = computed(
-  () =>
-    (store.topology.value?.gpus ?? []).filter(
-      (gpu) =>
-        gpu.node_id === nodeItem.value.id &&
-        !store.selectedGpuUuids.value.has(gpu.uuid) &&
-        store.replicaIndexOfUuid.value.has(gpu.uuid),
-    ).length,
-)
 /** 全选/半选态:驱动卡片选中样式 */
 const allSelected = computed(
   () => selectable.value.length > 0 && selectedCount.value === selectable.value.length,

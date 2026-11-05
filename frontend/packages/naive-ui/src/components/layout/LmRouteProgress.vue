@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
-import { NavigationFailureType, useRouter, type RouteLocationNormalized, type RouteComponent } from 'vue-router'
+import { NavigationFailureType, useRouter, type RouteLocationNormalized } from 'vue-router'
 
 defineOptions({ name: 'LmRouteProgress' })
 

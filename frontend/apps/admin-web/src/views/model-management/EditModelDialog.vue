@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h } from 'vue'
+import { h } from 'vue'
 import { NTag } from 'naive-ui'
 import {
   FormInput,
@@ -12,7 +12,6 @@ import {
 import {
   MODEL_TYPE_OPTIONS,
   QUANTIZATION_OPTIONS,
-  SOURCE_LABEL,
   useStore,
   type ModelFormValues,
   type ModelRecord,
@@ -68,16 +67,6 @@ const form: UseFormReturn<ModelFormValues> = useForm<ModelFormValues>({
 })
 
 const { LmForm, submit, params } = form
-
-/** 来源信息:模型源 + 地址/版本,只读展示,不参与表单 */
-const sourceInfo = computed(() => {
-  const { source, source_url, revision } = params()
-  return {
-    label: SOURCE_LABEL[source] ?? source,
-    url: source_url,
-    revision: revision || '',
-  }
-})
 
 /**
  * 元数据回显:权重格式/架构/大小/MoE,只读 tag,无文字 label。

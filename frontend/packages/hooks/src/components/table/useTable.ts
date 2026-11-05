@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable vue/one-component-per-file -- useTable 内联短名组件是既定设计 */
 import { computed, defineComponent, getCurrentInstance, h, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
 import type { DataTableColumn, DataTableInst } from 'naive-ui'
 import { useRoute } from 'vue-router'

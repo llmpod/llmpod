@@ -2,6 +2,7 @@
 import { flushPromises } from '@vue/test-utils'
 import { createApp, h } from 'vue'
 import type { VNode } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DataTableColumn } from 'naive-ui'
 
@@ -36,7 +37,11 @@ function makeRole(id: number, name: string): RoleData {
   return { id, tenant_id: 0, name, code: null, is_builtin: false, permission_ids: [] }
 }
 
-/** 在真实组件 setup 内创建控制器(触发 onMounted/onBeforeUnmount 生命周期) */
+/**
+ * 在真实组件 setup 内创建控制器(触发 onMounted/onBeforeUnmount 生命周期)。
+ * controller 内 useAuthStore() 取当前登录用户判 isSelf,故必须挂真实 pinia,
+ * 否则 setup 阶段 getActivePinia() 直接抛错。
+ */
 function mountController() {
   let controller!: ReturnType<typeof useController>
   const app = createApp({
@@ -45,6 +50,9 @@ function mountController() {
       return () => h('div')
     },
   })
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  app.use(pinia)
   app.mount(document.createElement('div'))
   return { controller, unmount: () => app.unmount() }
 }

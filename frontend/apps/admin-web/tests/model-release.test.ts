@@ -44,7 +44,8 @@ import {
 } from '@/api/publish'
 import { useConfirm, message } from '@repo/hooks'
 import type { LmSelectAction } from '@repo/naive-ui'
-import { useStore } from '@/views/model-release/useStore'
+import type { EndpointData } from '@/api/endpoint'
+import { toProviderOptions, useStore } from '@/views/model-release/useStore'
 import { useController } from '@/views/model-release/useController'
 
 function makeRoute(overrides: Partial<RouteData> = {}): RouteData {
@@ -70,6 +71,17 @@ function makeRoute(overrides: Partial<RouteData> = {}): RouteData {
 
 function makePublish(overrides: Partial<PublishData> = {}): PublishData {
   return { route: makeRoute(), bindings: [], ...overrides }
+}
+
+/** 端点 fixture:只覆盖供应商下拉用到的字段 */
+function makeEndpoint(overrides: Partial<EndpointData> = {}): EndpointData {
+  return {
+    id: 1,
+    name: 'ep',
+    provider_name: null,
+    upstream_type: 'external',
+    ...overrides,
+  } as EndpointData
 }
 
 const store = useStore()
@@ -139,6 +151,21 @@ describe('model-release useStore', () => {
     await expect(store.remove(1)).rejects.toThrow('boom')
     expect(listener).not.toHaveBeenCalled()
     unsubscribe()
+  })
+
+  it('toProviderOptions: 供应商为空时按 upstream_type 兜底(本地部署=本地/外部登记=外部),有值用供应商名', () => {
+    const options = toProviderOptions([
+      makeEndpoint({ id: 1, name: 'qwen3-8-27b', provider_name: null, upstream_type: 'local' }),
+      makeEndpoint({ id: 2, name: 'ext-gpt-4o', provider_name: null, upstream_type: 'external' }),
+      makeEndpoint({ id: 3, name: 'OpenAI GPT-4o', provider_name: 'OpenAI' }),
+    ])
+
+    expect(options.map((option) => option.label)).toEqual([
+      'qwen3-8-27b（本地）',
+      'ext-gpt-4o（外部）',
+      'OpenAI GPT-4o（OpenAI）',
+    ])
+    expect(options.map((option) => option.value)).toEqual([1, 2, 3])
   })
 })
 

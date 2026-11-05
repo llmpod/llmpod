@@ -105,10 +105,11 @@ export function toModelNameOptions(list: EndpointData[]): SelectOption[] {
   return options
 }
 
-/** 端点列表 → 挂载供应商下拉选项(名称+供应商区分同名端点;供应商空=外部端点) */
+/** 端点列表 → 挂载供应商下拉选项(名称+供应商区分同名端点;供应商空时按 upstream_type 兜底) */
 export function toProviderOptions(list: EndpointData[]): SelectOption[] {
   return list.map((item) => ({
-    label: `${item.name}（${item.provider_name ?? '外部'}）`,
+    label: `${item.name}（${item.provider_name
+      ?? (item.upstream_type === 'local' ? '本地' : '外部')}）`,
     value: item.id,
   }))
 }

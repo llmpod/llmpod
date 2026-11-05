@@ -6,7 +6,6 @@ import { listTenants } from '@/api/tenant'
 import {
   useStore,
   actionMap,
-  actorTypeMap,
   resultMap,
   actionFilterOptions,
   disableFutureDate,

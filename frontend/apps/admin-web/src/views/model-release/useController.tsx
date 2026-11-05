@@ -4,7 +4,6 @@ import { LmTableGroup } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import { useTable, useOperate, useDialog, useConfirm, message } from '@repo/hooks'
 import RouteForm from './components/RouteForm.vue'
-import BindingDrawer from './components/BindingManage.vue'
 import {
   useStore,
   routeStatusMap,

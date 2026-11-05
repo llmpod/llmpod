@@ -3,7 +3,6 @@ import { NaiveProvider } from '@repo/naive-ui'
 import { useTheme, DialogHost, MessageHost } from '@repo/hooks'
 
 const { theme, themeOverrides } = useTheme()
-const isDev = import.meta.env.DEV
 </script>
 
 <template>

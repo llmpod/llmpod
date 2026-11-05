@@ -21,7 +21,7 @@ import {
  * runtime 为 null(节点离线或心跳未上报)时利用率渲染 —、显存列回退静态总量,不把缺数据当 0,
  * 与主表格「GPU 负载」列的单卡明细形成呼应。
  */
-const props = defineProps<{ gpus: GpuData[] }>()
+defineProps<{ gpus: GpuData[] }>()
 
 /** 单卡厂商品牌图标或通用芯片图标 */
 function iconOf(g: GpuData) {

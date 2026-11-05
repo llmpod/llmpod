@@ -1,5 +1,5 @@
 import { onBeforeUnmount, ref, onMounted } from 'vue'
-import { NTag, NButton, NIcon, NSpace } from 'naive-ui'
+import { NTag, NButton, NIcon } from 'naive-ui'
 import { CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
 import { LmTableGroup } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'

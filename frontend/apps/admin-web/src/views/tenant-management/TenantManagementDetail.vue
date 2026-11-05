@@ -208,58 +208,51 @@ async function onDelete() {
         </n-descriptions>
       </LmCard>
 
-      <!-- 模型封禁(纯展示;调整入口在编辑表单的「模型封禁」项) -->
+      <!-- 模型封禁(纯展示;调整入口在编辑表单的「模型封禁」项;未封禁时不占位) -->
       <LmCard
+        v-if="blockedModels.length"
         size="small"
         title="模型封禁"
         class="panel"
       >
         <div class="flex flex-col gap-[.75rem]">
-          <template v-if="blockedModels.length">
-            <div class="text-secondary text-base">
-              以下 {{ blockedModels.length }} 个模型已被封禁,该租户无法调用;其余已发布模型默认放行
-            </div>
-            <div class="grid grid-cols-1 gap-[.5rem] xl:grid-cols-2">
-              <div
-                v-for="model in blockedModels"
-                :key="model.route_id"
-                class="flex max-w-full items-center gap-[.75rem] rounded-lg border border-dashed border-line bg-fill-2 py-[.5rem] pr-[.75rem] pl-[.5rem]"
-              >
-                <div class="flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center rounded-lg bg-fill-1 grayscale">
-                  <n-icon
-                    :size="24"
-                    class="text-tertiary"
-                  >
-                    <component :is="brandIconOf(model.name)" />
-                  </n-icon>
-                </div>
-                <div class="flex min-w-0 flex-col gap-[.2rem]">
-                  <span
-                    class="truncate text-small text-secondary font-mono"
-                    :title="model.name"
-                  >
-                    {{ model.name }}
-                  </span>
-                  <span class="text-base text-disabled">
-                    {{ modelTypeText(model.model_type) }}
-                  </span>
-                </div>
-                <n-tag
-                  size="small"
-                  type="error"
-                  :bordered="false"
-                  class="ml-auto shrink-0"
+          <div class="text-secondary text-base">
+            以下 {{ blockedModels.length }} 个模型已被封禁,该租户无法调用;其余已发布模型默认放行
+          </div>
+          <div class="grid grid-cols-1 gap-[.5rem] xl:grid-cols-2">
+            <div
+              v-for="model in blockedModels"
+              :key="model.route_id"
+              class="flex max-w-full items-center gap-[.75rem] rounded-lg border border-dashed border-line bg-fill-2 py-[.5rem] pr-[.75rem] pl-[.5rem]"
+            >
+              <div class="flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center rounded-lg bg-fill-1 grayscale">
+                <n-icon
+                  :size="24"
+                  class="text-tertiary"
                 >
-                  已封禁
-                </n-tag>
+                  <component :is="brandIconOf(model.name)" />
+                </n-icon>
               </div>
+              <div class="flex min-w-0 flex-col gap-[.2rem]">
+                <span
+                  class="truncate text-small text-secondary font-mono"
+                  :title="model.name"
+                >
+                  {{ model.name }}
+                </span>
+                <span class="text-base text-disabled">
+                  {{ modelTypeText(model.model_type) }}
+                </span>
+              </div>
+              <n-tag
+                size="small"
+                type="error"
+                :bordered="false"
+                class="ml-auto shrink-0"
+              >
+                已封禁
+              </n-tag>
             </div>
-          </template>
-          <div
-            v-else
-            class="text-secondary text-base"
-          >
-            未封禁任何模型,全部已发布模型可用
           </div>
         </div>
       </LmCard>

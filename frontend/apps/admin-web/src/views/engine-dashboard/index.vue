@@ -7,7 +7,6 @@ const {
   historyLoading,
   anomalyLoading,
   realtimeWindow,
-  realtimeWindowLabel,
   customRange,
   windowOptions,
   setRealtimeWindow,
@@ -24,9 +23,6 @@ const {
   anomalyView,
   AnomalyTable,
   UpstreamTable,
-  hasUpstreamData,
-  hasUpstreamProviders,
-  tsText,
   KV_SATURATION_RATE,
 } = useController()
 </script>

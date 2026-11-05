@@ -1,4 +1,3 @@
-/* eslint-disable vue/one-component-per-file -- MessageHost 与其内部 MessageItem 是宿主-条目关系 */
 import {
   defineComponent,
   h,

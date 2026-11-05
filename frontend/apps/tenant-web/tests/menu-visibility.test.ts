@@ -48,7 +48,9 @@ describe('设置页「模块管理」tab(本人自助 GET/POST /auth/menus)', ()
     vi.mocked(getMenus).mockResolvedValue(makeDict())
     const wrapper = mountPage()
     await vi.waitFor(() => expect(wrapper.text()).toContain('控制台'))
-    expect(wrapper.text()).toContain('/tenant/console')
+    // 行辅助文本已是侧栏分组名称而非路由路径(cfab7733):页面不应再出现裸路径
+    expect(wrapper.text()).not.toContain('/tenant/')
+    expect(wrapper.text()).toContain('在线调试')
     // 无权限的声明菜单(团队管理不在字典内)不进自助开关列表
     expect(wrapper.text()).not.toContain('团队管理')
     // 已关闭项不再渲染「已隐藏」标签:状态由开关关闭+卡片幽灵化表达

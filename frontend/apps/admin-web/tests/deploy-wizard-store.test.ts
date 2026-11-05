@@ -494,12 +494,15 @@ describe('GPU 可选性与禁选原因', () => {
     return gpu
   }
 
-  it('节点离线/GPU 离线/被部署占用的卡均不可选', () => {
+  it('节点离线/GPU 离线不可选;被部署占用的卡仅可逐张手选(批量口径排除)', () => {
     setupTopology()
     expect(store.isGpuSelectable(gpuOf('gpu-ok'))).toBe(true)
     expect(store.isGpuSelectable(gpuOf('gpu-node-off'))).toBe(false)
     expect(store.isGpuSelectable(gpuOf('gpu-off'))).toBe(false)
-    expect(store.isGpuSelectable(gpuOf('gpu-busy'))).toBe(false)
+    // c8012cfa 显存共用解锁:被运行中部署占用的卡允许用户显式手选(调低显存占比共用),
+    // 但全选/框选/推荐回填等批量入口必须排除,避免静默落到别人正在用的卡上。
+    expect(store.isGpuSelectable(gpuOf('gpu-busy'))).toBe(true)
+    expect(store.isGpuBatchSelectable(gpuOf('gpu-busy'))).toBe(false)
   })
 
   it('inspect 灰化(arch_mismatch/offline)不可选,禁选原因有对应文案', () => {

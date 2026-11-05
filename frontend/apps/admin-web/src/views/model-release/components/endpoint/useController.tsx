@@ -80,8 +80,9 @@ export function useController() {
           title: '供应商',
           key: 'provider_name',
           width: 120,
-          // 供应商空=外部登记端点，与挂载下拉口径一致
-          render: (row) => row.provider_name ?? '外部',
+          // 供应商名选填；为空时按端点来源兜底：本地部署=本地，外部登记=外部
+          render: (row) => row.provider_name
+            ?? (row.upstream_type === 'local' ? '本地' : '外部'),
         },
         {
           title: '健康',

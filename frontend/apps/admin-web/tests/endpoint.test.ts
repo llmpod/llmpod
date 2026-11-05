@@ -58,6 +58,7 @@ function makeEndpoint(overrides: Partial<EndpointData> = {}): EndpointData {
     capabilities: [],
     enabled: true,
     health_status: 'healthy',
+    upstream_type: 'external',
     last_synced_at: null,
     created_at: '2025-01-01T00:00:00Z',
     updated_at: '2025-01-01T00:00:00Z',
@@ -237,6 +238,16 @@ describe('endpoint useController', () => {
 
     expect(useConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: '删除端点' }))
     expect(deleteEndpoint).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('供应商列:供应商为空时按 upstream_type 兜底(本地部署=本地/外部登记=外部),有值用供应商名', () => {
+    const { wrapper } = mountController()
+    const render = columnRender('provider_name') as unknown as (row: EndpointData) => string
+
+    expect(render(makeEndpoint({ provider_name: 'OpenAI', upstream_type: 'external' }))).toBe('OpenAI')
+    expect(render(makeEndpoint({ provider_name: null, upstream_type: 'local' }))).toBe('本地')
+    expect(render(makeEndpoint({ provider_name: null, upstream_type: 'external' }))).toBe('外部')
     wrapper.unmount()
   })
 

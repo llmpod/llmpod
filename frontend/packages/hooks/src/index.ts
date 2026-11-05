@@ -1,5 +1,6 @@
 export * from './tools/promise'
 export * from './components/dialog'
+export * from './components/nps-feedback'
 export * from './components/form'
 export * from './components/message'
 export * from './components/table'

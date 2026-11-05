@@ -49,7 +49,9 @@ describe('设置页「模块管理」tab(本人自助 GET/POST /auth/menus)', ()
     vi.mocked(getMenus).mockResolvedValue(makeDict())
     const wrapper = mountPage()
     await vi.waitFor(() => expect(wrapper.text()).toContain('总览大屏'))
-    expect(wrapper.text()).toContain('/admin/dashboard')
+    // 行辅助文本已是侧栏分组名称而非路由路径(cfab7733):页面不应再出现裸路径
+    expect(wrapper.text()).not.toContain('/admin/')
+    expect(wrapper.text()).toContain('模型市场')
     // 前端隐藏路由(费用告警):侧栏无入口,不出现在自助开关里
     expect(wrapper.text()).not.toContain('费用告警')
     // 已关闭项不再渲染「已隐藏」标签:状态由开关关闭+卡片幽灵化表达

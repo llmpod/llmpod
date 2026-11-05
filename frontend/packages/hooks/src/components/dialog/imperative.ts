@@ -1,4 +1,3 @@
-/* eslint-disable vue/one-component-per-file -- DialogHost 与其内部 DialogItem 是宿主-条目关系:每个队列项需独立组件实例,以 provide 各自的关闭方法(DIALOG_CLOSE_KEY) */
 import { defineComponent, h, inject, onUnmounted, provide, shallowRef } from 'vue'
 import { DIALOG_CLOSE_KEY, type DialogInstance } from './types'
 
