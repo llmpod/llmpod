@@ -107,6 +107,11 @@ class ModelEndpoint(Base, IntIdMixin, TimestampMixin):
         Index("idx_model_endpoint_health", "health_status"),
     )
 
+    @property
+    def upstream_type(self) -> str:
+        """上游流向：deployment_id 有值=本地部署投影，NULL=手工登记的外部端点。"""
+        return "local" if self.deployment_id else "external"
+
     def __repr__(self) -> str:
         return (
             f"<ModelEndpoint id={self.id} name={self.name!r} protocol={self.protocol!r} health={self.health_status!r}>"

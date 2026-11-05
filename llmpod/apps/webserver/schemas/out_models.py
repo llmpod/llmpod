@@ -13,7 +13,7 @@ DBA / psql ``\\d+`` / BI 工具均可见。
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, create_model, BaseModel, field_validator
 from sqlalchemy import inspect as sa_inspect
@@ -116,7 +116,19 @@ RoleOut: type[BaseModel] = orm_schema(Role, exclude=["created_at", "updated_at"]
 ModelOut: type[BaseModel] = orm_schema(Model, exclude=["source_auth_encrypted"])
 ModelDeploymentOut: type[BaseModel] = orm_schema(ModelDeployment, jsonb_types={"spec": DeploymentConfig})
 InstanceOut: type[BaseModel] = orm_schema(Instance, jsonb_types={"spec": InstanceSpec})
-ModelEndpointOut: type[BaseModel] = orm_schema(ModelEndpoint, exclude=["api_key"])
+
+
+class ModelEndpointOut(orm_schema(ModelEndpoint, exclude=["api_key"])):
+    """来源端点视图：额外给出 ``upstream_type``（判定见 ORM 同名属性）。
+
+    前端不必再按可空的 ``provider_name`` 猜来源——本地部署端点从不写该字段。
+    """
+
+    upstream_type: Literal["local", "external"] = Field(
+        description="上游流向：local=本地部署投影，external=手工登记的外部端点"
+    )
+
+
 DeployLogOut: type[BaseModel] = orm_schema(DeployLog)
 
 
@@ -154,6 +166,7 @@ RequestLogOut: type[BaseModel] = orm_schema(
 RequestLogAdminOut: type[BaseModel] = orm_schema(RequestLog)
 WalletOut: type[BaseModel] = orm_schema(Wallet)
 BalanceTransactionOut: type[BaseModel] = orm_schema(BalanceTransaction)
+
 # 审计日志：detail 已脱敏（password/token→***），tenant 侧可见字段均安全；
 # 租户侧查询已按 tenant_id 强制过滤，无跨租户泄露面。租户侧独立形状：
 # actor_type（user|system，系统内部视角）与 tenant_id（本就=自己租户，冗余）不外露。

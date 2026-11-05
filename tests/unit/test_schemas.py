@@ -16,7 +16,9 @@ from llmpod.apps.webserver.schemas.out_models import (
     GpuDetailOut,
     ClusterDetailOut,
     TenantDetailOut,
+    ModelEndpointOut,
 )
+from llmpod.models import ModelEndpoint
 
 
 class TestResultBase:
@@ -131,3 +133,43 @@ class TestDetailOutSchemas:
         o.role_ids = [5, 7]  # 模拟 enrich 回填
         m = UserDetailOut.model_validate(o, from_attributes=True)
         assert m.role_ids == [5, 7]
+
+
+class TestModelEndpointOutUpstreamType:
+    """端点来源按 ``deployment_id`` 判定，不依赖可空的 ``provider_name``。
+
+    本地部署端点从不写 provider_name，前端以空值兜底成「外部」会误标。
+    """
+
+    @staticmethod
+    def _row(**overrides) -> ModelEndpoint:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = dict(
+            id=1,
+            engine_type="vllm",
+            protocol="openai",
+            api_base="http://10.0.0.1:8000/v1",
+            served_model="m",
+            name="n",
+            operations=[],
+            capabilities=[],
+            enabled=True,
+            health_status="healthy",
+            created_at=now,
+            updated_at=now,
+        )
+        base.update(overrides)
+        return ModelEndpoint(**base)
+
+    def test_external_registration(self):
+        out = ModelEndpointOut.model_validate(self._row(deployment_id=None, engine_type="external"))
+        assert out.upstream_type == "external"
+
+    def test_local_deployment(self):
+        # 本地端点 provider_name 恒空——来源仍应判 local
+        out = ModelEndpointOut.model_validate(self._row(deployment_id="dep-1", provider_name=None))
+        assert out.upstream_type == "local"
+
+    def test_serialized_payload_carries_upstream_type(self):
+        out = ModelEndpointOut.model_validate(self._row(deployment_id="dep-1"))
+        assert out.model_dump()["upstream_type"] == "local"
