@@ -15,6 +15,7 @@ import logging
 import time
 import uuid
 
+import anyio
 import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -1228,62 +1229,64 @@ async def _stream_body(
         log.warning("stream died mid-flight (endpoint=%s op=%s): %r", target.endpoint_id, operation, e)
         raise
     finally:
-        # async for 不会自动关闭嵌套生成器；断连时必须一路关闭到 httpx.stream。
-        close = getattr(result.stream, "aclose", None)
-        if close is not None:
-            try:
-                await close()
-            except Exception:
-                log.exception("upstream stream close failed (request_id=%s)", request_id)
-        # 流式在途计数在此释放（而非 handle_inference_request 外层 finally——那在
-        # StreamingResponse 对象返回时就跑，长流全程不算在途，gauge 失真）。
-        # 置标记告知 guard 已释放过（guard 的 finally 见标记则不再 dec）。
-        stream_exited["exited"] = True
-        proxy_metrics.exit_request()
-        if status == "success":
-            _note_endpoint_success(runtime, target, hashes, scope)
-        # usage 缺失（客户端读完即断 / 上游收尾 chunk 丢失）时按已交付内容估算：
-        # 否则 compute_cost 按 None→0 结算，白嫖整段输出。计量行的 interrupted
-        # 状态即「token 为估算值」的标记，可事后对账。已有部分上报（如 anthropic
-        # message_start 只带 input）则只补缺的半边。上游在产出前报错（error 且无
-        # 任何已交付内容）时保持 usage=None——没有可归属的生成用量。
-        usage_estimated = False
-        if status != "error" or usage is not None or billable_parts:
-            usage, usage_estimated = _complete_stream_usage(usage, billable_parts, body, operation, status)
-        await asyncio.gather(
-            settle_usage(redis, ctx, entry.name, usage, reserved),
-            _settle_billing(held, entry, target, adapter, usage, operation, request_id),
-        )
-        labels = proxy_metrics.outcome_labels(ctx, entry, target, operation)
-        if adapter.records_logs:
-            spawn_log(
-                runtime,
-                build_record(
-                    ctx,
-                    entry,
-                    target,
-                    operation,
-                    adapter.protocol,
-                    status=status,
-                    http_status=200 if status == "success" else None,
-                    usage=usage,
-                    usage_estimated=usage_estimated,
-                    request_payload=body,
-                    response_payload={"model": entry.name, "role": "assistant", "content": "".join(parts)},
-                    error_message=error_message,
-                    latency_ms=_elapsed_ms(start),
-                    ttft_ms=ttft,
-                    finish_reason=finish_reason,
-                    request_id=request_id,
-                    retry_count=retry_count,
-                    route_reason=route_reason,
-                ),
+        # Starlette 断连后会持续取消作用域，finally 内的异步结算也必须屏蔽取消。
+        with anyio.CancelScope(shield=True):
+            # async for 不会自动关闭嵌套生成器；断连时必须一路关闭到 httpx.stream。
+            close = getattr(result.stream, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:
+                    log.exception("upstream stream close failed (request_id=%s)", request_id)
+            # 流式在途计数在此释放（而非 handle_inference_request 外层 finally——那在
+            # StreamingResponse 对象返回时就跑，长流全程不算在途，gauge 失真）。
+            # 置标记告知 guard 已释放过（guard 的 finally 见标记则不再 dec）。
+            stream_exited["exited"] = True
+            proxy_metrics.exit_request()
+            if status == "success":
+                _note_endpoint_success(runtime, target, hashes, scope)
+            # usage 缺失（客户端读完即断 / 上游收尾 chunk 丢失）时按已交付内容估算：
+            # 否则 compute_cost 按 None→0 结算，白嫖整段输出。计量行的 interrupted
+            # 状态即「token 为估算值」的标记，可事后对账。已有部分上报（如 anthropic
+            # message_start 只带 input）则只补缺的半边。上游在产出前报错（error 且无
+            # 任何已交付内容）时保持 usage=None——没有可归属的生成用量。
+            usage_estimated = False
+            if status != "error" or usage is not None or billable_parts:
+                usage, usage_estimated = _complete_stream_usage(usage, billable_parts, body, operation, status)
+            await asyncio.gather(
+                settle_usage(redis, ctx, entry.name, usage, reserved),
+                _settle_billing(held, entry, target, adapter, usage, operation, request_id),
             )
-        proxy_metrics.record_outcome(
-            labels,
-            status=status,
-            usage=usage,
-            latency_ms=_elapsed_ms(start),
-            retry_count=retry_count,
-            stream=True,
-        )
+            labels = proxy_metrics.outcome_labels(ctx, entry, target, operation)
+            if adapter.records_logs:
+                spawn_log(
+                    runtime,
+                    build_record(
+                        ctx,
+                        entry,
+                        target,
+                        operation,
+                        adapter.protocol,
+                        status=status,
+                        http_status=200 if status == "success" else None,
+                        usage=usage,
+                        usage_estimated=usage_estimated,
+                        request_payload=body,
+                        response_payload={"model": entry.name, "role": "assistant", "content": "".join(parts)},
+                        error_message=error_message,
+                        latency_ms=_elapsed_ms(start),
+                        ttft_ms=ttft,
+                        finish_reason=finish_reason,
+                        request_id=request_id,
+                        retry_count=retry_count,
+                        route_reason=route_reason,
+                    ),
+                )
+            proxy_metrics.record_outcome(
+                labels,
+                status=status,
+                usage=usage,
+                latency_ms=_elapsed_ms(start),
+                retry_count=retry_count,
+                stream=True,
+            )

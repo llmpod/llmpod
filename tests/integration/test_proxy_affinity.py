@@ -543,13 +543,14 @@ def _attach_logger(app, db, tmp_path):
 class TestRouteReasonRecorded:
     """落账要能回答「为什么是这个上游」：亲和 / 负载均衡 / 故障换端一眼分开。"""
 
-    async def _reasons(self, db, request_ids: list[str]) -> list[str]:
+    async def _reasons(self, app, db, request_ids: list[str]) -> list[str]:
         """按请求顺序取各请求落账行的 route_reason。
 
         行插入顺序不可依赖（记账备料在线程池执行，并发任务完成可乱序）；响应头
         回显的 request-id 是每条计量行的稳定键，按号查行即与插入顺序彻底解耦。
         """
-        await asyncio.sleep(0.05)  # 等 fire-and-forget 记账任务跑完
+        if app.state.proxy.log_tasks:
+            await asyncio.wait_for(asyncio.gather(*app.state.proxy.log_tasks), timeout=5)
         reason_by_id = {row.request_id: row.route_reason for row in db.all(RequestLog)}
         return [reason_by_id[rid] for rid in request_ids]
 
@@ -567,7 +568,7 @@ class TestRouteReasonRecorded:
         r3 = await _post(c, 3)
         assert r1.status_code == r2.status_code == r3.status_code == 200
 
-        assert await self._reasons(db, [self._rid(r1), self._rid(r2), self._rid(r3)]) == [
+        assert await self._reasons(app, db, [self._rid(r1), self._rid(r2), self._rid(r3)]) == [
             "weighted",  # 冷会话：还没有可亲和的端点
             "affinity",  # 上一轮已把前缀绑上
             "affinity",
@@ -584,7 +585,7 @@ class TestRouteReasonRecorded:
         r2 = await _post(c, 2)
         assert r2.status_code == 200  # 换端成功
 
-        reasons = await self._reasons(db, [self._rid(r1), self._rid(r2)])
+        reasons = await self._reasons(app, db, [self._rid(r1), self._rid(r2)])
         assert reasons[0] == "weighted"
         assert reasons[1] == "failover_weighted"  # 上游故障后才按优先级 + 权重换的端
 
@@ -598,7 +599,7 @@ class TestRouteReasonRecorded:
         r2 = await _post(c, 2)
         assert r2.status_code == 502  # failover 耗尽
 
-        reasons = await self._reasons(db, [self._rid(r1), self._rid(r2)])
+        reasons = await self._reasons(app, db, [self._rid(r1), self._rid(r2)])
         assert reasons[1].startswith("failover_")  # 失败行同样记下选路出处
 
     async def test_streaming_row_carries_reason(self, env, tmp_path):
@@ -610,7 +611,7 @@ class TestRouteReasonRecorded:
         resp = await c.post("/v1/messages", json=payload, headers={"x-api-key": CLIENT_KEY})
         assert resp.status_code == 200
 
-        assert await self._reasons(db, [resp.headers["request-id"]]) == ["weighted"]
+        assert await self._reasons(app, db, [resp.headers["request-id"]]) == ["weighted"]
 
 
 class TestReasonVocabulary:
