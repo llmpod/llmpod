@@ -51,11 +51,20 @@ def uniq():
 
 
 @pytest.fixture(scope="session")
-def admin_client(base_url) -> httpx.Client:
-    """超管登录态客户端：admin/admin 登录，注入 Bearer token。session 级，跨测试复用。"""
+def admin_credentials() -> dict[str, str]:
+    """独立测试栈默认 admin/admin，已有实验栈可通过环境变量指定凭据。"""
+    return {
+        "username": os.environ.get("LLMPOD_E2E_ADMIN_USER", "admin"),
+        "password": os.environ.get("LLMPOD_E2E_ADMIN_PASSWORD", "admin"),
+    }
+
+
+@pytest.fixture(scope="session")
+def admin_client(base_url, admin_credentials) -> httpx.Client:
+    """超管登录态客户端，注入 Bearer token；session 级，跨测试复用。"""
     c = httpx.Client(base_url=base_url, timeout=15.0)
-    data = ok(c, "POST", "/api/v1/auth/login", json={"username": "admin", "password": "admin"})
-    assert data["username"] == "admin"
+    data = ok(c, "POST", "/api/v1/auth/login", json=admin_credentials)
+    assert data["username"] == admin_credentials["username"]
     assert data["is_superuser"] is True
     c.headers["Authorization"] = f"Bearer {data['token']}"
     yield c

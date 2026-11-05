@@ -5,7 +5,7 @@ Node 端只需要 node_* 配置；PG/Redis/CH 的默认值不会产生影响，
 因为 Node 不会导入数据库层。
 """
 
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from llmpod.config.enums import AffinityFailoverPolicy
@@ -276,7 +276,11 @@ class Settings(BaseSettings):
     # （引导脚本同路径 bind，恒等改写）。仅当宿主大盘挂在别处、引导参数 model_host_dir
     # 指定了不同路径时才非空：Node 创建推理容器（兄弟容器）时按它把卷 host 侧前缀
     # 改写为宿主真实路径——容器内 canonical 路径不变，下载与推理依然对齐。
-    model_host_store_dir: str = ""
+    model_host_store_dir: str = Field(
+        "",
+        # 兼容引导脚本注入的短名；原配置名同时存在时优先。
+        validation_alias=AliasChoices("LLMPOD_MODEL_HOST_STORE_DIR", "LLMPOD_MODEL_HOST_DIR"),
+    )
     download_min_free_gb: float = 10.0  # Node 下载前磁盘剩余空间下限（GB，不足即 INSUFFICIENT_DISK）
     pull_exhaust_cooldown_s: int = 3600  # PULL 连续失败超上限后的冷却（秒），过后自动重开一轮重试
 
@@ -322,7 +326,7 @@ class Settings(BaseSettings):
     serve_frontend: bool = True  # 是否由管理端提供前端 UI
     frontend_dist: str = ""  # 构建产物目录；空=包内 llmpod/static
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="LLMPOD_", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="LLMPOD_", extra="ignore", populate_by_name=True)
 
     @property
     def pg_url(self) -> str:

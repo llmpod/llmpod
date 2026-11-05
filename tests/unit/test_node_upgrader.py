@@ -57,6 +57,7 @@ class FakeDockerClient:
     def __init__(self):
         self._containers: list[FakeContainer] = []
         self.images_local: set[str] = set()
+        self.pulled: list[str] = []
         self.pull_error: Exception | None = None
         self.create_error: Exception | None = None
         self.created: list[dict] = []
@@ -148,6 +149,7 @@ class FakeDockerClient:
                 return object()
 
             def pull(self, image):
+                cli.pulled.append(image)
                 if cli.pull_error is not None:
                     raise cli.pull_error
                 cli.images_local.add(image)
@@ -339,9 +341,12 @@ class TestDance:
         assert not (env["data"] / up.STATE_FILE).exists()
         assert not u._snapshot_path().exists()  # 快照已弃
 
-    async def test_success_path_self_removes(self, env, agent, monkeypatch, no_exit):
+    @pytest.mark.parametrize("image_ref", ["reg.local/a:1", "reg.local/a@sha256:" + "a" * 64])
+    @pytest.mark.parametrize("cached", [True, False])
+    async def test_success_path_self_removes(self, env, agent, monkeypatch, no_exit, image_ref, cached):
         """成功路径：ready marker → 清状态 → rm -f 自己 → 硬退出。"""
         cli = self._base_cli()
+        cli.images_local = {image_ref} if cached else set()
         u, calls = _make_upgrader(env, agent, cli, monkeypatch)
 
         async def fake_wait(new, t0, target="", token=""):
@@ -350,10 +355,16 @@ class TestDance:
 
         monkeypatch.setattr(u, "_wait_ready", fake_wait)
         with pytest.raises(SystemExit):
-            await u._dance("99.0.0", "reg.local/a:1")
+            await u._dance("99.0.0", image_ref)
         # 老容器被 rename 到 -old 后 rm -f self（removed 标记）
         old = [c for c in cli._containers if c.id == "id-llmpod-node"][0]
         assert old.name == "llmpod-node-old" and old.removed is True
+        assert cli.pulled == ([] if cached else [image_ref])
+        assert cli.created[0]["image"] == image_ref
+        assert "platform" not in cli.created[0]
+        assert f"LLMPOD_NODE_IMAGE={image_ref}" in cli.created[0]["environment"]
+        assert cli.find("new-id-llmpod-node").status == "running"
+        assert calls == ["suspend"]
         assert no_exit == [0]
         assert not (env["data"] / up.STATE_FILE).exists()
         assert not u._snapshot_path().exists()
@@ -402,6 +413,28 @@ class TestDance:
         assert cli.find("id-llmpod-node").name == "llmpod-node"
         assert calls == ["suspend", "resume"]
         assert not (env["data"] / up.STATE_FILE).exists()
+
+    async def test_docker_start_failure_restores_old_node(self, env, agent, monkeypatch):
+        """镜像能否启动交给 Docker；Docker 拒绝启动时走既有回滚。"""
+        from docker.errors import APIError
+
+        cli = self._base_cli()
+        u, calls = _make_upgrader(env, agent, cli, monkeypatch)
+
+        def fail_start(_container):
+            raise APIError("exec format error")
+
+        monkeypatch.setattr(FakeContainer, "start", fail_start)
+        out = await u._dance("99.0.0", "reg.local/a:1")
+        assert out.result == "start_failed" and out.error_class == "APIError"
+        assert "exec format error" in out.detail
+        old = cli.find("id-llmpod-node")
+        assert old.name == "llmpod-node" and old.status == "running" and not old.removed
+        assert cli.find("new-id-llmpod-node").removed
+        assert calls == ["suspend", "resume"]
+        assert env["db"].read_bytes() == b"sqlite-bytes"
+        assert not (env["data"] / up.STATE_FILE).exists()
+        assert not u._snapshot_path().exists()
 
     async def test_unexpected_error_touches_nothing(self, env, agent, monkeypatch):
         """兜底铁律：未预期异常不动容器、恢复维护、落盘相位、上报 unknown_error。"""

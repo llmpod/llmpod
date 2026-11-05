@@ -110,7 +110,16 @@ def test_toolkit_install_can_be_disabled(tmp_path):
     assert calls == ""
 
 
-def _run_bootstrap(tmp_path: Path, *, gpu_works: bool, node_name: str | None = None, prompt_input: str | None = None):
+def _run_bootstrap(
+    tmp_path: Path,
+    *,
+    gpu_works: bool,
+    node_name: str | None = None,
+    prompt_input: str | None = None,
+    machine: str = "x86_64",
+    pull_works: bool = True,
+    local_image: bool = True,
+):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "docker.log"
@@ -119,12 +128,16 @@ def _run_bootstrap(tmp_path: Path, *, gpu_works: bool, node_name: str | None = N
         'printf "%s\\n" "$*" >> "$MOCK_LOG"\n'
         'case "$1" in\n'
         '    info) if [ "$2" = "--format" ]; then printf \'{"nvidia":{}}\\n\'; fi ;;\n'
+        '    pull) [ "$MOCK_PULL_FAIL" != "1" ] ;;\n'
+        '    image) [ "$MOCK_LOCAL_IMAGE" = "1" ] ;;\n'
+        '    ps) printf "llmpod-test-node\\n" ;;\n'
         '    run) if [ "$2" = "--rm" ] && [ "$MOCK_GPU_FAIL" = "1" ]; then exit 1; fi; printf "mock-id\\n" ;;\n'
         "esac\n",
     )
     _stub(bin_dir / "nvidia-smi", 'case "$1" in -L) exit 0;; --query-gpu*) exit 1;; *) exit 0;; esac\n')
     _stub(bin_dir / "nvidia-container-runtime", "exit 0\n")
     _stub(bin_dir / "hostname", 'printf "cloned-host\\n"\n')
+    _stub(bin_dir / "uname", 'printf "%s\\n" "$MOCK_MACHINE"\n')
     # curl 桩记录实际探测的 URL：候选带 /ws/node 固定路径，健康探测必须剥路径后
     # 打根 /health（此前桩成无路径 URL + exit 0，掩盖了拼接缺陷）
     _stub(
@@ -152,6 +165,9 @@ def _run_bootstrap(tmp_path: Path, *, gpu_works: bool, node_name: str | None = N
         "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         "MOCK_LOG": str(calls),
         "MOCK_GPU_FAIL": "0" if gpu_works else "1",
+        "MOCK_MACHINE": machine,
+        "MOCK_PULL_FAIL": "0" if pull_works else "1",
+        "MOCK_LOCAL_IMAGE": "1" if local_image else "0",
         "LLMPOD_BOOTSTRAP_ASSUME_YES": "1",
     }
     for name in ("LLMPOD_NODE_IMAGE", "LLMPOD_MODEL_HOST_DIR", "LLMPOD_NODE_CONTAINER_NAME", "LLMPOD_NODE_NAME"):
@@ -191,6 +207,49 @@ def test_gpu_probe_allows_node_start(tmp_path):
     # 健康探测 URL 剥掉了候选的 /ws/node 路径，打在根 /health 上
     assert any("http://manager.example.example:8080/health" in call for call in calls), calls
     assert not any("/ws/node/health" in call for call in calls), calls
+
+
+@pytest.mark.parametrize(
+    "machine, arch", [("x86_64", "amd64"), ("amd64", "amd64"), ("aarch64", "arm64"), ("arm64", "arm64")]
+)
+@pytest.mark.parametrize("pull_works", [True, False])
+def test_bootstrap_delegates_image_platform_to_docker(tmp_path, machine, arch, pull_works):
+    result, calls = _run_bootstrap(
+        tmp_path,
+        gpu_works=True,
+        machine=machine,
+        pull_works=pull_works,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"CPU 架构: {arch}" in result.stdout
+    assert "pull llmpod:test" in calls
+    remove_index = calls.index("rm -f llmpod-test-node")
+    run_index = next(i for i, call in enumerate(calls) if call.startswith("run -d"))
+    assert calls.index("pull llmpod:test") < remove_index < run_index
+    assert [call for call in calls if call.startswith("image ")] == (
+        [] if pull_works else ["image inspect llmpod:test"]
+    )
+    assert calls[run_index].endswith("llmpod:test node")
+    assert "-e LLMPOD_NODE_IMAGE=llmpod:test" in calls[run_index]
+    assert "--platform" not in calls[run_index]
+    if not pull_works:
+        assert "拉取失败，使用本地镜像" in result.stdout
+
+
+@pytest.mark.parametrize("machine", ["armv7l", "riscv64"])
+def test_unsupported_architecture_stops_before_docker_actions(tmp_path, machine):
+    result, calls = _run_bootstrap(tmp_path, gpu_works=True, machine=machine)
+    assert result.returncode != 0
+    assert f"不支持的 CPU 架构 {machine}" in result.stderr
+    assert calls == []
+
+
+def test_offline_bootstrap_without_image_preserves_existing_node(tmp_path):
+    result, calls = _run_bootstrap(tmp_path, gpu_works=True, machine="aarch64", pull_works=False, local_image=False)
+    assert result.returncode != 0
+    assert "拉取失败，且本地没有 llmpod:test" in result.stdout
+    assert "docker pull llmpod:test && docker save llmpod:test" in result.stdout
+    assert not any(call.startswith("run ") or call.startswith("rm -f") for call in calls)
 
 
 def test_node_name_defaults_to_host_and_reaches_container(tmp_path):

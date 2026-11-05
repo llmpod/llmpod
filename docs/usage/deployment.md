@@ -15,6 +15,14 @@ docker info >/dev/null
 docker compose version
 ```
 
+## CPU 架构
+
+部署目标为 Linux x86_64（`amd64`）和 ARM64（`aarch64`）。两种架构使用相同的镜像名与版本标签，由 Docker 根据本机架构选择镜像；ARM64 部署需要所选版本已发布 `linux/arm64` 镜像，历史版本不会自动获得 ARM64 支持。不需要给 Compose 添加 `platform` 或修改标签。
+
+节点引导脚本识别并展示 CPU 架构，镜像名和 tag 原样交给 Docker 拉取、启动，不添加架构后缀或额外检查镜像架构。离线安装使用 `docker load` 导入目标机器对应的镜像；自动升级复用本地镜像或按需拉取，并沿用新节点就绪确认及失败回滚。
+
+推理引擎仍需支持目标 CPU 架构和实际加速卡。QEMU 的 ARM64 环境可验证安装、管理端、API 网关和 CPU 节点的启动流程；GPU/NPU 驱动与推理性能需要在真实 ARM64 设备上验证。
+
 ## 1. 下载配置
 
 ```bash

@@ -6,7 +6,10 @@ driver_mounts 并入 volumes、restart_policy str→dict、runtime/privileged/ca
 
 from __future__ import annotations
 
+import pytest
+
 from llmpod.apps.node.deployers.docker import DockerDeployer
+from llmpod.config.settings import Settings
 from llmpod.tunnel.schemas import DeploySpec
 
 # 纯翻译函数已搬进 DockerDeployer（staticmethod），保留旧名便于本测试体不改
@@ -92,28 +95,41 @@ class TestSpecToRunKwargs:
         assert vol["/data/models"] == {"bind": "/models", "mode": "rw"}
         assert vol["/usr/local/Ascend/driver"] == {"bind": "/usr/local/Ascend/driver", "mode": "ro"}
 
-    def test_volumes_model_host_prefix_untouched_by_default(self, monkeypatch):
-        # 默认 model_host_store_dir 为空 → 改写恒等（存量部署零影响）
-        monkeypatch.setattr("llmpod.apps.node.deployers.docker.settings.model_store_dir", "/data/models", raising=False)
-        monkeypatch.setattr("llmpod.apps.node.deployers.docker.settings.model_host_store_dir", "", raising=False)
-        kw = _spec_to_run_kwargs(_spec(volumes={"/data/models/m-abc": "/data/models/m-abc"}))
-        assert kw["volumes"]["/data/models/m-abc"] == {"bind": "/data/models/m-abc", "mode": "rw"}
-
-    def test_volumes_model_host_prefix_rewritten(self, monkeypatch):
-        # 大盘在别处：canonical 前缀改写为宿主真实路径，容器内 bind 不变
-        monkeypatch.setattr("llmpod.apps.node.deployers.docker.settings.model_store_dir", "/data/models")
-        monkeypatch.setattr("llmpod.apps.node.deployers.docker.settings.model_host_store_dir", "/mnt/bigdisk/models")
+    @pytest.mark.parametrize(
+        "canonical, bootstrap, expected_root",
+        [
+            (None, None, "/data/models"),
+            (None, "/mnt/bootstrap-models", "/mnt/bootstrap-models"),
+            ("/mnt/canonical-models", None, "/mnt/canonical-models"),
+            ("/mnt/canonical-models", "/mnt/bootstrap-models", "/mnt/canonical-models"),
+        ],
+    )
+    def test_model_host_environment_reaches_sdk_volumes(self, monkeypatch, canonical, bootstrap, expected_root):
+        # 从引导实际注入的 env 走到 SDK 参数；只 patch 字段会漏掉配置名不匹配。
+        monkeypatch.setenv("LLMPOD_MODEL_STORE_DIR", "/data/models")
+        monkeypatch.delenv("LLMPOD_MODEL_HOST_STORE_DIR", raising=False)
+        monkeypatch.delenv("LLMPOD_MODEL_HOST_DIR", raising=False)
+        if canonical is not None:
+            monkeypatch.setenv("LLMPOD_MODEL_HOST_STORE_DIR", canonical)
+        if bootstrap is not None:
+            monkeypatch.setenv("LLMPOD_MODEL_HOST_DIR", bootstrap)
+        monkeypatch.setattr("llmpod.apps.node.deployers.docker.settings", Settings(_env_file=None))
         kw = _spec_to_run_kwargs(
             _spec(
-                volumes={"/data/models/m-abc": "/data/models/m-abc"},
+                volumes={
+                    "/data/models/m-abc": "/data/models/m-abc",
+                    "/data/models-other": "/other",
+                    "/etc/example": "/etc/example",
+                },
                 driver_mounts=["/usr/local/Ascend/driver:/usr/local/Ascend/driver:ro"],
             )
         )
-        vol = kw["volumes"]
-        assert vol["/mnt/bigdisk/models/m-abc"] == {"bind": "/data/models/m-abc", "mode": "rw"}
-        assert "/data/models/m-abc" not in vol
-        # driver_mounts 的 src 是宿主路径，不参与改写
-        assert vol["/usr/local/Ascend/driver"] == {"bind": "/usr/local/Ascend/driver", "mode": "ro"}
+        assert kw["volumes"] == {
+            f"{expected_root}/m-abc": {"bind": "/data/models/m-abc", "mode": "rw"},
+            "/data/models-other": {"bind": "/other", "mode": "rw"},
+            "/etc/example": {"bind": "/etc/example", "mode": "rw"},
+            "/usr/local/Ascend/driver": {"bind": "/usr/local/Ascend/driver", "mode": "ro"},
+        }
 
     def test_rewrite_model_host_path_boundaries(self):
         # 纯函数边界：store_dir 本身 / 子路径 / 非前缀路径 / 尾斜杠

@@ -7,9 +7,9 @@ from httpx import Client
 from _client import expect_error, ok
 
 
-def test_login_admin(client: Client):
-    data = ok(client, "POST", "/api/v1/auth/login", json={"username": "admin", "password": "admin"})
-    assert data["username"] == "admin"
+def test_login_admin(client: Client, admin_credentials):
+    data = ok(client, "POST", "/api/v1/auth/login", json=admin_credentials)
+    assert data["username"] == admin_credentials["username"]
     assert data["is_superuser"] is True
     assert data["access_domain"] == "platform"
     assert isinstance(data["token"], str) and data["token"]
@@ -18,14 +18,14 @@ def test_login_admin(client: Client):
     assert "role_ids" not in data
 
 
-def test_login_bad_credentials(client: Client):
+def test_login_bad_credentials(client: Client, admin_credentials):
     expect_error(
         client,
         "POST",
         "/api/v1/auth/login",
         status=401,
         error_code="INVALID_CREDENTIALS",
-        json={"username": "admin", "password": "wrong"},
+        json={"username": admin_credentials["username"], "password": "wrong"},
     )
 
 
@@ -34,9 +34,9 @@ def test_protected_endpoint_requires_token(client: Client):
     expect_error(client, "GET", "/api/v1/auth/me", status=401)
 
 
-def test_me_and_menus(admin_client: Client):
+def test_me_and_menus(admin_client: Client, admin_credentials):
     me = ok(admin_client, "GET", "/api/v1/auth/me")
-    assert me["username"] == "admin"
+    assert me["username"] == admin_credentials["username"]
     assert me["is_superuser"] is True
     assert me["tenant_id"] == 0
     assert me["access_domain"] == "platform"
@@ -48,9 +48,9 @@ def test_me_and_menus(admin_client: Client):
     assert menus["/admin/dashboard"]["enabled"] is True
 
 
-def test_logout_invalidates_token(client: Client):
+def test_logout_invalidates_token(client: Client, admin_credentials):
     # 用独立登录的 token 验证登出（不触碰 admin_client 的 session token）
-    data = ok(client, "POST", "/api/v1/auth/login", json={"username": "admin", "password": "admin"})
+    data = ok(client, "POST", "/api/v1/auth/login", json=admin_credentials)
     token = data["token"]
     headers = {"Authorization": f"Bearer {token}"}
     ok(client, "POST", "/api/v1/auth/logout", headers=headers)

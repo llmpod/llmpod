@@ -40,6 +40,37 @@ def test_admin_user_round_trip(admin_client: httpx.Client, uniq):
     assert any(u["id"] == uid for u in listing["items"])
     # 列表项也带 role_ids（批量装配）
     assert next(u["role_ids"] for u in listing["items"] if u["id"] == uid) == [operator_role_id]
+    # 用本测试创建的用户验证自助改密及旧会话失效，不修改实验栈管理员。
+    with httpx.Client(base_url=admin_client.base_url, timeout=30) as user_client:
+        login = ok(user_client, "POST", "/api/v1/auth/login", json={"username": username, "password": "Passw0rd!"})
+        user_client.headers["Authorization"] = f"Bearer {login['token']}"
+        changed = ok(
+            user_client,
+            "POST",
+            "/api/v1/auth/change-password",
+            json={
+                "old_password": "Passw0rd!",
+                "new_password": "NewPassw0rd!",
+            },
+        )
+        assert changed["changed"] is True
+        expect_error(user_client, "GET", "/api/v1/auth/me", status=401)
+        user_client.headers.pop("Authorization")
+        expect_error(
+            user_client, "POST", "/api/v1/auth/login", status=401, json={"username": username, "password": "Passw0rd!"}
+        )
+        assert (
+            ok(
+                user_client,
+                "POST",
+                "/api/v1/auth/login",
+                json={
+                    "username": username,
+                    "password": "NewPassw0rd!",
+                },
+            )["user_id"]
+            == uid
+        )
     # update（改邮箱 + 禁用）
     updated = ok(
         admin_client, "POST", f"/api/v1/admin/users/{uid}/update", json={"email": "u@e2e.test", "status": "disabled"}

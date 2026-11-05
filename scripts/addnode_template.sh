@@ -48,9 +48,19 @@ valid_mount() {
         && { [ -z "$mode" ] || [[ "$mode" =~ ^[A-Za-z][A-Za-z,]{0,15}$ ]]; }
 }
 
+detect_cpu_arch() {
+    case "$1" in
+        x86_64|amd64) printf 'amd64\n' ;;
+        aarch64|arm64) printf 'arm64\n' ;;
+        *) echo "错误: 不支持的 CPU 架构 $1，仅支持 x86_64 和 ARM64。" >&2; return 1 ;;
+    esac
+}
+
 # 前置依赖先检先装（Docker 等），确认可用后再进入参数确认与安装内容展示，
 # 避免用户填完参数才在长安装环节失败。
 echo "正在检测前置依赖...."
+CPU_ARCH=$(detect_cpu_arch "$(uname -m)")
+echo "CPU 架构: $CPU_ARCH"
 
 # Docker 缺失时下载宝塔安装脚本安装；镜像源参数必须带 https://——
 # 脚本把它原样拼进 deb 源行，缺协议前缀会写出非法源并拖垮整机 apt。

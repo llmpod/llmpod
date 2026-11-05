@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from llmpod.config.settings import DEFAULT_OFFICIAL_IMAGE, Settings
 
 
@@ -79,6 +81,33 @@ class TestSettings:
     def test_node_name_from_environment(self, monkeypatch):
         monkeypatch.setenv("LLMPOD_NODE_NAME", "gpu-west-2")
         assert Settings(_env_file=None).node_name == "gpu-west-2"
+
+    @pytest.mark.parametrize(
+        "canonical, bootstrap, expected",
+        [
+            (None, None, ""),
+            (None, "/mnt/bootstrap-models", "/mnt/bootstrap-models"),
+            ("/mnt/canonical-models", None, "/mnt/canonical-models"),
+            ("/mnt/canonical-models", "/mnt/bootstrap-models", "/mnt/canonical-models"),
+            ("", "/mnt/bootstrap-models", ""),
+        ],
+    )
+    def test_model_host_directory_environment(self, monkeypatch, canonical, bootstrap, expected):
+        monkeypatch.delenv("LLMPOD_MODEL_HOST_STORE_DIR", raising=False)
+        monkeypatch.delenv("LLMPOD_MODEL_HOST_DIR", raising=False)
+        if canonical is not None:
+            monkeypatch.setenv("LLMPOD_MODEL_HOST_STORE_DIR", canonical)
+        if bootstrap is not None:
+            monkeypatch.setenv("LLMPOD_MODEL_HOST_DIR", bootstrap)
+        assert Settings(_env_file=None).model_host_store_dir == expected
+
+    @pytest.mark.parametrize("explicit", ["/mnt/explicit-models", ""])
+    def test_model_host_directory_explicit_value_overrides_environment(self, monkeypatch, explicit):
+        monkeypatch.setenv("LLMPOD_MODEL_HOST_STORE_DIR", "/mnt/canonical-models")
+        monkeypatch.setenv("LLMPOD_MODEL_HOST_DIR", "/mnt/bootstrap-models")
+        settings = Settings(_env_file=None, model_host_store_dir=explicit)
+        assert settings.model_host_store_dir == explicit
+        assert settings.model_dump()["model_host_store_dir"] == explicit
 
     def test_legacy_scrape_interval_backfills_engine_tiers(self):
         """旧键只回退引擎两档（proxy 档语义已变，不吃旧值）。"""
