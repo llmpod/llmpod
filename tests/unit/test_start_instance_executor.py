@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from llmpod.apps.node.executors.start_instance import StartInstanceExecutor
+from llmpod.apps.node.exceptions import TaskCancelled
 from llmpod.apps.node.models import LocalTask
 from llmpod.tunnel.schemas import ContainerState, DeployResult
 
@@ -26,7 +29,7 @@ class FakeDeployer:
         self.stop_calls = []
         self.remove_calls = []
 
-    async def deploy(self, spec):
+    async def deploy(self, spec, *, cancel_event=None):
         self.deploy_calls.append(spec.name)
         return DeployResult(success=True, container_name=spec.name)
 
@@ -331,7 +334,7 @@ class TestExecute:
 
     async def test_deploy_failure_reports_failed(self):
         class _Boom(FakeDeployer):
-            async def deploy(self, spec):
+            async def deploy(self, spec, *, cancel_event=None):
                 raise RuntimeError("docker daemon down")
 
         # already_running 门：容器未在运行才走 deploy（_Boom.deploy 抛错）
@@ -341,6 +344,39 @@ class TestExecute:
         assert events[-1]["status"] == "FAILED"
         assert "docker daemon down" in events[-1]["message"]
         assert events[-1]["extra"]["instance_status"] == "FAILED"
+
+    async def test_deploy_cancellation_is_reported_after_cleanup(self):
+        class CancelDuringCreate(FakeDeployer):
+            async def deploy(self, spec, *, cancel_event=None):
+                assert cancel_event is not None
+                cancel_event.set()
+                raise TaskCancelled("late creation cleaned up")
+
+        dep = CancelDuringCreate(running=False)
+        events, report = _collect()
+        await StartInstanceExecutor(dep).execute(_task(), None, report, asyncio.Event())
+        assert events[-1]["status"] == "CANCELLED"
+        assert events[-1]["extra"]["instance_status"] == "STOPPED"
+        assert dep.stop_calls and dep.remove_calls
+
+    @pytest.mark.parametrize("operation", ["stop", "remove"])
+    async def test_cancel_cleanup_failure_does_not_claim_stopped(self, operation):
+        dep, cancel = FakeDeployer(), asyncio.Event()
+
+        async def disconnected(*args, **kwargs):
+            raise RuntimeError("Docker disconnected")
+
+        setattr(dep, operation, disconnected)
+
+        async def prober(url):
+            cancel.set()
+            return False
+
+        events, report = _collect()
+        await StartInstanceExecutor(dep, prober=prober).execute(_task(), None, report, cancel)
+        assert events[-1]["status"] == "FAILED"
+        assert "清理容器失败" in events[-1]["message"]
+        assert (events[-1]["extra"] or {}).get("instance_status") != "STOPPED"
 
 
 class TestReconcile:

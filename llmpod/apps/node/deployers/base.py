@@ -33,8 +33,8 @@ class Deployer(ABC):
     """部署执行器抽象基类：把 ``DeploySpec`` 翻译成具体 runtime 调用。"""
 
     @abstractmethod
-    async def deploy(self, spec: DeploySpec) -> DeployResult:
-        """拉起 workload（幂等：同名先清再起）。返回 :class:`~llmpod.tunnel.schemas.DeployResult`。"""
+    async def deploy(self, spec: DeploySpec, *, cancel_event: asyncio.Event | None = None) -> DeployResult:
+        """拉起 workload；取消须等待在途创建收尾并清理，不能把未确认状态当成已停止。"""
 
     @abstractmethod
     async def stop(self, name: str, timeout: int = 10) -> StopResult:

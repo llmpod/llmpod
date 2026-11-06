@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -39,6 +40,8 @@ from llmpod.tunnel.schemas import (
 log = logging.getLogger("llmpod.apps.node.deployers.docker")
 
 _client: docker.DockerClient | None = None
+_CREATE_CONFIRM_TIMEOUT = 300.0
+_CREATE_CONFIRM_INTERVAL = 2.0
 
 
 def _get_client() -> docker.DockerClient:
@@ -458,28 +461,89 @@ class DockerDeployer(Deployer):
     # ---- 容器操作（asyncio.to_thread 包同步 SDK）----
 
     @staticmethod
-    def _create_or_replace(client: docker.DockerClient, kwargs: dict) -> Any:
-        """幂等创建容器：同名冲突(409)则 stop+rm 旧容器后重试。"""
+    def _confirm_container(client: docker.DockerClient, kwargs: dict, *, started: bool = False) -> Any:
+        """请求超时后只查结果；404 表示 Docker 可达，连接/查询异常不能当作创建中。"""
+        name = kwargs["name"]
+        deadline = time.monotonic() + _CREATE_CONFIRM_TIMEOUT
+        phase = "启动" if started else "创建"
+        log.warning("等待确认 Docker %s结果（name=%s，确认期限 %.0f 秒）", phase, name, _CREATE_CONFIRM_TIMEOUT)
+        while True:
+            try:
+                container = client.containers.get(name)
+            except NotFound as e:
+                if started:
+                    raise TaskExecutionError(f"容器在启动结果确认期间已不存在（name={name}）") from e
+                pass  # 名称可能已预留，容器尚未登记；此时不能重新 create。
+            except APIError as e:
+                raise TaskExecutionError(
+                    f"Docker 状态查询失败，无法确认容器{phase}结果（name={name}）: {e.explanation}"
+                ) from e
+            except requests.exceptions.ConnectionError as e:
+                raise TaskExecutionError(f"Docker 连接失败，无法确认容器{phase}结果（name={name}）: {e}") from e
+            except requests.exceptions.Timeout as e:
+                raise TaskExecutionError(f"Docker 状态查询超时，无法确认容器{phase}结果（name={name}）: {e}") from e
+            else:
+                config = container.attrs.get("Config", {})
+                labels = config.get("Labels") or {}
+                if config.get("Image") != kwargs["image"] or any(
+                    labels.get(k) != v for k, v in (kwargs.get("labels") or {}).items()
+                ):
+                    raise TaskExecutionError(f"同名容器与本次部署不匹配，不接管或删除（name={name}）")
+                state = container.attrs.get("State", {})
+                if not started or state.get("Running") or state.get("Status") in ("exited", "dead"):
+                    return container
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TaskExecutionError(f"Docker 可达，但在确认期限内未确认容器{phase}完成（name={name}）")
+            time.sleep(min(_CREATE_CONFIRM_INTERVAL, remaining))
+
+    @staticmethod
+    def _create_or_replace(client: docker.DockerClient, kwargs: dict, cancel_event: asyncio.Event | None = None) -> Any:
+        """已存在的旧容器沿用替换语义；在途创建只确认，不重复创建。"""
         name = kwargs.get("name")
+
+        def create():
+            try:
+                return client.containers.create(**kwargs)
+            except requests.exceptions.ReadTimeout:
+                return DockerDeployer._confirm_container(client, kwargs)
+
+        def check_cancel(container):
+            if cancel_event is not None and cancel_event.is_set():
+                # 等创建落定再删精确 ID，避免取消后出现迟到容器。
+                with suppress(NotFound):
+                    container.remove(force=True)
+                raise TaskCancelled(f"容器启动已取消并清理（name={name}）")
+
+        if cancel_event is not None and cancel_event.is_set():
+            raise TaskCancelled("容器启动已取消（尚未创建）")
         try:
-            container = client.containers.create(**kwargs)
+            container = create()
         except APIError as e:
             if e.status_code == 409 and name:
-                log.info("Container name=%s in use (409), replacing", name)
                 try:
                     old = client.containers.get(name)
+                except NotFound:
+                    container = DockerDeployer._confirm_container(client, kwargs)
+                else:
+                    log.info("Container name=%s in use (409), replacing", name)
                     old.stop(timeout=10)
                     old.remove(force=True)
-                except NotFound:
-                    pass
-                container = client.containers.create(**kwargs)
+                    container = create()
             else:
                 raise
-        container.start()
+        check_cancel(container)
+        state = container.attrs.get("State", {})
+        if not state.get("Running") and state.get("Status") not in ("exited", "dead"):
+            try:
+                container.start()
+            except requests.exceptions.ReadTimeout:
+                container = DockerDeployer._confirm_container(client, kwargs, started=True)
+        check_cancel(container)
         return container
 
-    async def deploy(self, spec: DeploySpec) -> DeployResult:
-        """按 spec 启动容器（幂等：同名先 stop+rm 再 run）。返回 DeployResult。
+    async def deploy(self, spec: DeploySpec, *, cancel_event: asyncio.Event | None = None) -> DeployResult:
+        """按 spec 启动容器；已存在容器可替换，在途创建先确认结果。返回 DeployResult。
 
         不回传 container_id。per-name 锁在 Deployer 层序列化同名 create/replace（模块级、
         跨实例共享），ContainerServiceImpl（RPC 路径）与执行器（直调 deploy）都受保护。
@@ -487,16 +551,41 @@ class DockerDeployer(Deployer):
         name = spec.name
         kwargs = self._spec_to_run_kwargs(spec)
         log.info("Running container name=%s image=%s", name, kwargs["image"])
+        cancel_event = cancel_event if cancel_event is not None else asyncio.Event()
 
-        def _do() -> None:
+        def _do() -> Any:
             client = _get_client()
-            self._create_or_replace(client, kwargs)
+            return self._create_or_replace(client, kwargs, cancel_event)
 
         async with _deploy_lock(name):
             try:
-                await asyncio.to_thread(_do)
+                worker = asyncio.create_task(asyncio.to_thread(_do))
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    cancel_event.set()
+                    # to_thread 不随协程取消；持锁等待它收尾，stop/remove 才不会漏掉迟到创建。
+                    try:
+                        while True:
+                            try:
+                                container = await asyncio.shield(worker)
+                                break
+                            except asyncio.CancelledError:
+                                if worker.cancelled():
+                                    raise
+                                continue
+                    except TaskCancelled:
+                        pass
+                    else:
+                        with suppress(NotFound):
+                            await asyncio.to_thread(container.remove, force=True)
+                    raise
             except APIError as e:
                 raise TaskExecutionError(f"容器启动失败（name={name}）: {e.explanation}") from e
+            except requests.exceptions.ConnectionError as e:
+                raise TaskExecutionError(f"Docker 连接失败（name={name}）: {e}") from e
+            except requests.exceptions.Timeout as e:
+                raise TaskExecutionError(f"Docker 操作响应超时（name={name}）: {e}") from e
         return DeployResult(success=True, container_name=name)
 
     async def stop(self, name: str, timeout: int = 10) -> StopResult:
@@ -513,7 +602,8 @@ class DockerDeployer(Deployer):
             return StopResult(success=True, container_name=name)
 
         try:
-            return await asyncio.to_thread(_do)
+            async with _deploy_lock(name):
+                return await asyncio.to_thread(_do)
         except APIError as e:
             raise TaskExecutionError(f"容器停止失败（name={name}）: {e.explanation}") from e
 
@@ -531,7 +621,8 @@ class DockerDeployer(Deployer):
             return RemoveResult(success=True, removed=True, container_name=name)
 
         try:
-            return await asyncio.to_thread(_do)
+            async with _deploy_lock(name):
+                return await asyncio.to_thread(_do)
         except APIError as e:
             raise TaskExecutionError(f"容器删除失败（name={name}）: {e.explanation}") from e
 

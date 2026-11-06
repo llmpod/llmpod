@@ -10,6 +10,9 @@ Node 自治判定 Ready（Manager 只做 gate）：``deploy(spec)`` 起容器（
   Running 且非 Restarting 且 RestartCount==0；RestartCount>0 立即失败——restart
   loop 快失败，配合 restart_policy=no）——无 HTTP 端口的 headless worker。
 
+部署读超时由 Deployer 限时确认同一容器的实际状态；Docker 连接或状态查询失败仍报
+执行失败。取消信号传入 Deployer，等待在途创建收尾后清理，停止任务不会抢先判已停。
+
 探活循环每 tick 先查 cancel（再查存活——避免与 STOP_INSTANCE 的 stop 竞态时把
 「被停止」误报为「崩溃」），容器退出/restart-loop 一律 **stop-only（不 rm）**
 保留崩溃容器——日志文件随容器保留至 ``rm`` 前，前端点容器日志按钮经 RPC（
@@ -36,7 +39,7 @@ from typing import Awaitable, Callable
 import httpx
 
 from llmpod.apps.node.deployers.base import Deployer
-from llmpod.apps.node.exceptions import ContainerGone
+from llmpod.apps.node.exceptions import ContainerGone, TaskCancelled
 from llmpod.apps.node.executors.base import Executor, ReconcileResult, ReportFn, parse_payload
 from llmpod.apps.node.models import LocalTask
 from llmpod.tunnel.schemas import ContainerState, StartInstancePayload
@@ -121,7 +124,10 @@ class StartInstanceExecutor(Executor):
         await report(TaskStatus.RUNNING, instance_status=InstanceStatus.STARTING)
         if not already_running:
             try:
-                await self._deployer.deploy(spec)
+                await self._deployer.deploy(spec, cancel_event=cancel_event)
+            except TaskCancelled:
+                await self._cancel_cleanup(container_name, report)
+                return
             except Exception as e:
                 await report(
                     TaskStatus.FAILED,
@@ -315,19 +321,15 @@ class StartInstanceExecutor(Executor):
         起回来。取消路径 stop+rm（用户主动取消，无需留痕），区别于崩溃/超时的
         stop-only 保留容器供取日志。
         """
-        await self._cleanup_container(name)
-        await report(TaskStatus.CANCELLED, message="任务已取消", instance_status=InstanceStatus.STOPPED)
-
-    async def _cleanup_container(self, name: str) -> None:
-        """best-effort stop+rm（NotFound 容忍；失败仅日志，不阻断终态上报）。"""
         try:
             await self._deployer.stop(name)
-        except Exception as e:
-            log.debug("cleanup stop %s: %s", name, e)
-        try:
             await self._deployer.remove(name, force=True)
+        except ContainerGone:
+            pass
         except Exception as e:
-            log.debug("cleanup remove %s: %s", name, e)
+            await report(TaskStatus.FAILED, message=f"取消后清理容器失败（状态未确认）: {e}")
+            return
+        await report(TaskStatus.CANCELLED, message="任务已取消", instance_status=InstanceStatus.STOPPED)
 
     async def _stop_container(self, name: str) -> None:
         """best-effort 只 stop 不 rm——保留崩溃/超时容器，供前端点日志按钮经 RPC 取全量日志。
