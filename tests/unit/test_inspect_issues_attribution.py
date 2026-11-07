@@ -272,16 +272,15 @@ class TestEmptyPlacementAttribution:
             _gpu(1, "c1", arch="cann", name="Ascend 310P3", drv="25.2.3", total=24.0),
             _gpu(2, "c2", arch="cann", name="Ascend 310P3", drv="25.2.3", total=24.0),
         )
-        result = await _inspect(s, topology=Topology(tp=1, pp=2, max_model_len=8192), image_tag="0.22.1")
+        result = await _inspect(s, topology=Topology(tp=1, pp=2, max_model_len=8192), image_tag="0.23.0")
         assert result["data"]["deployable"] is False
         issues = result["data"]["issues"]
-        # 引擎未声明 pp → 黄灯提醒（不进 issues）；通用 dry-run 按默认 arch 解析不出
-        # 可用 nvidia 镜像报一条（0.22.1 有候选条目但全被驱动/型号门控拦下，
-        # 报「未找到兼容镜像+候选要求」；部署侧归因不重复吞掉）
-        assert issues[0].startswith("未找到兼容镜像（vllm/nvidia@0.22.1）")
-        assert issues[1] == (
+        # 引擎未声明 pp → 黄灯提醒（不进 issues）；0.23.0 的 nvidia 默认镜像
+        # driver_required 缺省，驱动未知时不门控，通用 dry-run 能解析出镜像，
+        # 不再附「未找到兼容镜像」那条，只留架构分流原因
+        assert issues == [
             "集群没有可用于本引擎/本拓扑的架构（`vllm` 支持 ['nvidia', 'cann']，请检查镜像 tag 与卡的在线上报）"
-        )
+        ]
         assert any("未声明支持流水线并行" in w for w in result["data"]["warnings"])
         gpus = {cg["uuid"]: cg for cg in result["data"]["cluster_gpus"]}
         assert all(g["grey_reason"] is None for g in gpus.values())  # 卡没灰，是拓扑不匹配

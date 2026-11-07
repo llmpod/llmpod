@@ -300,7 +300,7 @@ class TestInspectOccupancy:
                 engine="vllm",
                 topology=Topology(tp=1, pp=2),
                 gpu_selector=GpuSelector(gpu_uuids=["c1", "c2"]),
-                image_tag="0.22.1",
+                image_tag="0.23.0",
             ),
             session,
         )
@@ -358,7 +358,7 @@ class TestInspectOccupancy:
                 engine="vllm",
                 topology=Topology(tp=1),
                 gpu_selector=GpuSelector(gpu_uuids=["c1"]),
-                image_tag="0.22.1",
+                image_tag="0.23.0",
             ),
             session,
         )
@@ -371,7 +371,7 @@ class TestInspectOccupancy:
     async def test_cann_no_image_greys_card_and_node(self, session):
         """cann 卡 + 无对应条目的 image_tag → 卡 grey=no_image + 节点 selectable=False + issue 提示。
 
-        310P3 在 0.22.1/0.23.0/0.26.0/0.27.1 均有（高版本为补位条目），用确无条目的 0.20.0 验证。
+        310P3 在 0.23.0/0.26.0/0.27.1/0.30.0 均有，用确无条目的 0.20.0 验证。
         """
         session.preload(
             Model(
@@ -447,7 +447,7 @@ class TestInspectOccupancy:
                 cluster_id=1,
                 engine="vllm",
                 topology=Topology(tp=1),
-                image_tag="0.22.1",
+                image_tag="0.23.0",
             ),
             session,
         )
@@ -462,7 +462,7 @@ class TestInspectOccupancy:
     async def test_bad_image_tag_reports_cann_image_missing(self, session):
         """cann 集群 + 无该 arch 版本的 image_tag（0.20.0）→ 明确报 vllm/cann 镜像缺失 + 推荐为空。
 
-        310P3 在 0.22.1-0.27.1 均有（高版本为补位条目），用确无条目的版本验证缺失分支。
+        310P3 在 0.23.0/0.26.0/0.27.1/0.30.0 均有，用确无条目的版本验证缺失分支。
         """
         session.preload(
             Model(

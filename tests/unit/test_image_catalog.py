@@ -109,7 +109,7 @@ class TestResolve:
     def test_cann_by_soc_model(self):
         assert (
             image_catalog.pick_image(engine="vllm", arch="cann", gpu_model="310P3", driver_version="25.2.3")
-            == "vllm-ascend-310p:fixed"
+            == "quay.io/ascend/vllm-ascend:v0.23.0.post1-310p-openeuler"
         )
         assert image_catalog.pick_image(
             engine="vllm", arch="cann", gpu_model="Ascend 910B", driver_version="24.1.0"

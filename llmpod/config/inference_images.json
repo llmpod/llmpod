@@ -892,30 +892,6 @@
       "notes": "驱动 525-549"
     },
     {
-      "id": "vllm-ascend-310p",
-      "engine": "vllm",
-      "arch": "cann",
-      "gpu_model": [
-        "*310P*",
-        "*300I*"
-      ],
-      "driver": ">=25.2",
-      "engine_version": "0.22.1",
-      "image": "vllm-ascend-310p:fixed",
-      "default": true,
-      "params": {
-        "args": [
-          "--dtype",
-          "half",
-          "--enforce-eager"
-        ],
-        "env": {
-          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
-        }
-      },
-      "notes": "驱动 ≥25.2"
-    },
-    {
       "id": "vllm-ascend-310p-0230",
       "engine": "vllm",
       "arch": "cann",
@@ -925,7 +901,8 @@
       ],
       "driver": ">=25.2",
       "engine_version": "0.23.0",
-      "image": "vllm-ascend-310p:fixed",
+      "image": "quay.io/ascend/vllm-ascend:v0.23.0.post1-310p-openeuler",
+      "default": true,
       "params": {
         "args": [
           "--dtype",
@@ -948,7 +925,7 @@
       ],
       "driver": ">=25.2",
       "engine_version": "0.26.0",
-      "image": "vllm-ascend-310p:fixed",
+      "image": "quay.io/ascend/vllm-ascend:v0.26.0rc2-310p-openeuler",
       "params": {
         "args": [
           "--dtype",
@@ -971,7 +948,30 @@
       ],
       "driver": ">=25.2",
       "engine_version": "0.27.1",
-      "image": "vllm-ascend-310p:fixed",
+      "image": "quay.io/ascend/vllm-ascend:v0.27.1rc1-310p-openeuler",
+      "params": {
+        "args": [
+          "--dtype",
+          "half",
+          "--enforce-eager"
+        ],
+        "env": {
+          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
+        }
+      },
+      "notes": "驱动 ≥25.2"
+    },
+    {
+      "id": "vllm-ascend-310p-0300",
+      "engine": "vllm",
+      "arch": "cann",
+      "gpu_model": [
+        "*310P*",
+        "*300I*"
+      ],
+      "driver": ">=25.2",
+      "engine_version": "0.30.0",
+      "image": "quay.io/ascend/vllm-ascend:v0.30.0-310p-openeuler",
       "params": {
         "args": [
           "--dtype",
@@ -6553,7 +6553,7 @@
       "image": "swr.cn-south-1.myhuaweicloud.com/ascendhub/mindie:3.1.0-cann9.0.1-torch_npu2.9.0.post4-310p-openeuler24.03_lts-py3.11",
       "default": true,
       "params": {},
-      "notes": "MindIE Service 3.1.0（昇腾 310P 系，x86_64 多架构 manifest；300I Duo 同芯异名但未实测，fail-closed 不放行）；M1 真机核验：310P3 + 驱动 25.2.3 匿名 pull 成功、镜像内 CANN 9.0.1。params.args 必须为空：MindIE 适配器产出的 positional（引导脚本 + $0 占位）必须严格在前，image 层 args 会渲染进传给 daemon 的 $@ 区"
+      "notes": "驱动 ≥25.2"
     }
   ]
 }
