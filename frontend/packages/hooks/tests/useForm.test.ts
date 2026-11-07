@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { defineComponent, h, nextTick, ref } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { NDatePicker } from 'naive-ui'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -328,6 +328,8 @@ describe('useForm 渲染与校验(挂载)', () => {
         }),
       ],
     })
+    // 日期字段走异步入口(把 date-fns 挡在表单首屏之外),加载完成后才拿得到真实控件
+    await flushPromises()
     const picker = wrapper.findComponent(NDatePicker)
     // 值经 formattedValue 通道下发,value 通道不注入
     expect(picker.props('formattedValue')).toBe(null)
@@ -351,6 +353,7 @@ describe('useForm 渲染与校验(挂载)', () => {
       data: () => ({ at: null as number | null }),
       options: () => [FormDatePicker('时间', 'at', { attrs: { type: 'datetime' } })],
     })
+    await flushPromises()
     const picker = wrapper.findComponent(NDatePicker)
     expect(picker.props('value')).toBe(null)
 

@@ -8,11 +8,13 @@ import {
   LmPassword,
   LmInputNumber,
   LmSelect,
-  LmTreeSelect,
   LmRadioGroup,
   LmCheckboxGroup,
   LmSwitch,
-  LmDatePicker,
+  // 低频重字段走异步入口:把 date-fns / 树检索依赖挡在表单首屏之外。
+  // LmInputNumber 不参与:切走的仅是包装层(约 0.5KB),却是表单最高频字段
+  LmTreeSelectAsync,
+  LmDatePickerAsync,
 } from '@repo/naive-ui'
 import type { FormComponentName, FormFieldSchema, FormRenderContext, FormSchema } from './types'
 
@@ -29,11 +31,11 @@ function resolveFieldComponent(component: FormComponentName | Component): Compon
     LmPassword,
     LmInputNumber,
     LmSelect,
-    LmTreeSelect,
+    LmTreeSelect: LmTreeSelectAsync,
     LmRadioGroup,
     LmCheckboxGroup,
     LmSwitch,
-    LmDatePicker,
+    LmDatePicker: LmDatePickerAsync,
   }
   return componentMap[component]
 }
