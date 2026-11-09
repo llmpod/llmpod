@@ -69,6 +69,7 @@ def build_model_files(
     gguf_header=None,
     source_subpath: str | None = None,
     repo_names: list[str] | None = None,
+    resolve_revision: str = "main",
 ) -> ModelFiles:
     """从文件清单 + pipeline_tag + （可选）config/model_index 装配识别结果（纯函数，无 IO）。
 
@@ -79,6 +80,7 @@ def build_model_files(
       同时提供 MoE 与架构形状（层数/KV head/head_dim）。
     - ``repo_names``：仓库**全量**文件清单（未按 subpath 收窄）。视觉投影器（mmproj）常与变体文件
       不同名/不同目录——用户贴具体变体文件时 ``siblings`` 已收窄到那一个文件，用全量清单才能找到它。
+    - ``resolve_revision``：多 GGUF 变体错误文案里的示例 revision（HF 默认 main；ModelScope 传实际版本）。
     """
     config = config or {}
     names = inference._sibling_names(siblings)
@@ -101,7 +103,7 @@ def build_model_files(
             success=False,
             message=(
                 f"多个 GGUF 量化变体（{len(gguf_variants)} 个），无法自动判定大小。"
-                f"请在 source_url 带具体变体路径或文件（如 /resolve/main/Qwen-...-Q4_K_M.gguf）后重试。可选变体：{variants}"
+                f"请在 source_url 带具体变体路径或文件（如 /resolve/{resolve_revision}/Qwen-...-Q4_K_M.gguf）后重试。可选变体：{variants}"
             ),
             structure="directory",
             source_kind=None,
@@ -136,6 +138,9 @@ def build_model_files(
     ]
 
     architecture = inference.infer_architecture(config, model_index)
+    # GGUF 没有 config 时，文件头里的 general.architecture 是唯一权威架构来源
+    if not architecture and gguf_header is not None:
+        architecture = gguf_header.architecture
 
     # message：单文件 / 无可用 config / 完整
     if structure == "single_file":

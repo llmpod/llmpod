@@ -67,6 +67,7 @@ class ModelSource(StrEnum):
 
     HUGGINGFACE = "huggingface"
     HF = "hf"  # HUGGINGFACE 别名
+    MODELSCOPE = "modelscope"
     OSS = "oss"
     LOCAL = "local"
 
@@ -79,6 +80,11 @@ class ModelSource(StrEnum):
     def is_hf_source(cls, source: str | None) -> bool:
         """是否走 HF 下载（huggingface/hf 别名）。"""
         return (source or "").lower() in (cls.HUGGINGFACE, cls.HF)
+
+    @classmethod
+    def is_modelscope_source(cls, source: str | None) -> bool:
+        """是否走 ModelScope 下载。"""
+        return (source or "").lower() == cls.MODELSCOPE
 
 
 class ModelTag(StrEnum):

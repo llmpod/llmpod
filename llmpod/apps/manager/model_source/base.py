@@ -49,8 +49,10 @@ class ModelFiles(BaseModel):
         description="身份标识原样字符串：config.architectures[0] / model_type / 自定义 config format / diffusers _class_name",
     )
     pipeline_class: str | None = Field(default=None, description="diffusers model_index._class_name（如 FluxPipeline）")
-    pipeline_tag: str | None = Field(default=None, description="HF 元数据 task 标签（仅 HF 源）")
-    is_moe: bool = Field(default=False, description="是否 MoE（config num_experts 字段）")
+    pipeline_tag: str | None = Field(
+        default=None, description="来源任务标签（HF pipeline_tag / ModelScope Tasks[0].Name）"
+    )
+    is_moe: bool = Field(default=False, description="是否 MoE（config num_experts / GGUF expert_count）")
     is_vision: bool = Field(default=False, description="是否视觉/多模态：GGUF 探仓库是否含 mmproj 视觉投影器文件")
     mmproj_file: str | None = Field(
         default=None,
@@ -87,12 +89,12 @@ class ModelFiles(BaseModel):
     # —— type 建议（来自 pipeline_tag；None = 用户选）——
     suggested_type: str | None = Field(
         default=None,
-        description="建议 model_type（HF pipeline_tag → llm/embedding/rerank/multimodal/...；None=用户选）",
+        description="建议 model_type（HF pipeline_tag / ModelScope Tasks[0].Name → llm/embedding/rerank/multimodal/...；None=用户选）",
     )
 
 
 class ModelInspector(ABC):
-    """模型源探测器抽象。按 ``source`` 分流实现（HF / OSS / local）。"""
+    """模型源探测器抽象。按 ``source`` 分流实现（HF / ModelScope / OSS / local）。"""
 
     @abstractmethod
     async def inspect(

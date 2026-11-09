@@ -55,9 +55,11 @@ model_router = APIRouter()
 
 
 class InspectModelRequest(BaseModel):
-    source: str = Field(..., description="来源：huggingface | oss | local")
-    source_url: str = Field(..., description="来源地址：Hugging Face 仓库、对象存储文件地址或管理端本地路径")
-    revision: str | None = Field(None, description="版本/commit-hash（HF 可选，默认 main）")
+    source: str = Field(..., description="来源：huggingface | modelscope | oss | local")
+    source_url: str = Field(
+        ..., description="来源地址：Hugging Face / ModelScope 仓库（repo id 或 URL）、对象存储文件地址或管理端本地路径"
+    )
+    revision: str | None = Field(None, description="版本/commit-hash（HF 默认 main；ModelScope 默认 master）")
     context_size: int | None = Field(
         None, description="最大上下文长度（Token）；不填时不计入 KV cache 需求，估算可能偏低"
     )
@@ -80,10 +82,12 @@ class InspectModelRequest(BaseModel):
 
 class CreateModelRequest(BaseModel):
     name: str = Field(..., description="模型显示名")
-    source: str = Field(..., description="来源：huggingface | oss | local（上传落地的模型标 local）")
-    source_url: str = Field(..., description="来源地址（HF repo id/URL / OSS 直链 / manager 本地路径）")
-    revision: str | None = Field(None, description="版本/commit-hash")
-    source_auth: str | None = Field(None, description="模型来源凭证，如 Hugging Face Token；加密保存且不会在响应中返回")
+    source: str = Field(..., description="来源：huggingface | modelscope | oss | local（上传落地的模型标 local）")
+    source_url: str = Field(..., description="来源地址（HF/ModelScope repo id 或 URL / OSS 直链 / manager 本地路径）")
+    revision: str | None = Field(None, description="版本/commit-hash（HF 默认 main；ModelScope 默认 master）")
+    source_auth: str | None = Field(
+        None, description="模型来源凭证，如 Hugging Face Token / ModelScope Access Token；加密保存且不会在响应中返回"
+    )
     model_type: str = Field(
         "llm",
         description="模型类别：llm、embedding、rerank、image、stt、tts 或 multimodal",
@@ -202,8 +206,8 @@ class UpdateModelRequest(BaseModel):
         None, description="是否带自定义代码（需 --trust-remote-code）；不传则不修改"
     )
     hash: str | None = Field(None, description="权重哈希；不传则不修改")
-    source: str | None = Field(None, description="来源；不传则不修改")
-    source_url: str | None = Field(None, description="来源地址；不传则不修改")
+    source: str | None = Field(None, description="来源：huggingface|modelscope|oss|local；不传则不修改")
+    source_url: str | None = Field(None, description="来源地址（HF/ModelScope repo id 或 URL）；不传则不修改")
     source_kind: str | None = Field(
         None, description="盘上布局：unknown|single_gguf|gguf_shards|transformers_folder|diffusers_folder；不传则不修改"
     )
@@ -211,10 +215,13 @@ class UpdateModelRequest(BaseModel):
     mmproj_file: str | None = Field(
         None, description="视觉投影器文件（repo 相对路径，如 mmproj-F16.gguf）；不传则不修改"
     )
-    revision: str | None = Field(None, description="版本/commit-hash；不传则不修改")
+    revision: str | None = Field(
+        None, description="版本/commit-hash（HF 默认 main；ModelScope 默认 master）；不传则不修改"
+    )
     hash_mode: str | None = Field(None, description="hash 释读方式：none|revision|etag|sha256；不传则不修改")
     source_auth: str | None = Field(
-        None, description="来源凭证明文（如 HF token）；传字符串=设置（加密入库），传 null=清除，不传=不改"
+        None,
+        description="来源凭证明文（如 HF Token / ModelScope Access Token）；传字符串=设置（加密入库），传 null=清除，不传=不改",
     )
 
 

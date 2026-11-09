@@ -9,6 +9,7 @@ from __future__ import annotations
 from llmpod.apps.manager.model_source.base import ModelFiles, ModelInspector
 from llmpod.apps.manager.model_source.huggingface import HFHubInspector
 from llmpod.apps.manager.model_source.local import LocalInspector
+from llmpod.apps.manager.model_source.modelscope import ModelScopeInspector
 from llmpod.apps.manager.model_source.oss import OSSInspector
 from llmpod.config.enums import ModelSource
 from llmpod.core.exceptions import LLMPodValidationError
@@ -16,6 +17,7 @@ from llmpod.core.exceptions import LLMPodValidationError
 # source 名 → 探测器类（每次新建，无状态）
 _REGISTRY: dict[ModelSource, type[ModelInspector]] = {
     ModelSource.HUGGINGFACE: HFHubInspector,
+    ModelSource.MODELSCOPE: ModelScopeInspector,
     ModelSource.OSS: OSSInspector,
     ModelSource.LOCAL: LocalInspector,
 }
@@ -47,6 +49,7 @@ __all__ = [
     "get_inspector",
     "supported_sources",
     "HFHubInspector",
+    "ModelScopeInspector",
     "OSSInspector",
     "LocalInspector",
 ]

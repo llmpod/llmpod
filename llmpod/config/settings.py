@@ -303,6 +303,7 @@ class Settings(BaseSettings):
     # ===== 模型源探测（inspect：抓 config.json / 文件清单，不下载）=====
     # 国内 huggingface.co 默认不可达 → 改 https://hf-mirror.com
     model_source_hf_endpoint: str = "https://huggingface.co"
+    model_source_modelscope_endpoint: str = "https://www.modelscope.cn"
     model_source_probe_timeout: int = 10  # 秒
 
     # ===== 遥测（每日一次匿名遥测，仅管理端角色；false = 后台任务不启动）=====

@@ -471,6 +471,65 @@ class TestExecute:
         assert recorded["token"] == "SECRET-TOKEN"  # secrets 透传
         assert "SECRET-TOKEN" not in str(calls)  # 不入上报内容
 
+    async def test_default_downloader_delegates_to_modelscope(self, tmp_path, monkeypatch):
+        """默认 downloader → _download_modelscope 委托 _modelscope.download_modelscope：
+        配方字段透传，且不读取 secrets/token。"""
+        import llmpod.apps.node.executors._modelscope as msmod
+
+        d = tmp_path / "model-1"
+        recorded: dict = {}
+
+        async def fake_download_modelscope(
+            *,
+            source_url,
+            revision,
+            source_subpath,
+            local_dir,
+            report,
+            cancel_event,
+            token=None,
+            extra_files=None,
+        ):
+            recorded.update(
+                source_url=source_url,
+                revision=revision,
+                source_subpath=source_subpath,
+                local_dir=str(local_dir),
+                token=token,
+                extra_files=extra_files,
+            )
+            await report("RUNNING", 50, stage="downloading")
+            local_dir.mkdir(parents=True, exist_ok=True)
+            (local_dir / "config.json").write_text("{}")
+            (local_dir / "model.safetensors").write_text("")  # H1：verify 需权重
+
+        monkeypatch.setattr(msmod, "download_modelscope", fake_download_modelscope)
+        calls, report = _recorder()
+        ex = EnsureModelExecutor(store_dir=str(tmp_path), min_free_gb=0)
+        task = LocalTask(
+            task_id="t1",
+            type="ENSURE_MODEL",
+            resource_type="MODEL_PLACEMENT",
+            resource_key="model:1:n1",
+            node_id="n1",
+            status="PENDING",
+            payload={
+                "model_id": 1,
+                "source": "modelscope",
+                "source_kind": "transformers_folder",
+                "source_url": "Qwen/Qwen2.5-0.5B",
+                "source_subpath": None,
+                "revision": "master",
+                "local_dir": str(d),
+            },
+        )
+        await ex.execute(task, {"modelscope_token": "SECRET-TOKEN"}, report, asyncio.Event())
+        assert calls[-1]["status"] == "SUCCESS"
+        assert recorded["source_url"] == "Qwen/Qwen2.5-0.5B"
+        assert recorded["revision"] == "master"
+        assert recorded["token"] == "SECRET-TOKEN"
+        assert "SECRET-TOKEN" not in str(calls)
+
     async def test_injected_downloader_success(self, tmp_path):
         d = tmp_path / "model-1"
 

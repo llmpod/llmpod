@@ -252,6 +252,9 @@ class EnsureModelExecutor(Executor):
         if ModelSource.is_hf_source(source):
             await self._download_hf(payload, secrets, local_dir, report, cancel_event)
             return
+        if ModelSource.is_modelscope_source(source):
+            await self._download_modelscope(payload, secrets, local_dir, report, cancel_event)
+            return
         if ModelSource.is_manager_source(source):
             await self._download_manager(payload, secrets, local_dir, report, cancel_event)
             return
@@ -273,6 +276,26 @@ class EnsureModelExecutor(Executor):
             local_dir=local_dir,
             report=report,
             cancel_event=cancel_event,
+            extra_files=payload.extra_files,
+        )
+
+    async def _download_modelscope(self, payload: EnsureModelPayload, secrets, local_dir, report, cancel_event) -> None:
+        """ModelScope 下载：委托 ``_modelscope.download_modelscope``（逐文件 Range 续传）。
+
+        私有仓库 token 从 ``secrets["modelscope_token"]`` 取出，仅经参数注入下载器，
+        **不**落 local_tasks/日志/payload。
+        """
+        from llmpod.apps.node.executors._modelscope import download_modelscope
+
+        secrets = secrets or {}
+        await download_modelscope(
+            source_url=payload.source_url or "",
+            revision=payload.revision,
+            source_subpath=payload.source_subpath,
+            local_dir=local_dir,
+            report=report,
+            cancel_event=cancel_event,
+            token=secrets.get("modelscope_token"),
             extra_files=payload.extra_files,
         )
 

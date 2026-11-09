@@ -100,7 +100,8 @@ def decrypt(token: str) -> str:
 def build_secrets(model) -> dict[str, str] | None:
     """按 ``model.source`` 把 ``source_auth_encrypted`` 解密装配成 secrets dict。
 
-    返回 ``None`` 表示无凭证（HF public / local）。仅 HF-first V1：huggingface → ``{hf_token}``。
+    返回 ``None`` 表示无凭证（HF / ModelScope public / local）。huggingface → ``{hf_token}``，
+    modelscope → ``{modelscope_token}``。
     解密失败记 warning 并返回 None（不下发坏凭证，由 node 按 public 处理或失败）。
     """
     enc = getattr(model, "source_auth_encrypted", None)
@@ -116,7 +117,9 @@ def build_secrets(model) -> dict[str, str] | None:
     source = (getattr(model, "source", None) or "").lower()
     if ModelSource.is_hf_source(source):
         return {"hf_token": plain}
-    # 其他 source（oss/modelscope）凭证形态尚未冻结，原样放 token（细分待定）。
+    if ModelSource.is_modelscope_source(source):
+        return {"modelscope_token": plain}
+    # 其他 source（oss）凭证形态尚未冻结，原样放 token（细分待定）。
     return {"token": plain}
 
 

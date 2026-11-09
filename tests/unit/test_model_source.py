@@ -11,6 +11,7 @@ import pytest
 from llmpod.apps.manager.model_source import ModelFiles, get_inspector, supported_sources
 from llmpod.apps.manager.model_source.gguf_meta import GGUFMetadata
 from llmpod.apps.manager.model_source.huggingface import HFHubInspector, build_model_files, parse_hf_ref
+from llmpod.apps.manager.model_source.modelscope import ModelScopeInspector
 from llmpod.apps.manager.model_source.oss import OSSInspector
 from llmpod.apps.manager.model_source.local import LocalInspector
 from llmpod.apps.manager.model_source import inference
@@ -703,10 +704,13 @@ class TestParseHfRef:
 
 class TestRegistry:
     def test_supported_sources(self):
-        assert set(supported_sources()) >= {"huggingface", "oss", "local"}
+        assert set(supported_sources()) >= {"huggingface", "modelscope", "oss", "local"}
 
     def test_get_huggingface(self):
         assert isinstance(get_inspector("huggingface"), HFHubInspector)
+
+    def test_get_modelscope(self):
+        assert isinstance(get_inspector("modelscope"), ModelScopeInspector)
 
     def test_get_oss(self):
         assert isinstance(get_inspector("oss"), OSSInspector)

@@ -60,6 +60,15 @@ class TestBuildSecrets:
         )
         assert secrets_mod.build_secrets(m) == {"hf_token": token}
 
+    def test_modelscope_maps_to_modelscope_token(self):
+        token = "ms_abc123"
+        m = SimpleNamespace(
+            id=2,
+            source="modelscope",
+            source_auth_encrypted=secrets_mod.encrypt(token),
+        )
+        assert secrets_mod.build_secrets(m) == {"modelscope_token": token}
+
     def test_other_source_falls_back_to_token(self):
         token = "oss_key:secret"
         m = SimpleNamespace(
