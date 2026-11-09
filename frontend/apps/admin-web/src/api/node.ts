@@ -1,3 +1,4 @@
+import type { HttpRequestMeta } from '@repo/http-client'
 import { request } from './request'
 
 /** 节点状态：online=在线 | offline=离线 | maintenance=维护 | busy=繁忙 | drained=已排空 */
@@ -84,9 +85,13 @@ export interface ListNodesParams {
   page_size?: number
 }
 
-/** 列出节点（GET /api/v1/admin/nodes） */
-export function listNodes(params: ListNodesParams, signal?: AbortSignal): Promise<NodePageData> {
-  return request({ url: '/admin/nodes', method: 'GET', params, signal })
+/** 列出节点（GET /api/v1/admin/nodes）；meta 可选，静默轮询传 { silentError: true } 抑制统一错误提示 */
+export function listNodes(
+  params: ListNodesParams,
+  signal?: AbortSignal,
+  meta?: HttpRequestMeta,
+): Promise<NodePageData> {
+  return request({ url: '/admin/nodes', method: 'GET', params, signal, meta })
 }
 
 /** 获取节点详情（GET /api/v1/admin/nodes/{node_id}） */
@@ -110,6 +115,25 @@ export function updateNode(nodeId: string, data: UpdateNodePayload): Promise<Nod
 /** 注销节点（POST /api/v1/admin/nodes/{node_id}/delete，在线节点会被后端拒绝） */
 export function deleteNode(nodeId: string): Promise<unknown> {
   return request({ url: `/admin/nodes/${nodeId}/delete`, method: 'POST' })
+}
+
+/** 节点升级下发结果（POST /api/v1/admin/nodes/{node_id}/upgrade） */
+export interface NodeUpgradeItem {
+  /** 节点ID */
+  id: string
+  /** 升级指令是否已下发（true 仅代表送达，不代表升级完成） */
+  dispatched: boolean
+  /** 未下发原因（中文可直接展示，如「节点不在线」；下发成功时为 null） */
+  reason: string | null
+}
+
+/**
+ * 下发节点升级（POST /api/v1/admin/nodes/{node_id}/upgrade，无 body）。
+ * 返回只代表指令送达：完成信号 = 列表 version_status 翻 ok（镜像预载 <30s，需拉取则分钟级），
+ * 节点 status 全程 online 无「升级中」态；节点侧失败（拉取失败/回滚/存量节点不支持）只在审计页。
+ */
+export function upgradeNode(nodeId: string): Promise<NodeUpgradeItem> {
+  return request({ url: `/admin/nodes/${nodeId}/upgrade`, method: 'POST' })
 }
 
 /** 签发节点引导令牌请求体（POST /api/v1/admin/nodes/bootstrap-token）；传参原则：未修改的字段不传，空值传 null 不传空串 */

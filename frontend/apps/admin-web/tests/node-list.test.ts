@@ -5,10 +5,11 @@ vi.mock('@/api/node', () => ({
   getNode: vi.fn(),
   updateNode: vi.fn(),
   deleteNode: vi.fn(),
+  upgradeNode: vi.fn(),
 }))
 vi.mock('@/api/gpu', () => ({ listGpus: vi.fn() }))
 
-import { deleteNode, getNode, listNodes, updateNode } from '@/api/node'
+import { deleteNode, getNode, listNodes, updateNode, upgradeNode } from '@/api/node'
 import { listGpus } from '@/api/gpu'
 import {
   formatDateTime,
@@ -93,8 +94,8 @@ describe('node-list useStore', () => {
     expect(n1.gpus.map((gpu) => gpu.index)).toEqual([0, 1])
     const n2 = result.data.find((row) => row.id === 'n2')!
     expect(n2.gpus).toEqual([])
-    expect(listNodes).toHaveBeenCalledWith({ page: 1, page_size: 20 }, undefined)
-    expect(listGpus).toHaveBeenCalledWith({ page: 1, page_size: 100 }, undefined)
+    expect(listNodes).toHaveBeenCalledWith({ page: 1, page_size: 20 }, undefined, undefined)
+    expect(listGpus).toHaveBeenCalledWith({ page: 1, page_size: 100 }, undefined, undefined)
   })
 
   it('request 透传单卡 runtime 供展开行渲染:在线卡为对象,未上报卡为 null', async () => {
@@ -124,7 +125,13 @@ describe('node-list useStore', () => {
   it('page_size 字段兼容,AbortSignal 透传', async () => {
     const controller = new AbortController()
     await store.request({ page: 2, pageSize: 20, page_size: 50 } as { page: number; pageSize: number }, { signal: controller.signal })
-    expect(listNodes).toHaveBeenCalledWith({ page: 2, page_size: 50 }, controller.signal)
+    expect(listNodes).toHaveBeenCalledWith({ page: 2, page_size: 50 }, controller.signal, undefined)
+  })
+
+  it('silentError 透传为 meta:静默轮询失败不弹统一错误提示', async () => {
+    await store.request({ page: 1, pageSize: 20 }, undefined, { silentError: true })
+    expect(listNodes).toHaveBeenCalledWith({ page: 1, page_size: 20 }, undefined, { silentError: true })
+    expect(listGpus).toHaveBeenCalledWith({ page: 1, page_size: 100 }, undefined, { silentError: true })
   })
 
   it('listNodeGpus 按 index 排序', async () => {
@@ -158,6 +165,19 @@ describe('node-list useStore', () => {
 
     vi.mocked(getNode).mockResolvedValue({ id: 'n1' } as Awaited<ReturnType<typeof getNode>>)
     expect(await store.getDetail('n1')).toMatchObject({ id: 'n1' })
+    unsubscribe()
+  })
+
+  it('upgrade 透传 upgradeNode 且不 notify(版本状态靠轮询带出,无「升级中」态可推)', async () => {
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe(listener)
+    vi.mocked(upgradeNode).mockResolvedValue({ id: 'n1', dispatched: false, reason: '节点不在线' })
+
+    const result = await store.upgrade('n1')
+    expect(upgradeNode).toHaveBeenCalledWith('n1')
+    // reason 原样返回,由调用侧直接展示
+    expect(result).toEqual({ id: 'n1', dispatched: false, reason: '节点不在线' })
+    expect(listener).not.toHaveBeenCalled()
     unsubscribe()
   })
 

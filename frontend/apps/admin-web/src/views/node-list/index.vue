@@ -21,6 +21,7 @@ const {
   loading,
   openGpuDrawer,
   openDetailDrawer,
+  onUpgrade,
 } = useController()
 </script>
 
@@ -72,6 +73,7 @@ const {
                 :has-active-query="hasActiveQuery"
                 @gpu="openGpuDrawer"
                 @detail="openDetailDrawer"
+                @upgrade="onUpgrade"
                 @reset="reset"
                 @register="openRegister"
               />

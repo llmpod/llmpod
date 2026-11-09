@@ -1,3 +1,4 @@
+import type { HttpRequestMeta } from '@repo/http-client'
 import { request } from './request'
 
 /** GPU 状态：online=在线 | stale=心跳过期 | offline=离线 */
@@ -79,9 +80,13 @@ export interface ListGpusParams {
   page_size?: number
 }
 
-/** 列出GPU（GET /api/v1/admin/gpus） */
-export function listGpus(params: ListGpusParams, signal?: AbortSignal): Promise<GpuPageData> {
-  return request({ url: '/admin/gpus', method: 'GET', params, signal })
+/** 列出GPU（GET /api/v1/admin/gpus）；meta 可选，静默轮询传 { silentError: true } 抑制统一错误提示 */
+export function listGpus(
+  params: ListGpusParams,
+  signal?: AbortSignal,
+  meta?: HttpRequestMeta,
+): Promise<GpuPageData> {
+  return request({ url: '/admin/gpus', method: 'GET', params, signal, meta })
 }
 
 /** 获取GPU详情（GET /api/v1/admin/gpus/{gpu_id}） */

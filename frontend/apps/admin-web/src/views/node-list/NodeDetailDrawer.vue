@@ -17,7 +17,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 
-const { getDetail, toggleMaintenance, remove } = useStore()
+const { getDetail, toggleMaintenance, upgrade, remove } = useStore()
 
 const innerShow = computed({
   get: () => props.show,
@@ -26,7 +26,7 @@ const innerShow = computed({
 
 const detail = ref<NodeData>()
 const loading = ref(false)
-/** 操作进行中(维护模式切换/注销),防止重复点击 */
+/** 操作进行中(升级/维护模式切换/注销),防止重复点击 */
 const operating = ref(false)
 
 watch(
@@ -95,6 +95,39 @@ async function onToggleMaintenance() {
     const next = await toggleMaintenance(detail.value)
     detail.value = await getDetail(detail.value.id)
     message.success(next === 'maintenance' ? '已进入维护模式' : '已退出维护模式')
+  }
+  finally {
+    operating.value = false
+  }
+}
+
+/**
+ * 升级节点:二次确认后下发升级指令,完成后刷新详情。
+ * 返回只代表指令送达 —— version_status 要等节点真正换版后才翻 ok(镜像预载 <30s,需拉取则分钟级),
+ * 期间 status 全程 online 没有「升级中」态,故只提示下发结果,不阻塞、不展示进度条;
+ * 节点侧失败(拉取失败/回滚/存量节点不支持)不在响应里,只落审计页($node_upgrade_result)。
+ */
+async function onUpgrade() {
+  if (!detail.value) return
+  const { id, hostname } = detail.value
+  try {
+    await useConfirm({
+      title: '升级节点',
+      content: `确定将节点「${hostname}」升级到与管理端一致的版本吗?不影响已部署的推理服务。`,
+      confirmText: '升级',
+      cancelText: '取消',
+    })
+  }
+  catch {
+    return
+  }
+  operating.value = true
+  try {
+    const result = await upgrade(id)
+    // reason 由后端给出中文原因,直接透出不改写
+    if (result.dispatched) message.success('升级指令已下发,版本状态稍后自动更新')
+    else message.warning(result.reason ?? '升级下发失败')
+    detail.value = await getDetail(id)
   }
   finally {
     operating.value = false
@@ -248,6 +281,15 @@ async function onRemove() {
               节点操作
             </div>
             <div class="flex gap-[.5rem] border p-[1.6rem] rounded">
+              <n-button
+                v-if="detail.version_status === 'outdated'"
+                tertiary
+                type="primary"
+                :loading="operating"
+                @click="onUpgrade"
+              >
+                升级
+              </n-button>
               <n-button
                 tertiary
                 :loading="operating"

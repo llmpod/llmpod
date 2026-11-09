@@ -4,14 +4,25 @@ import {
   getNode,
   updateNode,
   deleteNode,
+  upgradeNode,
   type NodeData,
   type NodeRuntime,
   type NodeStatus,
+  type NodeUpgradeItem,
   type NodeVersionStatus,
 } from '@/api/node'
 import { listGpus, type GpuData, type GpuRuntime, type GpuStatus } from '@/api/gpu'
 
-export type { NodeData, NodeRuntime, NodeStatus, NodeVersionStatus, GpuData, GpuRuntime, GpuStatus }
+export type {
+  NodeData,
+  NodeRuntime,
+  NodeStatus,
+  NodeUpgradeItem,
+  NodeVersionStatus,
+  GpuData,
+  GpuRuntime,
+  GpuStatus,
+}
 
 /** 列表行:节点 + 该节点的 GPU 列表(由 GPU 接口按 node_id 聚合) */
 export type ComputeNode = NodeData & { gpus: GpuData[] }
@@ -103,11 +114,14 @@ export function notify(): void {
 }
 
 /**
- * 节点数据 store:列表请求、详情、维护模式切换、注销均走此单例,
+ * 节点数据 store:列表请求、详情、维护模式切换、升级、注销均走此单例,
  * 数据来源于 /api/v1/admin/nodes 与 /api/v1/admin/gpus 接口。
  */
 export function useStore() {
-  /** 分页 + 关键字请求(供 useTable.request);keyword 后端不支持,仅过滤当前页 */
+  /**
+   * 分页 + 关键字请求(供 useTable.request);keyword 后端不支持,仅过滤当前页。
+   * options.silentError:静默轮询用,失败不弹统一错误提示(3s 一次会刷屏),由下一次手动刷新兜底提示。
+   */
   const request = async (
     params: {
       page: number
@@ -115,13 +129,15 @@ export function useStore() {
       keyword?: string
     },
     ctx?: TableRequestContext,
+    options?: { silentError?: boolean },
   ) => {
     // useTable 按 config.request.pageSizeField 透传,运行时为 page_size
     const pageSize = (params as { page_size?: number }).page_size ?? params.pageSize
+    const meta = options?.silentError ? { silentError: true } : undefined
     // GPU 按节点聚合:一次拉全量 GPU(上限 100),按 node_id 分组挂到节点行上
     const [nodePage, gpuPage] = await Promise.all([
-      listNodes({ page: params.page, page_size: pageSize }, ctx?.signal),
-      listGpus({ page: 1, page_size: 100 }, ctx?.signal),
+      listNodes({ page: params.page, page_size: pageSize }, ctx?.signal, meta),
+      listGpus({ page: 1, page_size: 100 }, ctx?.signal, meta),
     ])
     const gpuMap = new Map<string, GpuData[]>()
     for (const gpu of gpuPage.items) {
@@ -167,6 +183,15 @@ export function useStore() {
     notify()
   }
 
+  /**
+   * 下发节点升级(节点侧自判,重复触发安全)。
+   * 返回只代表指令送达:version_status 要等节点真正换版后才翻 ok(镜像预载 <30s,需拉取则分钟级),
+   * 期间节点 status 全程 online 无「升级中」态,故此处不 notify —— 列表由 3s 轮询自动带出最新版本状态。
+   */
+  const upgrade = (id: string): Promise<NodeUpgradeItem> => {
+    return upgradeNode(id)
+  }
+
   /** 订阅数据变更;返回取消订阅函数 */
   const subscribe = (fn: () => void): (() => void) => {
     listeners.add(fn)
@@ -175,5 +200,5 @@ export function useStore() {
     }
   }
 
-  return { request, getDetail, listNodeGpus, toggleMaintenance, remove, subscribe }
+  return { request, getDetail, listNodeGpus, toggleMaintenance, remove, upgrade, subscribe }
 }

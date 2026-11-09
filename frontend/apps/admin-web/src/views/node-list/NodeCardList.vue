@@ -11,6 +11,7 @@ defineProps<{
 const emit = defineEmits<{
   gpu: [node: ComputeNode]
   detail: [node: ComputeNode]
+  upgrade: [node: ComputeNode]
   reset: []
   register: []
 }>()
@@ -28,6 +29,7 @@ const emit = defineEmits<{
         :node="node"
         @gpu="emit('gpu', $event)"
         @detail="emit('detail', $event)"
+        @upgrade="emit('upgrade', $event)"
       />
     </div>
     <template v-else>

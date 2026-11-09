@@ -16,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   gpu: [node: ComputeNode]
   detail: [node: ComputeNode]
+  upgrade: [node: ComputeNode]
 }>()
 
 const statusConf = computed(
@@ -81,15 +82,20 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', checkSummaryOverflow)
 })
 
-/** 操作菜单 */
-const actionOptions = [
-  { label: 'GPU', key: 'gpu' },
-  { label: '详情', key: 'detail' },
-]
+/** 操作菜单:升级入口只给落后管理端版本的节点(同版/超前/未上报不显示) */
+const actionOptions = computed(() => {
+  const options = [
+    { label: 'GPU', key: 'gpu' },
+    { label: '详情', key: 'detail' },
+  ]
+  if (props.node.version_status === 'outdated') options.push({ label: '升级', key: 'upgrade' })
+  return options
+})
 
 function onActionSelect(key: string) {
   if (key === 'gpu') emit('gpu', props.node)
   if (key === 'detail') emit('detail', props.node)
+  if (key === 'upgrade') emit('upgrade', props.node)
 }
 </script>
 
