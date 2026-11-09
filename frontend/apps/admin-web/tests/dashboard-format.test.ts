@@ -23,7 +23,7 @@ import {
   tokenBoundLabel,
   windowToRange,
   windowToRealtimeQuery,
-} from '@/views/dashboard-shared/format'
+} from '@/analytics/format'
 
 describe('formatGrouped(§1.5 按组内最大值定单位)', () => {
   it('组最大值 <10万 → 次数千分位', () => {

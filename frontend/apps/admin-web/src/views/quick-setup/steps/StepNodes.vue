@@ -307,18 +307,18 @@ defineExpose({ canNext, nextDisabledTip, validate })
 </template>
 
 <style scoped lang="scss">
-/* 注册命令终端风格面板(与 NodeRegisterModal 一致) */
+/* 注册命令终端风格面板(与 NodeRegisterModal 共用 --c-terminal-* token) */
 .cmd {
   position: relative;
-  background-color: #1b1b1f;
-  border-radius: 6px;
-  padding: 12px 14px;
+  background-color: var(--c-terminal-bg);
+  border-radius: 0.6rem;
+  padding: 1.2rem 1.4rem;
 
   &__text {
     font-family: monospace;
-    font-size: 12px;
+    font-size: 1.2rem;
     line-height: 1.8;
-    color: #d4d4d8;
+    color: var(--c-terminal-text);
     white-space: pre-wrap;
     word-break: break-all;
     margin: 0;
@@ -326,17 +326,17 @@ defineExpose({ canNext, nextDisabledTip, validate })
 
   /* 签发中/失败占位文案(与 NodeRegisterModal 的 __note 同色) */
   &__text--muted {
-    color: #7c7c85;
+    color: var(--c-terminal-muted);
   }
 
   &__copy {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: 0.8rem;
+    right: 0.8rem;
     display: flex;
-    padding: 4px;
-    border-radius: 4px;
-    color: #8f8f96;
+    padding: 0.4rem;
+    border-radius: 0.4rem;
+    color: var(--c-terminal-icon);
     cursor: pointer;
 
     &:hover {

@@ -1,4 +1,4 @@
-import { lazyRetryable, useTheme } from '@repo/hooks'
+import { chartAxisColors, lazyRetryable, primaryColor, useTheme } from '@repo/hooks'
 import {
   AddOutline,
   BarChartOutline,
@@ -22,15 +22,6 @@ const ensureEcharts = lazyRetryable(() => import('./echarts-lazy').then((mod) =>
 
 /** 定时刷新间隔:工作台整屏聚合每 30s 静默拉一轮 */
 const REFRESH_INTERVAL_MS = 30_000
-
-/** 主题色以 r,g,b 逗号串注入文档根节点(--n-*-color),拼接为 rgb() 供 echarts 使用 */
-function cssRgb(name: string, fallback: string) {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return value ? `rgb(${value})` : fallback
-}
-function cssVar(name: string, fallback: string) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
-}
 
 export function useController() {
   const auth = useAuthStore()
@@ -71,9 +62,8 @@ export function useController() {
   let resizeObserver: ResizeObserver | undefined
 
   function buildTrendOption(): Record<string, unknown> {
-    const primary = cssRgb('--n-primary-color', '#5b5bd6')
-    const axisColor = cssVar('--c-secondary', '#8a8f99')
-    const splitColor = cssVar('--c-line', '#e5e7eb')
+    const primary = primaryColor()
+    const { axisColor, splitColor } = chartAxisColors()
     return {
       tooltip: { trigger: 'axis' },
       grid: { left: 8, right: 8, top: 24, bottom: 0, containLabel: true },

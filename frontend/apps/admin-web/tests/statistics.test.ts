@@ -13,7 +13,7 @@ import {
 import { listApiKeys } from '@/api/api-key'
 import { listPublishes } from '@/api/publish'
 import { listTenants } from '@/api/tenant'
-import { OTHER_KEY, windowToRange } from '@/views/dashboard-shared/format'
+import { OTHER_KEY, windowToRange } from '@/analytics/format'
 import { useStore } from '@/views/statistics/useStore'
 import { useController } from '@/views/statistics/useController'
 
@@ -51,9 +51,9 @@ vi.mock('@/api/api-key', () => ({
 }))
 
 // happy-dom 无 canvas:图表桩掉 useChart(el 保留 ref 供模板绑定,render/dispose 为桩函数)
-vi.mock('@/views/dashboard-shared/charts', async (importOriginal) => {
+vi.mock('@/analytics/charts', async (importOriginal) => {
   const { ref } = await import('vue')
-  const actual = await importOriginal<typeof import('@/views/dashboard-shared/charts')>()
+  const actual = await importOriginal<typeof import('@/analytics/charts')>()
   return {
     ...actual,
     useChart: () => ({ el: ref(), render: vi.fn(), dispose: vi.fn() }),

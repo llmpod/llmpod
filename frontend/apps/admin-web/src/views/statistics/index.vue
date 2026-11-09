@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import '@/views/dashboard-shared/seg-group.css'
+import '@/analytics/seg-group.css'
 import { useController } from './useController'
 
 const {

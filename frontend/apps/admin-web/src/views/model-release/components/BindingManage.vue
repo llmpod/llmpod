@@ -1,16 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NInputNumber, NSwitch } from 'naive-ui'
-import { useConfirm, useDialog, message } from '@repo/hooks'
+import { useConfirm, useDialog, message, useTable, type LmDataTableColumn } from '@repo/hooks'
 import type { SelectOption } from 'naive-ui'
 import { listEndpoints, type EndpointData } from '@/api/endpoint'
 import EndpointForm from './endpoint/EndpointForm.vue'
 import { useStore as useEndpointStore } from './endpoint/useStore'
-import {
-  useStore,
-  type RouteBindingData,
-  type PublishData,
-} from '../useStore'
+import { useStore, type RouteBindingData, type PublishData } from '../useStore'
 
 const props = defineProps<{
   show: boolean
@@ -196,6 +192,107 @@ async function onRemove(binding: RouteBindingData) {
   }
 }
 
+/** 已挂载供应商表格列(原模板内联列定义上移,统一走 useTable 装配) */
+const bindingColumns: LmDataTableColumn<RouteBindingData>[] = [
+  {
+    title: '来源端点',
+    key: 'endpoint_id',
+    render: (b) => bindingLabel(b),
+  },
+  {
+    title: '权重',
+    key: 'weight',
+    width: 90,
+    render: (b) =>
+      editingEndpointId.value === b.endpoint_id
+        ? h(NInputNumber, {
+            value: editWeight.value,
+            min: 1,
+            size: 'small',
+            showButton: false,
+            'onUpdate:value': (value: number | null) => {
+              editWeight.value = value
+            },
+          })
+        : b.weight,
+  },
+  {
+    title: '优先级',
+    key: 'priority',
+    width: 90,
+    render: (b) =>
+      editingEndpointId.value === b.endpoint_id
+        ? h(NInputNumber, {
+            value: editPriority.value,
+            size: 'small',
+            showButton: false,
+            'onUpdate:value': (value: number | null) => {
+              editPriority.value = value
+            },
+          })
+        : b.priority,
+  },
+  {
+    title: '启用',
+    key: 'enabled',
+    width: 60,
+    render: (b) =>
+      h(NSwitch, {
+        value: b.enabled,
+        size: 'small',
+        loading: togglingIds.value.has(b.endpoint_id),
+        'onUpdate:value': () => onToggleEnabled(b),
+      }),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 90,
+    render: (b) => {
+      const editing = editingEndpointId.value === b.endpoint_id
+      return h('div', { class: 'flex items-center gap-[.75rem]' }, [
+        h(
+          NButton,
+          {
+            text: true,
+            type: 'primary',
+            size: 'small',
+            loading: saving.value && editing,
+            onClick: () => (editing ? onSave(b) : onEdit(b)),
+          },
+          { default: () => (editing ? '保存' : '编辑') },
+        ),
+        h(
+          NButton,
+          { text: true, type: 'error', size: 'small', onClick: () => onRemove(b) },
+          { default: () => '移除' },
+        ),
+      ])
+    },
+  },
+]
+
+/**
+ * 已挂载供应商表:数据来源是抽屉内的本地数组(增删改后即时反映,不等父级刷新),
+ * 故关闭首屏请求,由下面 watch 把 localBindings 同步进表格。
+ * 抽屉内定高场景:关闭窄屏卡片形态并用显式 max-height,避免按视口算高度。
+ */
+const { LmTable: BindingTable, setData: setBindingRows } = useTable<RouteBindingData>({
+  request: async () => ({ data: [], total: 0 }),
+  columns: bindingColumns,
+  rowKey: (row) => row.endpoint_id,
+  immediate: false,
+  config: {
+    pagination: false,
+    card: { enabled: false },
+    tableProps: { size: 'small', flexHeight: false },
+  },
+})
+watch(localBindings, (rows) => setBindingRows([...rows], rows.length), {
+  deep: true,
+  immediate: true,
+})
+
 /** 直接打开「接入端点」弹窗(与 EndpointManage.openCreate 同模式);创建成功经 store 订阅刷新选项 */
 function openEndpointCreate() {
   useDialog({
@@ -209,7 +306,10 @@ function openEndpointCreate() {
 </script>
 
 <template>
-  <n-drawer v-model:show="innerShow" :width="560">
+  <n-drawer
+    v-model:show="innerShow"
+    :width="560"
+  >
     <n-drawer-content closable>
       <template #header>
         <span>供应商 - {{ publish?.route.name ?? '' }}</span>
@@ -219,93 +319,14 @@ function openEndpointCreate() {
         <!-- 已挂载供应商列表 -->
         <div class="flex flex-col gap-[.5rem]">
           <span class="text-small font-medium">已挂载供应商（{{ localBindings.length }}）</span>
-          <n-data-table
-            v-if="localBindings.length"
-            :data="localBindings"
-            :columns="[
-              {
-                title: '来源端点',
-                key: 'endpoint_id',
-                render: (b) => bindingLabel(b),
-              },
-              {
-                title: '权重',
-                key: 'weight',
-                width: 90,
-                render: (b) =>
-                  editingEndpointId === b.endpoint_id
-                    ? h(NInputNumber, {
-                        value: editWeight,
-                        min: 1,
-                        size: 'small',
-                        showButton: false,
-                        'onUpdate:value': (value) => {
-                          editWeight = value
-                        },
-                      })
-                    : b.weight,
-              },
-              {
-                title: '优先级',
-                key: 'priority',
-                width: 90,
-                render: (b) =>
-                  editingEndpointId === b.endpoint_id
-                    ? h(NInputNumber, {
-                        value: editPriority,
-                        size: 'small',
-                        showButton: false,
-                        'onUpdate:value': (value) => {
-                          editPriority = value
-                        },
-                      })
-                    : b.priority,
-              },
-              {
-                title: '启用',
-                key: 'enabled',
-                width: 60,
-                render: (b) =>
-                  h(NSwitch, {
-                    value: b.enabled,
-                    size: 'small',
-                    loading: togglingIds.has(b.endpoint_id),
-                    'onUpdate:value': () => onToggleEnabled(b),
-                  }),
-              },
-              {
-                title: '操作',
-                key: 'actions',
-                width: 90,
-                render: (b) => {
-                  const editing = editingEndpointId === b.endpoint_id
-                  return h('div', { class: 'flex items-center gap-[.75rem]' }, [
-                    h(
-                      NButton,
-                      {
-                        text: true,
-                        type: 'primary',
-                        size: 'small',
-                        loading: saving && editing,
-                        onClick: () => (editing ? onSave(b) : onEdit(b)),
-                      },
-                      { default: () => (editing ? '保存' : '编辑') },
-                    ),
-                    h(
-                      NButton,
-                      { text: true, type: 'error', size: 'small', onClick: () => onRemove(b) },
-                      { default: () => '移除' },
-                    ),
-                  ])
-                },
-              },
-            ]"
-            :bordered="false"
-            size="small"
-          />
-          <span v-else class="text-small text-secondary">
-            暂无供应商，路由还没有任何来源端点承接调用
-          </span>
+          <BindingTable :max-height="320">
+            <template #empty>
+              <LmTableEmpty
+                size="small"
+                description="暂无供应商，路由还没有任何来源端点承接调用"
+              />
+            </template>
+          </BindingTable>
         </div>
 
         <!-- 添加供应商表单 -->
@@ -351,13 +372,27 @@ function openEndpointCreate() {
             </div>
 
             <div class="flex justify-end">
-              <NButton type="primary" :loading="adding" @click="onAdd">添加供应商</NButton>
+              <NButton
+                type="primary"
+                :loading="adding"
+                @click="onAdd"
+              >
+                添加供应商
+              </NButton>
             </div>
           </template>
 
-          <span v-else-if="endpointsLoaded" class="text-base text-secondary">
+          <span
+            v-else-if="endpointsLoaded"
+            class="text-base text-secondary"
+          >
             没有可添加的端点了（全部已挂载）。如需新增来源，请先
-            <n-button text type="primary" size="small" @click="openEndpointCreate">
+            <n-button
+              text
+              type="primary"
+              size="small"
+              @click="openEndpointCreate"
+            >
               添加端点
             </n-button>
           </span>

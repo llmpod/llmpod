@@ -7,6 +7,7 @@ import {
   message,
   useBrand,
   useConfirm,
+  SITE_STORAGE_KEY,
   type LlmpodSettings,
 } from '@repo/hooks'
 import { useStore } from './useStore'
@@ -22,7 +23,7 @@ function writeSiteCache(data: Pick<LlmpodSettings, 'siteName' | 'siteDescription
   const seed: Record<string, string> = {}
   if (data.siteName) seed.siteName = data.siteName
   if (data.siteDescription) seed.siteDescription = data.siteDescription
-  localStorage.setItem('app_site', JSON.stringify(seed))
+  localStorage.setItem(SITE_STORAGE_KEY, JSON.stringify(seed))
 }
 
 export function useController() {

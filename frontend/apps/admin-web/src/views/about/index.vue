@@ -440,25 +440,34 @@ onBeforeUnmount(() => {
   }
 }
 
+/**
+ * 彩虹辉光:装饰性动效,色值刻意不进主题体系(与品牌色/语义色无关)。
+ * 三种颜色在局部变量上收敛一次 —— box-shadow 的 alpha 叠加与 keyframes 的
+ * border-color 同源取值,避免同一颜色在两处各写一遍后漂移。
+ */
 .rainbow-glow {
+  --glow-indigo: 99, 102, 241; /* #6366f1 */
+  --glow-pink: 236, 72, 153; /* #ec4899 */
+  --glow-blue: 59, 130, 246; /* #3b82f6 */
+
   animation: rainbow-rotate 3s linear infinite;
-  box-shadow: 0 0 20px rgba(99, 102, 241, 0.6),
-              0 0 35px rgba(236, 72, 153, 0.4),
-              0 0 50px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 2rem rgba(var(--glow-indigo), 0.6),
+              0 0 3.5rem rgba(var(--glow-pink), 0.4),
+              0 0 5rem rgba(var(--glow-blue), 0.3);
 }
 
 @keyframes rainbow-rotate {
   0% {
     filter: hue-rotate(0deg);
-    border-color: #6366f1;
+    border-color: rgb(var(--glow-indigo));
   }
   50% {
     filter: hue-rotate(180deg);
-    border-color: #ec4899;
+    border-color: rgb(var(--glow-pink));
   }
   100% {
     filter: hue-rotate(360deg);
-    border-color: #6366f1;
+    border-color: rgb(var(--glow-indigo));
   }
 }
 </style>

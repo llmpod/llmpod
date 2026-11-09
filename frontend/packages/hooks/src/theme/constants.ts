@@ -39,5 +39,15 @@ export const THEME_CONFIG_STORAGE_KEY = 'app_theme_config'
  */
 export const REMOTE_THEME_STORAGE_KEY = 'app_remote_theme'
 
+/**
+ * 站点名/SEO 描述的本地缓存键:运营端「通用设置」保存时写入,theme.boot.js 在
+ * 无注入种子或后端读失败时用它恢复 <title> 与 description。
+ *
+ * 与上面三个 key 同属「启动脚本要读的跨端共享配置」,故集中在本文件 ——
+ * 散在业务代码里手写字符串,拼错时只会静默丢失刷新后的标题,很难发现。
+ * 与根目录 theme.boot.js 保持一致,改动需两边同步。
+ */
+export const SITE_STORAGE_KEY = 'app_site'
+
 /** 校验 3/6 位 hex 颜色(@ant-design/colors 不支持 8 位带 alpha 的 hex)。 */
 export const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/

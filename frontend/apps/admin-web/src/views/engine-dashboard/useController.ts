@@ -1,6 +1,6 @@
-import { message, useTable } from '@repo/hooks'
-import { usePolling } from '@/views/dashboard-shared/usePolling'
-import { chartAxisColors, emptyChartOption, useChart } from '@/views/dashboard-shared/charts'
+import { chartAxisColors, message, useTable } from '@repo/hooks'
+import { usePolling } from '@/analytics/usePolling'
+import { emptyChartOption, useChart } from '@/analytics/charts'
 import {
   colorForKey,
   CUSTOM_RANGE_MAX_MS,
@@ -9,7 +9,7 @@ import {
   isFutureDate,
   WINDOW_OPTIONS,
   windowToRealtimeQuery,
-} from '@/views/dashboard-shared/format'
+} from '@/analytics/format'
 import {
   anomalyBarColor,
   KV_SATURATION_RATE,
@@ -30,6 +30,14 @@ const ANOMALY_INTERVAL_MS = 30_000
 
 /** 热力图色阶(0-1 连续渐变,贴近设计稿 ░<40% ▒40-70 ▓70-85 █>85) */
 const HEAT_COLORS = ['#6fbf8b', '#f2d24c', '#ef8f4e', '#e05252']
+
+/** KV 压力图例:与 visualMap 的 inRange 同源取色,避免图例与图斑各写一套而漂移 */
+const HEAT_LEGEND = [
+  { color: HEAT_COLORS[0], label: '<40%' },
+  { color: HEAT_COLORS[1], label: '40-70%' },
+  { color: HEAT_COLORS[2], label: '70-85%' },
+  { color: HEAT_COLORS[3], label: '>85%' },
+]
 
 /** 上游健康表格列:成功率按数值分档着色(≥99% 绿 / 95–99% 中性 / 90–95% 橙 / <90% 红),窄屏卡片复用同一 render */
 const upstreamColumns: DataTableColumns<UpstreamHealthItem> = [
@@ -414,6 +422,7 @@ export function useController() {  const {
     engineRows,
     throughputEl,
     heatmapEl,
+    heatLegend: HEAT_LEGEND,
     anomalyView,
     upstreamHealth,
     UpstreamTable,

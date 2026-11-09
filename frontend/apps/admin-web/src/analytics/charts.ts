@@ -1,4 +1,4 @@
-import { lazyRetryable, useTheme } from '@repo/hooks'
+import { chartAxisColors, lazyRetryable, useTheme } from '@repo/hooks'
 import type * as echarts from 'echarts/core'
 
 /**
@@ -11,25 +11,6 @@ import type * as echarts from 'echarts/core'
 export const ensureEcharts = lazyRetryable(() => import('./echarts-lazy').then((mod) => mod.default))
 
 export type ChartOption = echarts.EChartsCoreOption
-
-/** 主题色以 r,g,b 逗号串注入文档根节点(--n-*-color),拼接为 rgb() 供 echarts 使用 */
-export function cssRgb(name: string, fallback: string): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return value ? `rgb(${value})` : fallback
-}
-
-/** 完整色值 CSS 变量(--c-*) */
-export function cssVar(name: string, fallback: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
-}
-
-/** 轴线/网格通用配色(跟随明暗主题) */
-export function chartAxisColors() {
-  return {
-    axisColor: cssVar('--c-secondary', '#8a8f99'),
-    splitColor: cssVar('--c-line', '#e5e7eb'),
-  }
-}
 
 /**
  * 空图表骨架:无数据时保留坐标系框架(轴线/网格线随主题)+ 居中「暂无数据」提示。

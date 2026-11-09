@@ -16,7 +16,7 @@ import {
   type KpiCardSpec,
   padHourTrend,
   trimZero,
-} from '@/views/dashboard-shared/format'
+} from '@/analytics/format'
 
 /** 调用趋势双线视图模型(0-23 小时连续铺,缺小时补 0) */
 export interface TrendView {

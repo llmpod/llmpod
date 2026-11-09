@@ -91,6 +91,8 @@ function onClear() {
   padding-right: 0;
 }
 .search-warpper {
-  @apply w-[3.2rem] h-full flex items-center justify-center bg-[#e9e9e9] dark:bg-[#2a2a2a] cursor-pointer;
+  /* 搜索按钮底:亮色与 Line-2 同值(#e9e9e9),暗色改用 token 以免手写的 #2a2a2a 与
+     --c-line-strong 的暗色档各自漂移 */
+  @apply w-[3.2rem] h-full flex items-center justify-center bg-[var(--c-line-strong)] cursor-pointer;
 }
 </style>

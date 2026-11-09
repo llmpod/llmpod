@@ -1,8 +1,9 @@
 import { useStore } from './useStore'
 import { useAuthStore } from '@/store/auth'
-import { usePolling } from '@/views/dashboard-shared/usePolling'
-import { chartAxisColors, cssRgb, cssVar, useChart } from '@/views/dashboard-shared/charts'
-import { formatGrouped, maxOf } from '@/views/dashboard-shared/format'
+import { usePolling } from '@/analytics/usePolling'
+import { CHART_FALLBACK, chartAxisColors, cssVar, primaryColor } from '@repo/hooks'
+import { useChart } from '@/analytics/charts'
+import { formatGrouped, maxOf } from '@/analytics/format'
 
 /** 定时刷新间隔:平台总览整屏每 30s 静默拉一轮(§0) */
 const REFRESH_INTERVAL_MS = 30_000
@@ -44,8 +45,8 @@ export function useController() {
   /** 调用趋势双线图:今日=主色实线,昨日同期=次色虚线;y 轴单位按组内最大值(§1.5) */
   const { el: trendEl, render: renderTrend } = useChart(() => {
     const { axisColor, splitColor } = chartAxisColors()
-    const todayColor = cssRgb('--n-primary-color', '#5b5bd6')
-    const yesterdayColor = cssVar('--c-secondary', '#8a8f99')
+    const todayColor = primaryColor()
+    const yesterdayColor = cssVar('--c-secondary', CHART_FALLBACK.secondary)
     // §1.5 组=整张图(两序列共用 y 轴),取今日/昨日整体最大值定单位
     const axisMax = Math.max(maxOf(trendView.value.today), maxOf(trendView.value.yesterday))
     return {

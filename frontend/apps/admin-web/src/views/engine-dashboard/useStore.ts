@@ -23,7 +23,7 @@ import {
   type KpiCard,
   type KpiCardRaw,
   type KpiCardSpec,
-} from '@/views/dashboard-shared/format'
+} from '@/analytics/format'
 
 /** KV 饱和关注阈值(§8 #9:阈值告警后端未做,前端先定) */
 export const KV_SATURATION_RATE = 0.9

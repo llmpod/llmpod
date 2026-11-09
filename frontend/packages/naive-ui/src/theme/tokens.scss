@@ -54,6 +54,14 @@
   --c-info-text: #316ae7; // 4.51:1 提示
   --c-warning-mark: #d57700; // 边轨等非文字标记,仅需 3:1
 
+  /* ===== 终端风格面板(注册命令 / 引导命令共用) =====
+     命令行文本在浅底上不可读,这块深底刻意与明暗主题解耦:两种模式下取值相同,
+     故只在 :root 定义、不在 html.dark 覆写。 */
+  --c-terminal-bg: #1b1b1f; // 面板底
+  --c-terminal-text: #d4d4d8; // 命令正文
+  --c-terminal-muted: #7c7c85; // 注释/占位文案
+  --c-terminal-icon: #8f8f96; // 复制按钮默认色
+
   /* 主色的两种角色:--c-primary(运行时注入)兼作文字/描边与实心填充底。
      选中态卡片底/边由其派生,跟随 theme-lab 改色联动。 */
   --c-primary-tint: rgba(var(--n-primary-color), 0.05); // 选中卡底

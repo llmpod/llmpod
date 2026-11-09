@@ -2,7 +2,7 @@
 import { NButton, NIcon, NAlert, NTag } from 'naive-ui'
 import { CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
 import { computed, onUnmounted, ref } from 'vue'
-import { message, copyToClipboard } from '@repo/hooks'
+import { message, copyToClipboard, protocolTagColor } from '@repo/hooks'
 import { getProxyEndpoint } from '@/api/proxy-endpoint'
 
 const props = defineProps<{
@@ -43,14 +43,14 @@ const apiBaseUrls = computed(() => {
       key: 'baseUrlOpenai',
       label: 'OpenAI',
       value: base ? `${base}/v1` : '接入地址加载中…',
-      // 协议品牌色（品牌固定色，不走主题 token）
-      tagColor: { textColor: '#10A37F', borderColor: '#10A37F', color: 'transparent' },
+      // 协议品牌色(固定色,不走主题 token);色值统一由 @repo/hooks 提供
+      tagColor: protocolTagColor('openai'),
     },
     {
       key: 'baseUrlAnthropic',
       label: 'Anthropic',
       value: base ?? '接入地址加载中…',
-      tagColor: { textColor: '#D97757', borderColor: '#D97757', color: 'transparent' },
+      tagColor: protocolTagColor('anthropic'),
     },
   ]
 })
@@ -61,13 +61,13 @@ const apiEndpoints = [
     key: 'openai',
     label: 'OpenAI',
     path: 'POST /v1/chat/completions',
-    tagColor: { textColor: '#10A37F', borderColor: '#10A37F', color: 'transparent' },
+    tagColor: protocolTagColor('openai'),
   },
   {
     key: 'anthropic',
     label: 'Anthropic',
     path: 'POST /v1/messages',
-    tagColor: { textColor: '#D97757', borderColor: '#D97757', color: 'transparent' },
+    tagColor: protocolTagColor('anthropic'),
   },
 ]
 

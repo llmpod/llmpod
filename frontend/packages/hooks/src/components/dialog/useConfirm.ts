@@ -44,7 +44,8 @@ function renderDefaultIcon(): VNode {
       width: '1.8em',
       height: '1.8em',
       'aria-hidden': true,
-      style: 'color: #f0a020; flex-shrink: 0; margin-top: 2px;',
+      // 警示图标走 token(--c-warning-mark 是「非文字标记 3:1」档,正对图标这类图形)
+      style: 'color: var(--c-warning-mark); flex-shrink: 0; margin-top: 0.2rem;',
     },
     [
       h('path', {

@@ -31,7 +31,7 @@ import {
   type WindowValue,
   windowToRange,
   windowToRealtimeQuery,
-} from '@/views/dashboard-shared/format'
+} from '@/analytics/format'
 
 /** 模型统计宽表行(含长尾折叠行与合计行) */
 export interface ModelRow {

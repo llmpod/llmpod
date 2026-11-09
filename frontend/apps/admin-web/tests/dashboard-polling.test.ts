@@ -2,7 +2,7 @@
 import { h } from 'vue'
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { usePolling } from '@/views/dashboard-shared/usePolling'
+import { usePolling } from '@/analytics/usePolling'
 
 function mountPolling(fetcher: () => Promise<unknown>, intervalMs: number) {
   let api!: ReturnType<typeof usePolling>

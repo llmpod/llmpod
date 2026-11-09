@@ -5,10 +5,14 @@
   --n-color-error: #d03050;
   --n-text-color: #1f2329;
   --n-bg-color: #ffffff;
-  // 主题色 RGB 串 fallback(与 packages/hooks/src/theme/useTheme.ts DEFAULT_THEME_CONFIG 一致)
+  // 主题色 RGB 串 fallback(与 packages/hooks/src/theme/useTheme.ts DEFAULT_THEME_CONFIG
+  // 及根目录 theme.boot.js 的默认 primary 一致)
   // 运行时由 helper.ts addCssVarsToHtml 覆盖;此处保证首屏/SSR 不失效
-  --n-primary-color: 74, 58, 255;
-  --n-info-color: 74, 58, 255;
+  // 注:此前 primary/info 写的是 74, 58, 255(#4a3aff),与 DEFAULT_THEME_CONFIG
+  // 的 #1261a8 / #447FFE 不符 —— 慢网下运行时不生效时会先闪一次紫色,
+  // 现值改为与常量同口径。
+  --n-primary-color: 18, 97, 168;
+  --n-info-color: 68, 127, 254;
   --n-success-color: 32, 165, 58;
   --n-warning-color: 232, 137, 21;
   --n-error-color: 255, 85, 85;

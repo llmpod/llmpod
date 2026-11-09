@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import '@/views/dashboard-shared/seg-group.css'
+import '@/analytics/seg-group.css'
 import { useController } from './useController'
 
 const {
@@ -20,6 +20,7 @@ const {
   engineRows,
   throughputEl,
   heatmapEl,
+  heatLegend,
   anomalyView,
   AnomalyTable,
   UpstreamTable,
@@ -117,10 +118,15 @@ const {
         <n-skeleton v-if="historyLoading" :sharp="false" style="width: 100%; height: 300px" />
         <div v-show="!historyLoading" ref="heatmapEl" class="eng-chart" />
         <div class="eng-heat-legend">
-          <span><i class="eng-heat-chip" style="background:#6fbf8b" />&lt;40%</span>
-          <span><i class="eng-heat-chip" style="background:#f2d24c" />40-70%</span>
-          <span><i class="eng-heat-chip" style="background:#ef8f4e" />70-85%</span>
-          <span><i class="eng-heat-chip" style="background:#e05252" />&gt;85%</span>
+          <span
+            v-for="item in heatLegend"
+            :key="item.label"
+          >
+            <i
+              class="eng-heat-chip"
+              :style="{ background: item.color }"
+            />{{ item.label }}
+          </span>
           <span class="eng-heat-chip eng-heat-chip--warn" />发生抢占
         </div>
       </LmCard>

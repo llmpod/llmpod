@@ -653,10 +653,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
-/* 引导命令终端风格面板(与 quick-setup StepNodes 一致) */
+/* 引导命令终端风格面板(与 quick-setup StepNodes 共用 --c-terminal-* token) */
 .cmd {
   position: relative;
-  background-color: #1b1b1f;
+  background-color: var(--c-terminal-bg);
   border-radius: 0.6rem;
   padding: 1.2rem 1.4rem;
 
@@ -664,7 +664,7 @@ onBeforeUnmount(() => {
     font-family: monospace;
     font-size: 1.2rem;
     line-height: 1.8;
-    color: #d4d4d8;
+    color: var(--c-terminal-text);
     white-space: pre-wrap;
     word-break: break-all;
     margin: 0;
@@ -677,7 +677,7 @@ onBeforeUnmount(() => {
     font-family: monospace;
     font-size: 1.2rem;
     line-height: 1.6;
-    color: #7c7c85;
+    color: var(--c-terminal-muted);
     white-space: pre-wrap;
     word-break: break-all;
     padding-right: 2.4rem;
@@ -690,7 +690,7 @@ onBeforeUnmount(() => {
     display: flex;
     padding: 0.4rem;
     border-radius: 0.4rem;
-    color: #8f8f96;
+    color: var(--c-terminal-icon);
     cursor: pointer;
 
     &:hover {

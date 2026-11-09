@@ -4,8 +4,9 @@ import type { DataTableColumns, SelectOption } from 'naive-ui'
 import { listApiKeys } from '@/api/api-key'
 import { listPublishes } from '@/api/publish'
 import { listTenants } from '@/api/tenant'
-import { usePolling } from '@/views/dashboard-shared/usePolling'
-import { chartAxisColors, cssRgb, emptyChartOption, useChart } from '@/views/dashboard-shared/charts'
+import { usePolling } from '@/analytics/usePolling'
+import { chartAxisColors, primaryColor } from '@repo/hooks'
+import { emptyChartOption, useChart } from '@/analytics/charts'
 import {
   colorForKey,
   CUSTOM_RANGE_MAX_MS,
@@ -15,7 +16,7 @@ import {
   isFutureDate,
   WINDOW_OPTIONS,
   windowToRealtimeQuery,
-} from '@/views/dashboard-shared/format'
+} from '@/analytics/format'
 import { useStore, type DistView, type ModelRow } from './useStore'
 
 /** 轮询间隔:≤10s 引擎稳快档(§3.0) */
@@ -227,7 +228,7 @@ export function useController() {
           type: 'bar',
           data: counts,
           barMaxWidth: 24,
-          itemStyle: { color: cssRgb('--n-primary-color', '#5b5bd6'), borderRadius: [3, 3, 0, 0] },
+          itemStyle: { color: primaryColor(), borderRadius: [3, 3, 0, 0] },
         },
       ],
     }
