@@ -30,6 +30,7 @@ positional token ``[引导脚本, "bash"]``，经 entrypoint ``/bin/bash -c`` �
 from __future__ import annotations
 
 import json
+import shlex
 from typing import Any, Callable
 
 from llmpod.apps.manager.deployment.engine.base import EngineAdapter
@@ -74,7 +75,8 @@ def _bootstrap_script(conf: dict, model_path: str) -> str:
         # 310P 不支持 bfloat16（M1 实测：daemon 在模型加载期 NotImplementedError 崩溃），
         # Qwen 系官方权重 bf16 落盘——幂等改写模型 config.json 为 fp16（已是 fp16 则无操作）。
         # 模型卷 rw 挂载可写；意外只读时 || true 吸收，daemon 会以原始报错暴露
-        f'sed -i \'s/"torch_dtype": *"bfloat16"/"torch_dtype": "float16"/\' {model_path}/config.json 2>/dev/null || true\n'
+        f'sed -i \'s/"torch_dtype": *"bfloat16"/"torch_dtype": "float16"/\' '
+        f'{shlex.quote(model_path + "/config.json")} 2>/dev/null || true\n'
         + "".join(f"{s}\n" for s in _ENV_SOURCES)
         # source 链会把 PYTORCH_INSTALL_PATH 覆盖成多行脏值（见 _TORCH_INSTALL_PATH
         # 注释），空值兜底拦不住非空的脏值——不信任探测结果，直接覆写并把 torch/lib

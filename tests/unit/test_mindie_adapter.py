@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 
 import pytest
 
@@ -81,6 +82,19 @@ class TestGenerateStartArgs:
         # sed 行以 || true 收尾：模型卷意外只读时失败不阻断，daemon 以原始报错暴露
         sed_line = next(ln for ln in script.splitlines() if ln.startswith("sed -i"))
         assert sed_line.endswith("|| true")
+
+    def test_bootstrap_quotes_model_path(self, adapter):
+        """远端仓库文件名可携带 shell 元字符：拼进 bash -c 脚本体前必须 shell 引用。"""
+        nasty = "/models/$(touch${IFS}/tmp/pwned)"
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path=nasty, served_model_name="q", port=1025, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        sed_line = next(ln for ln in args[0].splitlines() if ln.startswith("sed -i"))
+        # shlex 还原后路径是单个字面 token → bash 不会对其做命令替换
+        assert shlex.split(sed_line)[3] == f"{nasty}/config.json"
+        assert f" {nasty}/config.json " not in sed_line
 
     def test_bootstrap_repairs_clobbered_torch_path(self, adapter):
         """mindie-llm set_env.sh 用 `import torch` 探测 PYTORCH_INSTALL_PATH：设备被节点
