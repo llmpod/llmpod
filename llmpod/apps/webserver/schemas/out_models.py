@@ -114,6 +114,14 @@ RoleOut: type[BaseModel] = orm_schema(Role, exclude=["created_at", "updated_at"]
 
 # 推理部署资源模型
 ModelOut: type[BaseModel] = orm_schema(Model, exclude=["source_auth_encrypted"])
+
+
+class ModelListItemOut(ModelOut):  # type: ignore[misc]
+    """模型列表项：额外给出已下载该模型的节点数量。"""
+
+    node_count: int = Field(0, description="已下载该模型的节点数量（NodeModel.status=present）")
+
+
 ModelDeploymentOut: type[BaseModel] = orm_schema(ModelDeployment, jsonb_types={"spec": DeploymentConfig})
 InstanceOut: type[BaseModel] = orm_schema(Instance, jsonb_types={"spec": InstanceSpec})
 
@@ -488,6 +496,7 @@ __all__ = [
     "PermissionOut",
     "RoleOut",
     "ModelOut",
+    "ModelListItemOut",
     "ModelDeploymentOut",
     "InstanceOut",
     "ModelEndpointOut",

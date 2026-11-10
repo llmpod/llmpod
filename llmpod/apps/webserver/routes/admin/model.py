@@ -11,6 +11,8 @@ import os
 import re
 import shutil
 import uuid
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -23,17 +25,22 @@ from llmpod.apps.manager.deployment.feasibility import FeasibilityReport, assess
 from llmpod.apps.manager.deployment.placement import manager_source_dir, validate_manager_source
 from llmpod.apps.manager.model_source import ModelFiles, get_inspector
 from llmpod.apps.manager.model_source.content_hash import compute_content_hash
+from llmpod.apps.manager.model_source.node import NodeInspector
 from llmpod.apps.webserver.auth.deps import get_current_user, require_permission
 from llmpod.apps.webserver.auth.session import SessionData
 from llmpod.apps.webserver.schemas import Result, success
 from llmpod.apps.webserver.schemas.response import PaginatedResponse
-from llmpod.apps.webserver.schemas.out_models import ModelOut
+from llmpod.apps.webserver.schemas.out_models import ModelListItemOut, ModelOut
 from llmpod.config.enums import ModelSource, ModelType
 from llmpod.config.settings import settings
-from llmpod.core.exceptions import Conflict, LLMPodValidationError, NotFound
+from llmpod.core.exceptions import Conflict, LLMPodError, LLMPodValidationError, NotFound
 from llmpod.db import get_db
+from llmpod.models.instance import Instance
 from llmpod.models.model import Model
 from llmpod.models.model_deployment import ModelDeployment
+from llmpod.models.node import Node
+from llmpod.models.node_model import NodeModel
+from llmpod.apps.manager.deployment.constants import NodeModelState
 from llmpod.core.secrets import encrypt as _encrypt_source_auth
 from llmpod.utils.safe_path import safe_resolve
 from llmpod.permission.permissions import (
@@ -55,9 +62,12 @@ model_router = APIRouter()
 
 
 class InspectModelRequest(BaseModel):
-    source: str = Field(..., description="来源：huggingface | modelscope | oss | local")
+    source: str = Field(..., description="来源：huggingface | modelscope | oss | local | node")
     source_url: str = Field(
-        ..., description="来源地址：Hugging Face / ModelScope 仓库（repo id 或 URL）、对象存储文件地址或管理端本地路径"
+        ..., description="来源地址：Hugging Face / ModelScope 仓库（repo id 或 URL）、对象存储文件地址、管理端本地路径，或节点上的绝对目录"
+    )
+    node_id: str | None = Field(
+        None, description="节点ID：source=node 时必填，指定目录所在节点"
     )
     revision: str | None = Field(None, description="版本/commit-hash（HF 默认 main；ModelScope 默认 master）")
     context_size: int | None = Field(
@@ -82,8 +92,13 @@ class InspectModelRequest(BaseModel):
 
 class CreateModelRequest(BaseModel):
     name: str = Field(..., description="模型显示名")
-    source: str = Field(..., description="来源：huggingface | modelscope | oss | local（上传落地的模型标 local）")
-    source_url: str = Field(..., description="来源地址（HF/ModelScope repo id 或 URL / OSS 直链 / manager 本地路径）")
+    source: str = Field(..., description="来源：huggingface | modelscope | oss | local | node（上传落地的模型标 local）")
+    source_url: str = Field(
+        ..., description="来源地址（HF/ModelScope repo id 或 URL / OSS 直链 / manager 本地路径 / 节点绝对目录）"
+    )
+    node_id: str | None = Field(
+        None, description="节点ID：source=node 时必填，模型权重绑定该节点目录"
+    )
     revision: str | None = Field(None, description="版本/commit-hash（HF 默认 main；ModelScope 默认 master）")
     source_auth: str | None = Field(
         None, description="模型来源凭证，如 Hugging Face Token / ModelScope Access Token；加密保存且不会在响应中返回"
@@ -236,6 +251,42 @@ class ModelDeleteData(BaseModel):
     )
 
 
+class ModelNodeCopyOut(BaseModel):
+    """模型在某台节点上的副本（平台记录，不主动探测节点）。"""
+
+    node_id: str = Field(..., description="节点ID")
+    hostname: str | None = Field(None, description="节点主机名")
+    ip: str | None = Field(None, description="节点 IP")
+    node_status: str | None = Field(None, description="节点在线状态：online | offline | maintenance | busy | drained")
+    desired_state: str = Field(..., description="manager 期望：present | absent")
+    model_status: str = Field(..., description="节点回报的模型状态：absent | downloading | verifying | present | failed")
+    local_dir: str | None = Field(None, description="模型所在目录")
+    model_path: str | None = Field(None, description="引擎 --model 实际指向的路径")
+    bytes_total: int | None = Field(None, description="模型总字节")
+    bytes_done: int = Field(0, description="已下字节")
+    verified_hash: str | None = Field(None, description="上次校验通过哈希")
+    last_error: str | None = Field(None, description="最近一次失败/不一致说明")
+    last_checked_at: datetime | None = Field(None, description="最近一次校验时间")
+    updated_at: datetime | None = Field(None, description="记录更新时间")
+
+
+class DeleteModelNodeRequest(BaseModel):
+    """删除节点副本：``delete_files=false`` 仅移除平台记录，磁盘文件保留。"""
+
+    delete_files: bool = Field(
+        False, description="true=删除节点上的模型目录并移除记录；false=仅移除记录（磁盘保留）"
+    )
+
+
+class ModelNodeDeleteData(BaseModel):
+    """删除节点副本回执。"""
+
+    model_id: int = Field(..., description="模型ID")
+    node_id: str = Field(..., description="节点ID")
+    delete_files: bool = Field(..., description="是否请求删除磁盘文件")
+    files_removed: bool = Field(False, description="节点是否已确认删除文件")
+
+
 # Model 上 NOT NULL 的列（有 server_default）：传 null 会触发 IntegrityError，故禁清空。
 _NOT_NULL_COLUMNS = frozenset(
     {"name", "model_type", "is_moe", "is_vision", "needs_trust_remote_code", "source_kind", "hash_mode"}
@@ -260,7 +311,13 @@ async def inspect_model_source(
     - 用户覆盖（``size_gb`` / ``model_type`` / ``model_format``）优先于探测值：覆盖后重算可部署性，
       且回显 ``files`` 反映覆盖值（保证前端正确显示）。仅本次预览生效，**不落库**（落库走 ``/models`` 或 update）。
     """
-    inspector = get_inspector(request.source)  # 未知 source → 422
+    if ModelSource.is_node_source(request.source) and not request.node_id:
+        raise LLMPodValidationError("source=node 时必须提供 node_id")
+    inspector = (
+        NodeInspector(request.node_id)
+        if ModelSource.is_node_source(request.source)
+        else get_inspector(request.source)  # 未知 source → 422
+    )
     files = await inspector.inspect(
         source_url=request.source_url,
         revision=request.revision,
@@ -368,7 +425,11 @@ async def create_model(
     db: AsyncSession = Depends(get_db),
     user: SessionData = Depends(get_current_user),
 ):
-    """创建模型。type 来自用户选择（前端预填 /inspect 的 suggested_type）；元数据取自回传 ``files``。"""
+    """创建模型。type 来自用户选择（前端预填 /inspect 的 suggested_type）；元数据取自回传 ``files``。
+
+    ``source=node`` 时权重就地引用节点目录：重新探测校验目录仍有效，并写入一条
+    ``node_model(present)`` 表达平台已知的持有关系。
+    """
     files = request.files
     # local 源路径合法性前置：坏路径不落库（否则创建成功、部署才报错）
     validate_manager_source(request.source, request.source_url)
@@ -377,10 +438,35 @@ async def create_model(
     # （canonical = source_url），与指纹无关。
     content_digest = await _manager_content_hash(request.source, request.source_url)
 
+    node_dir: str | None = None
+    node_total_bytes: int | None = None
+    node_source_kind: str | None = None
+    node_weight_files: list[str] = []
+    if ModelSource.is_node_source(request.source):
+        if not request.node_id:
+            raise LLMPodValidationError("source=node 时必须提供 node_id")
+        node = await db.get(Node, request.node_id)
+        if node is None:
+            raise NotFound("Node", request.node_id)
+        from llmpod.apps.manager import dispatch
+        from llmpod.apps.manager.model_source.inference import WEIGHT_EXTS, detect_source_kind
+
+        probe = await dispatch.probe_model_dir(request.node_id, request.source_url)
+        weights = [entry for entry in probe.files if entry.path.lower().endswith(WEIGHT_EXTS)]
+        node_weight_files = [entry.path for entry in weights]
+        if not probe.exists or not probe.is_dir or not weights:
+            raise LLMPodValidationError(probe.message or "节点目录无效：未找到完整模型文件")
+        node_dir = request.source_url
+        node_total_bytes = probe.total_bytes
+        node_source_kind = files.source_kind or detect_source_kind(
+            ([probe.config_name] if probe.config_name else []) + node_weight_files
+        )
+
     m = Model(
         name=request.name,
         source=request.source,
         source_url=request.source_url,
+        node_id=request.node_id if ModelSource.is_node_source(request.source) else None,
         revision=files.revision or request.revision,
         model_type=request.model_type,
         architecture=files.architecture,
@@ -399,7 +485,7 @@ async def create_model(
         max_context=files.max_context,
         needs_trust_remote_code=files.needs_trust_remote_code,
         # source_kind 由 inspector 推导（detect_source_kind）；未推导(None) → 'unknown'（NOT NULL，不能传 None）
-        source_kind=files.source_kind or "unknown",
+        source_kind=node_source_kind or files.source_kind or "unknown",
         # source_subpath：GGUF 多变体 repo 的变体路径，下发供 node allow_patterns 收窄 + verify 定位
         source_subpath=files.source_subpath,
         # 视觉投影器（GGUF 多模态）：随主模型下发 + 部署期注入 --mmproj
@@ -413,6 +499,30 @@ async def create_model(
     )
     db.add(m)
     await db.flush()
+    if node_dir is not None:
+        from llmpod.apps.manager.model_source.inference import first_gguf_shard
+
+        # 单 GGUF / 分片：引擎 --model 指向首个分片文件；文件夹布局指向目录本身
+        rel = (
+            first_gguf_shard(node_weight_files)
+            if node_source_kind in ("single_gguf", "gguf_shards")
+            else None
+        )
+        model_path = f"{node_dir.rstrip('/')}/{rel}" if rel else node_dir
+        db.add(
+            NodeModel(
+                model_id=m.id,
+                node_id=request.node_id,
+                desired_state="present",
+                status="present",
+                local_dir=node_dir,
+                model_path=model_path,
+                bytes_total=node_total_bytes,
+                bytes_done=node_total_bytes or 0,
+                last_checked_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.flush()
     await db.refresh(m)
     await db.commit()
     return success(m)
@@ -420,7 +530,7 @@ async def create_model(
 
 @model_router.get(
     "",
-    response_model=PaginatedResponse[ModelOut],
+    response_model=PaginatedResponse[ModelListItemOut],
     summary="列出模型",
     dependencies=[Depends(require_permission(MODEL_READ))],
 )
@@ -437,7 +547,25 @@ async def list_models(
         cnt = cnt.where(Model.model_type == model_type)
     total = (await db.execute(cnt)).scalar() or 0
     stmt = stmt.order_by(Model.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    items = list((await db.execute(stmt)).scalars())
+    models = list((await db.execute(stmt)).scalars())
+
+    # 已下载节点数：只认 present（节点上报的缓存态）；一次查当前页的模型，Python 聚合
+    counts: Counter[int] = Counter()
+    if models:
+        rows = list(
+            (
+                await db.execute(
+                    select(NodeModel).where(NodeModel.model_id.in_([m.id for m in models]))
+                )
+            ).scalars()
+        )
+        counts = Counter(r.model_id for r in rows if r.status == NodeModelState.PRESENT)
+
+    items = []
+    for model in models:
+        item = ModelListItemOut.model_validate(model)
+        item.node_count = counts.get(model.id, 0)
+        items.append(item)
     return PaginatedResponse.result(items, total, page, page_size)
 
 
@@ -455,6 +583,143 @@ async def get_model(
     if m is None:
         raise NotFound("Model", model_id)
     return success(m)
+
+
+@model_router.get(
+    "/{model_id}/nodes",
+    response_model=Result[list[ModelNodeCopyOut]],
+    summary="列出模型在各节点上的副本（只读平台记录）",
+    dependencies=[Depends(require_permission(MODEL_READ))],
+)
+async def list_model_nodes(
+    model_id: Annotated[int, PathParam(description="模型ID")],
+    db: AsyncSession = Depends(get_db),
+):
+    """列出 ``node_model`` 记录并关联节点展示信息。
+
+    只读平台记录，不主动联系节点；节点在线状态与模型状态分字段返回。
+    """
+    m = await db.get(Model, model_id)
+    if m is None:
+        raise NotFound("Model", model_id)
+
+    rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == model_id))).scalars())
+    node_ids = {r.node_id for r in rows}
+    nodes: dict[str, Node] = {}
+    if node_ids:
+        for node in (await db.execute(select(Node).where(Node.id.in_(node_ids)))).scalars():
+            nodes[node.id] = node
+
+    items = [
+        ModelNodeCopyOut(
+            node_id=r.node_id,
+            hostname=nodes[r.node_id].hostname if r.node_id in nodes else None,
+            ip=nodes[r.node_id].ip if r.node_id in nodes else None,
+            node_status=nodes[r.node_id].status if r.node_id in nodes else None,
+            desired_state=r.desired_state,
+            model_status=r.status,
+            local_dir=r.local_dir,
+            model_path=r.model_path,
+            bytes_total=r.bytes_total,
+            bytes_done=r.bytes_done,
+            verified_hash=r.verified_hash,
+            last_error=r.last_error,
+            last_checked_at=r.last_checked_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+    items.sort(key=lambda item: item.node_id)
+    return success(items)
+
+
+@model_router.post(
+    "/{model_id}/nodes/{node_id}/delete",
+    response_model=Result[ModelNodeDeleteData],
+    summary="删除模型在某节点上的副本（移除记录，可选删文件）",
+    dependencies=[Depends(require_permission(MODEL_DELETE))],
+)
+@audit_action(action="delete", resource="model_node", resource_id="model_id")
+async def delete_model_node(
+    model_id: Annotated[int, PathParam(description="模型ID")],
+    node_id: Annotated[str, PathParam(description="节点ID")],
+    request: DeleteModelNodeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: SessionData = Depends(get_current_user),
+):
+    """移除某个模型在某节点上的持有记录。
+
+    ``delete_files=false`` 只删平台记录；``true`` 时先让节点受控删除目录，确认成功后才
+    移除记录。该模型在该节点上仍有部署实例时拒绝。
+    """
+    m = await db.get(Model, model_id)
+    if m is None:
+        raise NotFound("Model", model_id)
+
+    rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == model_id))).scalars())
+    nm = next((r for r in rows if r.node_id == node_id), None)
+    if nm is None:
+        raise NotFound("NodeModel", f"{model_id}/{node_id}")
+
+    deployments = list(
+        (await db.execute(select(ModelDeployment).where(ModelDeployment.model_id == model_id))).scalars()
+    )
+    if deployments:
+        from llmpod.apps.manager.deployment.constants import DEPLOYMENT_TERMINAL_STATUSES
+
+        deployment_ids = {d.deployment_id for d in deployments}
+        instances = list(
+            (
+                await db.execute(
+                    select(Instance).where(Instance.deployment_id.in_(deployment_ids))
+                )
+            ).scalars()
+        )
+        on_node = any(inst.assigned_node == node_id for inst in instances)
+        # node 目录模型只能落在绑定节点：只要还有活跃部署，就不能清掉它唯一的副本。
+        # 其它来源规划期尚无 instance，删掉副本最多触发一次重下，不拦。
+        active_node_model = ModelSource.is_node_source(m.source) and any(
+            dep.status not in DEPLOYMENT_TERMINAL_STATUSES for dep in deployments
+        )
+        if on_node or active_node_model:
+            raise Conflict("该模型在此节点上仍有部署（含规划中），请先删除相关部署")
+
+    files_removed = False
+    if request.delete_files:
+        if not nm.local_dir:
+            raise LLMPodValidationError("记录中没有模型目录，无法删除文件")
+        if not ModelSource.is_node_source(m.source):
+            # 非节点目录来源的副本目录可能被其它模型行共享（canonical 目录），直接删会把
+            # 别的记录正在使用的权重端掉——与删模型的 sibling 检查同口径
+            from llmpod.apps.manager.deployment.placement import canonical_local_dir
+
+            canonical = canonical_local_dir(m)
+            # 单 where 查询 + Python 过滤（FakeSession 只支持单条件 where）
+            siblings = (
+                list((await db.execute(select(Model).where(Model.source == m.source))).scalars())
+                if m.source is not None
+                else []
+            )
+            siblings = [sib for sib in siblings if sib.id != m.id]
+            if any(canonical_local_dir(sib) == canonical for sib in siblings):
+                raise Conflict("该模型目录与其他记录共享，不能直接删除文件；请选择仅移除记录")
+        from llmpod.apps.manager import dispatch
+
+        result = await dispatch.remove_model_dir(node_id, nm.local_dir)
+        if not result.removed:
+            raise LLMPodError(result.message or "节点删除模型目录失败")
+        files_removed = True
+
+    await db.delete(nm)
+    await db.commit()
+    return success(
+        ModelNodeDeleteData(
+            model_id=model_id,
+            node_id=node_id,
+            delete_files=request.delete_files,
+            files_removed=files_removed,
+        )
+    )
 
 
 @model_router.post(
@@ -482,6 +747,17 @@ async def update_model(
     m = await db.get(Model, model_id)
     if m is None:
         raise NotFound("Model", model_id)
+    # 节点目录模型的绑定是身份的一部分：改来源/目录会让 model 与 node_model 指向不一致，
+    # 需要重新从节点目录导入，而不是原地改配方
+    if "source" in updates and updates["source"] == ModelSource.NODE.value and not ModelSource.is_node_source(m.source):
+        raise LLMPodValidationError("不能把已有模型改为节点目录来源；请从节点目录重新导入")
+    if ModelSource.is_node_source(m.source):
+        if "source" in updates and updates["source"] != ModelSource.NODE.value:
+            raise LLMPodValidationError("节点目录导入的模型不能修改来源")
+        if "source_url" in updates and updates["source_url"] != m.source_url:
+            raise LLMPodValidationError("节点目录导入的模型不能修改目录；请重新从节点目录导入")
+        if "hash" in updates or "hash_mode" in updates:
+            raise LLMPodValidationError("节点目录导入的模型不支持内容指纹字段")
     # 逐字段显式赋值：NOT NULL 列（_NOT_NULL_COLUMNS）显式传 null 跳过保持原值
     # （写入会 IntegrityError→500）；source_auth 走加密：明文→加密入库，null→清除，
     # 不传→不改（exclude_unset 已挡）。新字段加这里，不走键名循环。

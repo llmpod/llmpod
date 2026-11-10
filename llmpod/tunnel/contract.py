@@ -37,7 +37,9 @@ from llmpod.tunnel.schemas import (
     DeployResult,
     DeploySpec,
     InstanceStatusPayload,
+    ModelDirProbe,
     NodeReport,
+    RemoveModelDirResult,
     RemoveResult,
     ShellResult,
     StopResult,
@@ -131,6 +133,23 @@ class NodeService(ABC):
         """在节点上执行 shell 命令 (一元 RPC)。
 
         返回 :class:`~llmpod.tunnel.schemas.ShellResult`。
+        """
+
+    @abstractmethod
+    async def probe_model_dir(self, path: str) -> ModelDirProbe:
+        """只读探测节点上的模型目录（一元 RPC）。
+
+        返回目录原始事实（配置文件、普通文件清单、总字节、GGUF 头元数据），
+        **不做模型语义判断**；权重过滤/``ModelFiles`` 装配留在 manager。
+        路径必须绝对且落在节点允许的模型根目录内，越界/符号链接返回软失败。
+        """
+
+    @abstractmethod
+    async def remove_model_dir(self, path: str) -> RemoveModelDirResult:
+        """受控删除节点上的模型目录（一元 RPC）。
+
+        同一套路径安全边界；只删目录且目录内需有 config 或权重文件。
+        返回 :class:`~llmpod.tunnel.schemas.RemoveModelDirResult`。
         """
 
     @abstractmethod

@@ -78,7 +78,12 @@ class Model(Base, IntIdMixin, TimestampMixin):
 
     # ---- 下载配方 ----
     source: Mapped[str | None] = mapped_column(
-        String(50), nullable=True, comment="来源（provenance）：huggingface | modelscope | oss | local（可空）"
+        String(50), nullable=True, comment="来源（provenance）：huggingface | modelscope | oss | local | node（可空）"
+    )
+    node_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        comment="来源节点ID（逻辑外键 → node.id；source=node 时绑定该节点，权重就地引用）",
     )
     source_url: Mapped[str | None] = mapped_column(
         String(512), nullable=True, comment="来源 URL / repo id / 本地路径（可空）"
@@ -116,6 +121,7 @@ class Model(Base, IntIdMixin, TimestampMixin):
 
     __table_args__ = (
         Index("idx_model_name", "name"),
+        Index("idx_model_node_id", "node_id"),
         CheckConstraint(
             "source_kind IN ('unknown', 'single_gguf', 'gguf_shards', 'transformers_folder', 'diffusers_folder')",
             name="ck_model_source_kind",

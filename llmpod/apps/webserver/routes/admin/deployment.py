@@ -184,6 +184,10 @@ async def create_deployment(
         raise NotFound("Model", request.model_id)
     adapter.validate_category(model.model_type)
 
+    # 节点目录模型的部署硬限制（只允许绑定节点/单机；未显式选节点时钉到绑定节点），
+    # 必须先于 validate_topology：注入的选择器也要参与结构校验
+    await deployment_service.enforce_node_source_spec(db, model, request.spec)
+
     # CPU 部署守卫（先于结构校验：引擎不支持时按能力报错，不被 node_ids 长度类
     # 结构错误抢先）——能力由适配器声明（llama.cpp 支持，vLLM/SGLang 不支持），
     # 请求了但引擎没这能力直接 422，不静默忽略后按显存部署（部署语义不漂移）
@@ -509,6 +513,7 @@ async def start_deployment(
     - 仅 stopped/failed 可启动；
     - 原卡被别的部署占用 → 409（``data.occupied`` 明细：哪张卡被哪个部署占了多少显存），
       前端据此提示用户；带 ``force=true`` 则强制抢占重启。
+    - 节点目录模型的副本可用性由编排器 restart 前置校验（解绑后不可重启）。
     """
     from llmpod.apps.manager.deployment.orchestrator import get_orchestrator
 

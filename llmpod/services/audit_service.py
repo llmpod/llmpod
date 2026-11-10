@@ -471,6 +471,7 @@ _RESOURCE_TYPE_LABELS: dict[str, str] = {
     "node": "节点",
     "cluster": "集群",
     "model": "模型",
+    "model_node": "模型副本",
     "model_deployment": "部署",
     "endpoint": "端点",
     "publish": "发布",

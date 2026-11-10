@@ -44,10 +44,21 @@ class ModelProbe(BaseModel):
     message: str | None = None  # 探测失败/异常说明
 
 
-def build_local_model_files(probe: ModelProbe, path: str, revision: str | None = None) -> ModelFiles:
+_GGUF_META_UNSET = object()
+
+
+def build_local_model_files(
+    probe: ModelProbe,
+    path: str,
+    revision: str | None = None,
+    *,
+    gguf_meta=_GGUF_META_UNSET,
+) -> ModelFiles:
     """``ModelProbe`` → ``ModelFiles``（纯函数，离线可测）。
 
     type 建议恒为 None（local 无 pipeline_tag，用户选）；字段由 config/权重清单提取。
+    ``gguf_meta`` 供节点目录探测传入节点侧解析好的 GGUF 头元数据（manager 侧读不到
+    节点盘上的文件）；未传时按原逻辑从 ``path`` 读本地文件头。
     """
     config = probe.config or {}
     is_model_index = probe.config_name == "model_index.json"
@@ -68,7 +79,9 @@ def build_local_model_files(probe: ModelProbe, path: str, revision: str | None =
     # 有 config 也照样解析：GGUF 的 config.json 从不带量化信息，而 HF 路径是无条件把文件头
     # 传给 infer_quant 的——两条源口径必须一致，否则同一份产物在两处得到不同的量化值，
     # 部署参数（量化相关 flag）随之算错。config 优先的地方（is_moe / arch_shape）不受影响。
-    gguf_meta_obj = _infer_gguf_meta(probe, path, fmt)
+    gguf_meta_obj = (
+        _infer_gguf_meta(probe, path, fmt) if gguf_meta is _GGUF_META_UNSET else gguf_meta
+    )
     if probe.config:
         is_moe = inference.infer_moe(config)
     else:

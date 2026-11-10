@@ -13,8 +13,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# 视为权重文件的扩展名（统计大小 / 判定格式用）
-WEIGHT_EXTS: tuple[str, ...] = (".safetensors", ".gguf", ".bin", ".pt", ".pth", ".ckpt", ".onnx")
+# 视为权重文件的扩展名（统计大小 / 判定格式用）；与 node 侧共用同一份清单
+from llmpod.config.constants import MODEL_WEIGHT_EXTS
+
+WEIGHT_EXTS: tuple[str, ...] = MODEL_WEIGHT_EXTS
 
 
 # ============ type 建议（HF pipeline_tag → model_type） ============

@@ -160,3 +160,64 @@ class TestInspectOverride:
         assert mf["size_gb"] == 1.0
         assert mf["suggested_type"] == "llm"
         assert mf["format"] == "safetensors"
+
+
+class TestInspectNodeSource:
+    """source=node 路由契约：node_id 必填、探测结果透传、节点失败软失败。"""
+
+    async def test_missing_node_id_rejected(self, client: AsyncClient):
+        app.dependency_overrides[get_current_user] = _admin_user
+        resp = await client.post(
+            "/api/v1/admin/models/inspect",
+            json={"source": "node", "source_url": "/data/models/qwen"},
+        )
+        assert resp.status_code == 422
+
+    async def test_valid_probe_returns_files(self, client: AsyncClient, monkeypatch):
+        from llmpod.apps.manager import dispatch
+        from llmpod.tunnel.schemas import ModelDirEntry, ModelDirProbe
+
+        async def _probe(node_id, path):
+            assert node_id == "n1"
+            assert path == "/data/models/qwen"
+            return ModelDirProbe(
+                exists=True,
+                is_dir=True,
+                config_name="config.json",
+                config={"model_type": "qwen2", "architectures": ["Qwen2ForCausalLM"]},
+                files=[
+                    ModelDirEntry(path="config.json", size=60),
+                    ModelDirEntry(path="model.safetensors", size=1024),
+                ],
+                total_bytes=1084,
+            )
+
+        app.dependency_overrides[get_current_user] = _admin_user
+        monkeypatch.setattr(dispatch, "probe_model_dir", _probe)
+        resp = await client.post(
+            "/api/v1/admin/models/inspect",
+            json={"source": "node", "node_id": "n1", "source_url": "/data/models/qwen"},
+        )
+        assert resp.status_code == 200, resp.text
+        mf = resp.json()["data"]["files"]
+        assert mf["success"] is True
+        assert mf["format"] == "safetensors"
+        assert mf["architecture"] == "Qwen2ForCausalLM"
+
+    async def test_node_soft_failure_passthrough(self, client: AsyncClient, monkeypatch):
+        from llmpod.apps.manager import dispatch
+        from llmpod.tunnel.schemas import ModelDirProbe
+
+        async def _probe(node_id, path):
+            return ModelDirProbe(exists=False, message="目录不存在或不可达")
+
+        app.dependency_overrides[get_current_user] = _admin_user
+        monkeypatch.setattr(dispatch, "probe_model_dir", _probe)
+        resp = await client.post(
+            "/api/v1/admin/models/inspect",
+            json={"source": "node", "node_id": "n1", "source_url": "/data/models/nope"},
+        )
+        assert resp.status_code == 200, resp.text
+        mf = resp.json()["data"]["files"]
+        assert mf["success"] is False
+        assert "不存在" in (mf["message"] or "")

@@ -118,6 +118,15 @@ class EnsureModelExecutor(Executor):
             await _report(TaskStatus.SUCCESS, 100, stage=EnsureModelStage.FINISHED, extra={"model_path": model_path})
             return
 
+        # 节点目录就地引用：manager 没有副本，不能像 HF/local 那样下载。目录不完整即失败，
+        # 不进入下载器（否则会按 source=node 无法识别而误报「下载失败」）。
+        if ModelSource.is_node_source(payload.source):
+            await _report(
+                TaskStatus.FAILED,
+                message="节点上模型目录不可用（未找到完整权重），该模型由节点目录导入，无法自动下载",
+            )
+            return
+
         # 下载前目录是否已有内容（手动预置 / 上一 attempt 续传产物）。取消清理据此
         # 分流：空目录起下载才允许整删（纯本次产物），已有内容只清 ``.part``——
         # 否则取消会连预置文件一起 rmtree 掉

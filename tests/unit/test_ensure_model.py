@@ -797,3 +797,30 @@ class TestDiskPrecheckBySize:
         await ex.execute(task, None, report, asyncio.Event())
         assert calls[-1]["status"] == "FAILED"
         assert "INSUFFICIENT_DISK" in calls[-1]["message"]
+
+
+class TestNodeSource:
+    """节点目录就地引用：目录有效即完成；目录缺失直接失败且绝不下载。"""
+
+    async def test_existing_dir_short_circuits(self, tmp_path):
+        d = tmp_path / "m"
+        d.mkdir()
+        (d / "config.json").write_text("{}")
+        (d / "model.safetensors").write_text("")
+        calls, report = _recorder()
+        ex = EnsureModelExecutor(store_dir=str(tmp_path))
+        await ex.execute(_task(d, source="node", source_kind="transformers_folder"), None, report, asyncio.Event())
+        assert calls[-1]["status"] == "SUCCESS"
+        assert calls[-1]["extra"]["model_path"] == str(d)
+
+    async def test_missing_dir_fails_without_download(self, tmp_path):
+        d = tmp_path / "missing"
+        calls, report = _recorder()
+
+        async def _boom(*_args, **_kwargs):
+            raise AssertionError("节点目录模型不得进入下载器")
+
+        ex = EnsureModelExecutor(store_dir=str(tmp_path), downloader=_boom)
+        await ex.execute(_task(d, source="node", source_kind="transformers_folder"), None, report, asyncio.Event())
+        assert calls[-1]["status"] == "FAILED"
+        assert "无法自动下载" in (calls[-1]["message"] or "")

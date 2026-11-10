@@ -84,6 +84,7 @@ from llmpod.apps.webserver.schemas.deployment_inspect import (
 from llmpod.services import deployment_service
 from llmpod.apps.webserver.services.deployment_inspect_placement import build_recommended_placement
 from llmpod.config.constants import ClusterStatus, GpuStatus, NodeStatus
+from llmpod.config.enums import ModelSource
 from llmpod.config.settings import settings
 from llmpod.core.exceptions import LLMPodValidationError, NotFound
 from llmpod.models.cluster import Cluster
@@ -189,6 +190,8 @@ async def run_inspect(db: AsyncSession, request: InspectDeploymentRequest) -> In
     if model is None:
         raise NotFound("Model", request.model_id)
     c = InspectState(request=request, model=model)
+    if ModelSource.is_node_source(model.source):
+        await _scope_node_source(db, c)
 
     # 处理前置基础资源：L1 推荐基线：engine / adapter / KV 口径 / 推荐拓扑 / tp 是否显式；本段无 issue
     _prepare_baseline(c)
@@ -200,6 +203,9 @@ async def run_inspect(db: AsyncSession, request: InspectDeploymentRequest) -> In
     await _validate_config(db, c)
     # 卡池富化：基础行（含离线卡，前端灰化）→ 逐卡评估（grey_reason / required_vram_gb）→ 占用 + 卡现状两视图合并；本段无 issue（灰化语义经 cluster_gpus 回显）
     await _load_gpu_pool(db, c)
+    # 节点目录模型：可见节点池收缩为绑定节点（前端据此只展示该节点，推荐调度也不会越界）
+    if ModelSource.is_node_source(model.source):
+        _restrict_pool_to_bound_node(c)
     # 未显式 tp 时按可选卡推导并回写 topo / vram_per_gpu；必须先于 _solve_lane（晚于它会出现集群级结论与 node_support 各说各话）；本段无 issue
     _derive_tp(c)
     # CPU / 混合部署逐层求解：纯 CPU 按节点内存判、显存档逐卡双闸复核；产出 memory / memory_by_node（node_support 直接复用不重算）；阻断：指定节点不在线 / 结构非法 / 内存不足 / 显存档装不下
@@ -228,6 +234,36 @@ async def run_inspect(db: AsyncSession, request: InspectDeploymentRequest) -> In
     await build_recommended_placement(db, c)
     # 纯投影组装响应，不再判定
     return _build_response(c)
+
+
+async def _scope_node_source(db: AsyncSession, c: InspectState) -> None:
+    """节点目录模型的预检硬限制：集群锁定绑定节点所在集群，其余约束复用创建侧判据。"""
+    bound = c.model.node_id
+    if not bound:
+        c.fail("节点目录导入的模型缺少绑定节点")
+        return
+    node = await db.get(Node, bound)
+    if node is None:
+        c.fail(f"绑定节点不存在：{bound}")
+        return
+    if c.request.cluster_id and c.request.cluster_id != node.cluster_id:
+        c.fail("绑定节点不属于所选集群，节点目录导入的模型只能在绑定节点所在集群部署")
+    else:
+        c.request.cluster_id = node.cluster_id
+
+    errors = await deployment_service.node_source_scope_errors(
+        db, c.model, c.request.topology, c.request.gpu_selector
+    )
+    for _code, message in errors:
+        c.fail(message)
+
+
+def _restrict_pool_to_bound_node(c: InspectState) -> None:
+    """把可见节点池/卡池/CPU 资源收缩为绑定节点。"""
+    bound = c.model.node_id
+    c.node_rows = [node for node in c.node_rows if node.id == bound]
+    c.cluster_gpus = [gpu for gpu in c.cluster_gpus if gpu.node_id == bound]
+    c.node_resources = [res for res in c.node_resources if res.node_id == bound]
 
 
 def _prepare_baseline(c: InspectState) -> None:

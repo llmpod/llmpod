@@ -19,7 +19,9 @@ from llmpod.tunnel.schemas import (
     ContainerSummary,
     DeployResult,
     DeploySpec,
+    ModelDirProbe,
     NodeReport,
+    RemoveModelDirResult,
     RemoveResult,
     ShellResult,
     StopResult,
@@ -90,6 +92,14 @@ class _StubNodeService:
     async def execute_shell(self, command, timeout=60, cwd=None, env=None) -> ShellResult:
         self.calls.append(("execute_shell", command, timeout, cwd, env))
         return ShellResult(exit_code=0, stdout=f"out:{command}", stderr="")
+
+    async def probe_model_dir(self, path: str) -> ModelDirProbe:
+        self.calls.append(("probe_model_dir", path))
+        return ModelDirProbe(exists=False, message="stub")
+
+    async def remove_model_dir(self, path: str) -> RemoveModelDirResult:
+        self.calls.append(("remove_model_dir", path))
+        return RemoveModelDirResult(removed=False, path=path, message="stub")
 
     async def docker_pull(self, image):
         yield "x"

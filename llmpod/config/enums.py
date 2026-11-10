@@ -70,6 +70,7 @@ class ModelSource(StrEnum):
     MODELSCOPE = "modelscope"
     OSS = "oss"
     LOCAL = "local"
+    NODE = "node"  # 权重就地引用某台节点上的目录，manager 无副本
 
     @classmethod
     def is_manager_source(cls, source: str | None) -> bool:
@@ -85,6 +86,11 @@ class ModelSource(StrEnum):
     def is_modelscope_source(cls, source: str | None) -> bool:
         """是否走 ModelScope 下载。"""
         return (source or "").lower() == cls.MODELSCOPE
+
+    @classmethod
+    def is_node_source(cls, source: str | None) -> bool:
+        """是否节点目录就地引用（manager 无副本，不能自动下载）。"""
+        return (source or "").lower() == cls.NODE
 
 
 class ModelTag(StrEnum):

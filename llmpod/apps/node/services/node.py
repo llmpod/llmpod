@@ -24,7 +24,7 @@ from llmpod.apps.node.deployers.docker import (
 from llmpod.apps.node.exceptions import TaskExecutionError
 from llmpod.config.settings import Settings
 from llmpod.tunnel.contract import NodeService
-from llmpod.tunnel.schemas import NodeReport, ShellResult
+from llmpod.tunnel.schemas import ModelDirProbe, NodeReport, RemoveModelDirResult, ShellResult
 
 log = logging.getLogger("llmpod.apps.node.service.node")
 
@@ -96,6 +96,28 @@ class NodeServiceImpl(NodeService):
         except Exception as e:
             log.exception("Shell execution failed")
             return ShellResult(exit_code=-1, stdout="", stderr=str(e))
+
+    async def probe_model_dir(self, path: str) -> ModelDirProbe:
+        """只读探测节点上的模型目录（目录事实 + GGUF 头元数据）。"""
+        from llmpod.apps.node.ops.model_dir import probe_model_dir_sync
+
+        return await asyncio.to_thread(
+            probe_model_dir_sync,
+            path,
+            store_dir=self.settings.model_store_dir,
+            import_roots=self.settings.model_import_roots,
+        )
+
+    async def remove_model_dir(self, path: str) -> RemoveModelDirResult:
+        """受控删除节点上的模型目录（安全边界与探测一致）。"""
+        from llmpod.apps.node.ops.model_dir import remove_model_dir_sync
+
+        return await asyncio.to_thread(
+            remove_model_dir_sync,
+            path,
+            store_dir=self.settings.model_store_dir,
+            import_roots=self.settings.model_import_roots,
+        )
 
     async def docker_pull(self, image: str) -> AsyncIterator[str]:
         """流式拉取容器镜像（SDK 经 docker.sock——生产容器内无 docker CLI，不起命令子进程）。

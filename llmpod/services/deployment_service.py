@@ -51,7 +51,8 @@ from llmpod.apps.manager.deployment.constants import (
     ReplicaStatus,
 )
 from llmpod.config.constants import GpuStatus, InstanceStatus, NodeStatus
-from llmpod.core.exceptions import Conflict, LLMPodError, NotFound
+from llmpod.config.enums import ModelSource
+from llmpod.core.exceptions import Conflict, LLMPodError, LLMPodValidationError, NotFound
 from llmpod.apps.manager.deployment.resource_ledger import DEFAULT_GPU_MEMORY_UTILIZATION
 from llmpod.models.deployment_gpu_assignment import DeploymentGpuAssignment
 from llmpod.models.gpu import Gpu
@@ -144,6 +145,87 @@ async def load_node_cpu_archs(db: AsyncSession, node_ids: set[str]) -> dict[str,
         return {}
     result = await db.execute(select(Node).where(Node.id.in_(node_ids)))
     return {n.id: (n.cpu_arch or "") for n in result.scalars()}
+
+
+def bound_node_of_model(model: Model) -> str | None:
+    """节点目录模型返回绑定的节点 ID；其它来源返回 None。
+
+    节点目录模型的权重只存在于该节点，manager 没有副本，不能自动下载——部署必须钉在
+    这台节点上。
+    """
+    if not ModelSource.is_node_source(model.source):
+        return None
+    if not model.node_id:
+        raise LLMPodValidationError("节点目录模型缺少绑定节点")
+    return model.node_id
+
+
+async def require_node_model_present(db: AsyncSession, model_id: int, node_id: str) -> None:
+    """要求 ``node_model`` 显示该节点已持有此模型（present），否则拒绝部署。"""
+    rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == model_id))).scalars())
+    if not any(r.node_id == node_id and r.status == NodeModelState.PRESENT for r in rows):
+        raise Conflict("该节点上没有此模型的可用副本，无法部署（请先从节点目录导入或等待分发完成）")
+
+
+async def node_source_scope_errors(db: AsyncSession, model: Model, topology, selector) -> list[tuple[str, str]]:
+    """节点目录模型部署约束的全部违反项（code, message）；空 = 通过。
+
+    预检与创建共用这一份判据，避免两处各自维护「只能绑定节点 / 只能单机」的规则。
+    """
+    bound = bound_node_of_model(model)
+    if bound is None:
+        return []
+    errors: list[tuple[str, str]] = []
+    # 异构 copies 的后续份各自可能带 nnodes>1：逐份检查，不能只看归一化后的首份
+    units = topology.per_copy_units() if topology is not None else []
+    if any((unit.nnodes or 1) > 1 for unit in units):
+        errors.append(("multi_node", "节点目录导入的模型只能在单台节点部署（nnodes 必须为 1）"))
+    rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == model.id))).scalars())
+    if not any(r.node_id == bound and r.status == NodeModelState.PRESENT for r in rows):
+        errors.append(
+            ("no_copy", "该节点上没有此模型的可用副本，无法部署（请先从节点目录导入或等待分发完成）")
+        )
+    if selector is not None:
+        if selector.node_id and selector.node_id != bound:
+            errors.append(("other_node", f"节点目录导入的模型只能部署到绑定节点 {bound}"))
+        if selector.node_ids and any(node_id != bound for node_id in selector.node_ids):
+            errors.append(("other_node", f"节点目录导入的模型只能部署到绑定节点 {bound}"))
+        if selector.gpu_uuids:
+            gpus = list((await db.execute(select(Gpu).where(Gpu.uuid.in_(selector.gpu_uuids)))).scalars())
+            by_uuid = {g.uuid: g for g in gpus}
+            if any(by_uuid.get(uuid) is None or by_uuid[uuid].node_id != bound for uuid in selector.gpu_uuids):
+                errors.append(("other_gpu", f"所选 GPU 不在绑定节点 {bound} 上"))
+    return errors
+
+
+async def enforce_node_source_spec(db: AsyncSession, model: Model, spec: DeploymentConfig) -> None:
+    """节点目录模型的部署硬限制（预检与创建共用同一份判据）。
+
+    - 只允许绑定节点持有副本，且副本必须 present；
+    - 只允许单机部署；
+    - 显式指定节点/卡时逐一校验；
+    - 未指定时把选择器钉到绑定节点，防止自动调度落到别的机器（含 CPU 逐份钉定）。
+    """
+    bound = bound_node_of_model(model)
+    if bound is None:
+        return
+    errors = await node_source_scope_errors(db, model, spec.topology, spec.gpu_selector)
+    if errors:
+        code, message = errors[0]
+        # 「节点上没有副本」是状态冲突（409），其余是请求越界（422）
+        raise Conflict(message) if code == "no_copy" else LLMPodValidationError(message)
+    if spec.gpu_selector is not None:
+        return
+
+    from llmpod.apps.manager.deployment.schemas import GpuSelector
+
+    if spec.offload_preference == "cpu_only":
+        replicas = max(1, spec.topology.replicas or 1)
+        spec.gpu_selector = GpuSelector(node_ids=[bound] * replicas)
+    else:
+        # 单节点钉定：GPU 调度只会选该节点；allow_cpu 回退到 CPU 档时
+        # ``_resolve_lane`` / ``_assign_cpu_lane`` 同样只在该节点求解
+        spec.gpu_selector = GpuSelector(node_id=bound)
 
 
 async def nodes_with_model(db: AsyncSession, model_id: int) -> set[str]:

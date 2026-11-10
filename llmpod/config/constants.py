@@ -31,6 +31,13 @@ DEFAULT_RECONNECT_FAST = 5  # 秒
 DEFAULT_RECONNECT_SLOW = 30  # 秒
 DEFAULT_RECONNECT_FAST_WINDOW = 60  # 秒
 
+# ==================== 模型文件 ====================
+
+# 视为模型权重文件的扩展名（manager 探测统计 / node 目录纳管校验共用）。
+# 唯一出处：manager 的 ``model_source.inference.WEIGHT_EXTS`` 是它的别名。
+MODEL_WEIGHT_EXTS: tuple[str, ...] = (".safetensors", ".gguf", ".bin", ".pt", ".pth", ".ckpt", ".onnx")
+
+
 # ==================== 跨进程契约：实例 / 任务状态 ====================
 
 

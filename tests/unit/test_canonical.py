@@ -1,10 +1,11 @@
 """canonical 路径推导单测（``canonical_local_dir``/``slugify_name`` 居 placement.py）。
 
-目录规则（两条分支）：
+目录规则（三条分支）：
 - local/manager 源：canonical = source_url（单文件取所在目录）——同机 node 直接用源
   目录、远端下载到同一路径，所有节点 model_path 恒相同；
 - HF/远程源：``{model_store_dir}/{name-slug}``——与 ``hf download --local-dir`` /
-  modelscope ``--local_dir`` 的落盘布局一致，用户可用官方 CLI 在 store 内直接预置管理。
+  modelscope ``--local_dir`` 的落盘布局一致，用户可用官方 CLI 在 store 内直接预置管理；
+- node 源：直接返回登记的节点目录（manager 读不到节点盘，不生成平台命名目录）。
 
 回归防护：该函数曾用 ``from llmpod.config import settings``（拿到模块而非实例），
 导致 ``canonical_local_dir()`` 实际调用时 AttributeError——被 orchestrator 的
@@ -23,7 +24,7 @@ from llmpod.apps.manager.deployment.placement import (
     validate_manager_source,
 )
 from llmpod.config.settings import settings
-from llmpod.core.exceptions import LLMPodValidationError
+from llmpod.core.exceptions import LLMPodError, LLMPodValidationError
 from llmpod.models.model import Model
 
 
@@ -124,6 +125,19 @@ class TestManagerSourceDir:
         # 无 source_url：回退 store 根占位（合法路径形状，下发前会被拦截，不产生野路径）
         m = _model(source="local", source_url=None)
         assert canonical_local_dir(m) == os.path.abspath(settings.model_store_dir)
+
+
+class TestNodeSourceDir:
+    def test_returns_registered_dir(self):
+        # 节点目录就地引用：不生成平台命名目录，直接返回登记路径
+        m = _model(source="node", source_url="/data/models/qwen")
+        assert canonical_local_dir(m) == "/data/models/qwen"
+
+    def test_missing_source_url_raises(self):
+        # node 源没有可回退的占位路径，脏数据直接报错
+        m = _model(source="node", source_url=None)
+        with pytest.raises(LLMPodError):
+            canonical_local_dir(m)
 
 
 class TestValidateManagerSource:

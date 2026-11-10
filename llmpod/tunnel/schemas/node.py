@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ShellResult(BaseModel):
@@ -17,3 +17,41 @@ class ShellResult(BaseModel):
     exit_code: int
     stdout: str = ""
     stderr: str = ""
+
+
+class ModelDirEntry(BaseModel):
+    """模型目录中的一个文件（相对目录根的 POSIX 路径 + 字节数）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    path: str = Field(..., description="相对目录根的 POSIX 路径")
+    size: int = Field(..., description="字节数")
+
+
+class ModelDirProbe(BaseModel):
+    """``probe_model_dir()`` 返回值：节点目录的原始事实（不做模型语义判断）。
+
+    config 为 ``config.json`` / ``model_index.json`` 解析出的 JSON object；``files`` 是
+    目录内全部普通文件（跳过符号链接）。权重过滤与 ``ModelFiles`` 装配留在 manager，
+    复用「本机路径」的识别口径。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    exists: bool = Field(False, description="路径是否存在且可读")
+    is_dir: bool = Field(False, description="是否目录（单文件不支持）")
+    config_name: str | None = Field(None, description="读到的配置文件名（config.json / model_index.json）")
+    config: dict | None = Field(None, description="配置原文；解析失败或不存在为 None")
+    files: list[ModelDirEntry] = Field(default_factory=list, description="目录内普通文件清单")
+    total_bytes: int = Field(0, description="全部文件字节总和")
+    message: str | None = Field(None, description="探测失败/降级说明，可直接展示")
+
+
+class RemoveModelDirResult(BaseModel):
+    """``remove_model_dir()`` 返回值。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    removed: bool = Field(False, description="是否已删除")
+    path: str = Field("", description="目标路径")
+    message: str | None = Field(None, description="失败原因，可直接展示")

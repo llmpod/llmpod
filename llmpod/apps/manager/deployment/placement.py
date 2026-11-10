@@ -131,7 +131,13 @@ def canonical_local_dir(model: Model) -> str:
       ``local_dir`` 模式直写该目录——与 ``hf download --local-dir`` / modelscope
       ``--local_dir`` 的落盘布局一致，用户在 store 内用官方 CLI 预置/管理的目录平台
       直接可用；重复下发由 ``hf_hub_download`` 的 etag 元数据校验跳过（不搬字节）。
+    - node 源：节点目录就地引用，直接返回登记路径（manager 读不到节点盘，不生成平台
+      命名目录，也不参与内容寻址）。
     """
+    if ModelSource.is_node_source(model.source):
+        if not model.source_url:
+            raise LLMPodError("节点目录模型缺少目录路径")
+        return os.path.abspath(model.source_url)
     store = Path(settings.model_store_dir).expanduser()  # 允许 ``~/models`` 写法
     if ModelSource.is_manager_source(model.source):
         d = manager_source_dir(model.source_url)

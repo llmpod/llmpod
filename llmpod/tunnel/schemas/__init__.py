@@ -20,7 +20,12 @@ from llmpod.tunnel.schemas.container import (
 )
 from llmpod.tunnel.schemas.deploy import DeploySpec, docker_run_command
 from llmpod.tunnel.schemas.model_store import MANIFEST_FILE_NAME, Manifest, ManifestFile
-from llmpod.tunnel.schemas.node import ShellResult
+from llmpod.tunnel.schemas.node import (
+    ModelDirEntry,
+    ModelDirProbe,
+    RemoveModelDirResult,
+    ShellResult,
+)
 from llmpod.tunnel.schemas.system import GpuInfo, NodeReport, SystemInfo
 from llmpod.tunnel.schemas.task import (
     Ack,
@@ -51,6 +56,9 @@ __all__ = [
     "Manifest",
     # node
     "ShellResult",
+    "ModelDirEntry",
+    "ModelDirProbe",
+    "RemoveModelDirResult",
     # system
     "SystemInfo",
     "GpuInfo",

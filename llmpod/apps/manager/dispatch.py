@@ -33,7 +33,9 @@ from llmpod.tunnel.schemas import (
     ContainerSummary,
     DeployResult,
     GpuInfo,
+    ModelDirProbe,
     NodeReport,
+    RemoveModelDirResult,
     RemoveResult,
     ShellResult,
     StopResult,
@@ -369,6 +371,31 @@ async def execute_shell(
     log.info("Dispatching shell to node=%s command=%r", node_id, command)
     try:
         return await proxy.execute_shell(command=command, timeout=timeout, cwd=cwd, env=env)
+    except (NodeOffline, RemoteError) as e:
+        raise _wrap_rpc_error(e, node_id)
+
+
+async def probe_model_dir(node_id: str, path: str) -> ModelDirProbe:
+    """让节点只读探测模型目录（调用 NodeService.probe_model_dir）。
+
+    节点离线/通道异常归一到领域异常；目录不存在等业务失败由返回值的软失败表达。
+    """
+    hub, _ = _require_node(node_id)
+    proxy = hub.proxy(node_id, NodeService)
+    log.info("Dispatching probe_model_dir to node=%s path=%s", node_id, path)
+    try:
+        return await proxy.probe_model_dir(path=path)
+    except (NodeOffline, RemoteError) as e:
+        raise _wrap_rpc_error(e, node_id)
+
+
+async def remove_model_dir(node_id: str, path: str) -> RemoveModelDirResult:
+    """让节点受控删除模型目录（调用 NodeService.remove_model_dir）。"""
+    hub, _ = _require_node(node_id)
+    proxy = hub.proxy(node_id, NodeService)
+    log.info("Dispatching remove_model_dir to node=%s path=%s", node_id, path)
+    try:
+        return await proxy.remove_model_dir(path=path)
     except (NodeOffline, RemoteError) as e:
         raise _wrap_rpc_error(e, node_id)
 

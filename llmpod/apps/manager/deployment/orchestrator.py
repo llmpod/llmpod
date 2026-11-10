@@ -404,6 +404,10 @@ class DeploymentOrchestrator:
         # 终态扫描集合，后续重预留窗口不再与 converge 竞态。预留失败时回滚为原终态。
         async with get_db_context() as db:
             dep, _model = await deployment_service.load_deployment(db, deployment_id)
+            # 节点目录模型：绑定节点必须仍持有该模型副本（解绑后不可重启）
+            bound = deployment_service.bound_node_of_model(_model)
+            if bound is not None:
+                await deployment_service.require_node_model_present(db, _model.id, bound)
             if dep.status not in DEPLOYMENT_RESTARTABLE_STATUSES:
                 raise Conflict(f"部署当前状态 {dep.status}，无法启动（仅 stopped/failed 可启动）")
             restart_from = dep.status

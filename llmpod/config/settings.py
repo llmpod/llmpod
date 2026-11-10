@@ -281,6 +281,9 @@ class Settings(BaseSettings):
         # 兼容引导脚本注入的短名；原配置名同时存在时优先。
         validation_alias=AliasChoices("LLMPOD_MODEL_HOST_STORE_DIR", "LLMPOD_MODEL_HOST_DIR"),
     )
+    # 节点目录纳管的允许根（逗号分隔绝对路径）；空 = 只允许 model_store_dir。
+    # 探测与删除都强制落在这些根之内，防止借管理端操作碰到节点上的其它目录。
+    model_import_roots: str = ""
     download_min_free_gb: float = 10.0  # Node 下载前磁盘剩余空间下限（GB，不足即 INSUFFICIENT_DISK）
 
     # ===== 模型分发 V1.1（local 源：Manager 文件服务下发）=====
