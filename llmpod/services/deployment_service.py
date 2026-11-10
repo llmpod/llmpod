@@ -112,12 +112,14 @@ async def load_online_gpus(db: AsyncSession) -> list[GpuCandidate]:
     typed model 在 DB→调度边界即固定字段契约，避免 dict key 拼写错误只在 deploy 期暴露。
     ``used_vram_gb`` 取心跳实时值（``feasibility.load_used_vram_by_uuid``，进程内 buffer，
     不查 DB）——它是容量过滤的「物理可用」闸的数据源：外部进程占着的卡不能只看账本，
-    否则账本说空、放行调度、容器起来 OOM。
+    否则账本说空、放行调度、容器起来 OOM。``cpu_arch`` 取所在节点上报值——跨机引擎
+    分片不得横跨 amd64/arm64，内核组合与手选校验都按它分组。
     """
     from llmpod.apps.manager.deployment.feasibility import load_used_vram_by_uuid
 
     used = load_used_vram_by_uuid()
-    result = await db.execute(select(Gpu).where(Gpu.status == GpuStatus.ONLINE))
+    gpus = list((await db.execute(select(Gpu).where(Gpu.status == GpuStatus.ONLINE))).scalars())
+    node_archs = await load_node_cpu_archs(db, {g.node_id for g in gpus})
     return [
         GpuCandidate(
             uuid=g.uuid,
@@ -129,9 +131,19 @@ async def load_online_gpus(db: AsyncSession) -> list[GpuCandidate]:
             name=g.name,
             driver_version=g.driver_version,
             used_vram_gb=used.get(g.uuid),
+            cpu_arch=node_archs.get(g.node_id, ""),
         )
-        for g in result.scalars()
+        for g in gpus
     ]
+
+
+async def load_node_cpu_archs(db: AsyncSession, node_ids: set[str]) -> dict[str, str]:
+    """node_id → 上报的 CPU 架构（未上报为空串）。跨机分片同架构判定（调度分组 /
+    validate_same_cpu_arch）的数据源；与 ``load_node_ips`` 同契约：空集返回空表。"""
+    if not node_ids:
+        return {}
+    result = await db.execute(select(Node).where(Node.id.in_(node_ids)))
+    return {n.id: (n.cpu_arch or "") for n in result.scalars()}
 
 
 async def nodes_with_model(db: AsyncSession, model_id: int) -> set[str]:

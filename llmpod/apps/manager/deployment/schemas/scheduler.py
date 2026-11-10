@@ -21,6 +21,10 @@ class GpuCandidate(BaseModel):
     # 心跳实时已用显存（含平台外进程）：容量过滤的「物理可用」闸门用。None = 无实时
     # 数据（节点未上报/心跳未起）——此时乐观按整卡空闲，与账本口径一致。
     used_vram_gb: float | None = None
+    # 所在节点 CPU 架构（如 x86_64 / aarch64；空 = 节点未上报）。跨机引擎的分片
+    # 不得横跨 amd64/arm64——同一实例共用一个镜像 ref、跑同一套分布式通信栈，
+    # 混排要到拉镜像或 rendezvous 阶段才暴露。跨机组合与手选校验共用本字段。
+    cpu_arch: str = ""
 
 
 class PlacementPrefs(BaseModel):
@@ -34,6 +38,9 @@ class PlacementPrefs(BaseModel):
       ``None``=未给（只用单架构 ``arch``），空元组=上游架构闸门淘汰了全部候选（内核直接否决）。
     - ``locality_node_ids``：已有模型文件的节点（本地性加分，调度到该节点即免一次下发）。
     - ``card_state``：卡的部署痕迹（uuid → ``CardState``），无痕迹的卡优先被选中。
+    - ``allow_mixed_cpu_arch``：允许跨机分片横跨 CPU 架构（amd64/arm64 混排）。仅 force
+      部署置位——默认跨机组合只在同 CPU 架构节点间生成，混排集群强推时放开由用户自担
+      （镜像/分布式栈大概率跑不起来，失败后置到拉镜像或容器启动阶段）。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -41,6 +48,7 @@ class PlacementPrefs(BaseModel):
     arch_order: tuple[str, ...] | None = None
     locality_node_ids: frozenset[str] = frozenset()
     card_state: dict[str, str] = Field(default_factory=dict)
+    allow_mixed_cpu_arch: bool = False
 
 
 class NodeCandidate(BaseModel):

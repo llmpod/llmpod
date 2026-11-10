@@ -41,6 +41,21 @@ def _cards_per_copy_sh(tp: int | None, pp: int | None) -> int:
     return max(1, int(tp or 1)) * max(1, int(pp or 1))
 
 
+def _cpu_arch_by_node(gpu_pool) -> dict[str, str]:
+    """node_id → 已上报 CPU 架构（空 = 未上报）；同节点各卡共享一个值，取首张。"""
+    out: dict[str, str] = {}
+    for g in gpu_pool:
+        out.setdefault(getattr(g, "node_id", ""), getattr(g, "cpu_arch", "") or "")
+    return out
+
+
+def _mixed_cpu_archs(arch_by_node: dict[str, str], node_ids) -> str | None:
+    """节点集横跨的 CPU 架构（'/' 连接）；已知架构不足两个（未上报不算）→ None。"""
+    archs = {arch_by_node.get(n, "") for n in node_ids}
+    archs.discard("")
+    return "/".join(sorted(archs)) if len(archs) > 1 else None
+
+
 def infer_selection_arch(gpu_pool, gpu_uuids, default_arch: str) -> str:
     """手选卡 arch 推断：所选卡在池内 arch 唯一 → 取之；否则回退 default_arch。
 
@@ -56,7 +71,8 @@ def infer_selection_arch(gpu_pool, gpu_uuids, default_arch: str) -> str:
 
 
 def _validate_manual_selection(
-    gpu_pool, gpu_uuids, *, tp: int, nnodes: int, arch: str, pp: int = 1, copies: int = 1
+    gpu_pool, gpu_uuids, *, tp: int, nnodes: int, arch: str, pp: int = 1, copies: int = 1,
+    check_cpu_arch: bool = True,
 ) -> None:
     """校验手动选卡集（结构 + 在线 + 节点分布/分组）；VRAM 留给 scheduler.reserve。
 
@@ -64,13 +80,15 @@ def _validate_manual_selection(
     （GpuCandidate 或 inspect 的 ClusterGpuInfo 均可）。规则：
     - 无重复、总数 == tp×pp×copies（每份 tp×pp 张；copies>1 时按份分组）；
     - 全部在线；
-    - 单副本：全部卡同 arch（单引擎不能跨架构 TP）；
+    - 单副本：全部卡同 arch（单引擎不能跨架构 TP）；跨机（nnodes>1）时各分片节点
+      还须同 CPU 架构——跨机分片共用镜像 ref，amd64/arm64 混排要到拉镜像才暴露；
     - 单机份（nnodes==1）多副本：份间可异构——按 (node, arch) 桶贪心配份
       （桶内卡数须能凑出整数份），配不齐给逐桶余数的人读原因；
     - 跨机份（nnodes>1）：仅单副本放行（分布校验同旧规则）；多副本×跨机×手选组合
       的配对空间爆炸，v1 不做——多机多副本走自动调度。
 
     异构副本（各份形状不同）走 :func:`_validate_manual_selection_shapes`。
+    CPU 架构未知（节点未上报）不在此拦，与调度内核同口径。
     """
     if not gpu_uuids:
         return
@@ -105,6 +123,13 @@ def _validate_manual_selection(
     bad = {nid: len(us) for nid, us in by_node.items() if len(us) != need_per_node}
     if bad:
         raise LLMPodValidationError(f"每节点需 {need_per_node} 张指定的卡，实际分布 {bad}")
+    if nnodes > 1 and check_cpu_arch:
+        mixed = _mixed_cpu_archs(_cpu_arch_by_node(gpu_pool), by_node)
+        if mixed:
+            raise LLMPodValidationError(
+                f"跨机手选的节点 CPU 架构不一致（{mixed}），同一实例的分片无法共用镜像；"
+                "请改选同架构节点的卡"
+            )
 
 
 def _validate_manual_selection_shapes(gpu_pool, gpu_uuids, *, shapes: list[tuple[int, int, int]]) -> None:
@@ -112,7 +137,9 @@ def _validate_manual_selection_shapes(gpu_pool, gpu_uuids, *, shapes: list[tuple
 
     与 ``_validate_manual_selection`` 同口径：重复/在线检查 + 多副本×跨机拒绝 +
     逐份桶配对（``pair_manual_replicas`` 列表形态）。单副本（仅 1 份）沿用单副本
-    arch/分布规则。份内跨机 nnodes>1 时按该份口径校验节点分布。
+    arch/分布规则，但**不做**跨机 CPU 架构校验——生产入口 ``validate_manual_gpu_selection``
+    单份时走 ``_validate_manual_selection``（在那里校验），本函数只经异构多份路径
+    到达（全部单机，无跨机可言）。
     """
     if not gpu_uuids:
         return
@@ -150,7 +177,9 @@ def _validate_manual_selection_shapes(gpu_pool, gpu_uuids, *, shapes: list[tuple
         raise LLMPodValidationError(f"每节点需 {need_per_node} 张指定的卡，实际分布 {bad}")
 
 
-def validate_manual_gpu_selection(gpu_pool, gpu_uuids, *, shapes: list[tuple[int, int, int]], arch: str) -> None:
+def validate_manual_gpu_selection(
+    gpu_pool, gpu_uuids, *, shapes: list[tuple[int, int, int]], arch: str, check_cpu_arch: bool = True
+) -> None:
     """手选卡校验的统一分流（create 的 assign 与 inspect 预检共用入口）。
 
     ``shapes`` = 逐份 ``(tp, pp, nnodes)``：create 侧取 instances 中 node_rank=0 的
@@ -158,6 +187,8 @@ def validate_manual_gpu_selection(gpu_pool, gpu_uuids, *, shapes: list[tuple[int
     tp×pp×份数），异构副本走逐份形状校验（卡数 = Σ 各份 tp×pp）。分流写两遍必
     漂移（历史：inspect 恒走同形口径，把 copies=[{tp:2},{tp:1}] 的合法 3 卡选集
     错判成「需 4 张」——预检红灯、create 放行）。
+    ``check_cpu_arch=False`` 跳过跨机 CPU 架构一致性校验（force 部署；结构类校验
+    仍全部生效）。
     """
     if len(set(shapes)) == 1:
         tp, pp, nnodes = shapes[0]
@@ -169,8 +200,11 @@ def validate_manual_gpu_selection(gpu_pool, gpu_uuids, *, shapes: list[tuple[int
             arch=arch,
             pp=pp,
             copies=len(shapes),
+            check_cpu_arch=check_cpu_arch,
         )
     else:
+        # 异构副本（≥2 份不同形状）必为单机份（跨机×多副本手选在下方拒绝），无跨机
+        # CPU 架构校验可言；同形单副本走上面的 _validate_manual_selection
         _validate_manual_selection_shapes(gpu_pool, gpu_uuids, shapes=shapes)
 
 
@@ -255,11 +289,15 @@ def _pair_manual_mixed(gpu_pool, gpu_uuids, per_copy: list[int]) -> list[tuple[s
     return [result[i] for i in range(len(per_copy))]
 
 
-def _validate_node_selection(gpu_pool, node_ids, *, tp: int, nnodes: int, arch: str, pp: int = 1) -> None:
+def _validate_node_selection(
+    gpu_pool, node_ids, *, tp: int, nnodes: int, arch: str, pp: int = 1, check_cpu_arch: bool = True
+) -> None:
     """校验选节点集：每节点在线 + 同 arch + ≥ tp×pp//nnodes 张可用卡。VRAM 留给 scheduler。
 
     ``gpu_pool`` 任意带 ``uuid / node_id / arch / status`` 的对象（GpuCandidate / ClusterGpuInfo）。
     与 ``_validate_manual_selection`` 对位：后者校验具体卡，本校验节点级（每节点自动分卡）。
+    跨机（nnodes>1）时节点集须存在凑得出 nnodes 个节点的单一 CPU 架构子集（候选集可以
+    比需要的大，多出的异架构节点自动调度不选）；``check_cpu_arch=False`` 跳过（force 部署）。
     """
     if not node_ids:
         return
@@ -274,6 +312,24 @@ def _validate_node_selection(gpu_pool, node_ids, *, tp: int, nnodes: int, arch: 
     short = {n: by_node[n] for n in node_ids if by_node[n] < need_per_node}
     if short:
         raise LLMPodValidationError(f"每节点需 {need_per_node} 张 {arch} 可用卡，不足：{short}")
+    if nnodes > 1 and check_cpu_arch:
+        arch_by_node = _cpu_arch_by_node(gpu_pool)
+        groups: dict[str, set[str]] = defaultdict(set)
+        unknown: set[str] = set()
+        for n in node_ids:
+            cpu = arch_by_node.get(n, "")
+            if cpu:
+                groups[cpu].add(n)
+            else:
+                unknown.add(n)
+        # 任一单一架构（含未知节点，二者必不相交）凑得出 nnodes 个节点即放行
+        best_group = max((len(nodes) for nodes in groups.values()), default=0)
+        if groups and best_group + len(unknown) < nnodes:
+            mixed = "/".join(sorted(groups))
+            raise LLMPodValidationError(
+                f"所选节点CPU架构不一致（{mixed}），单一架构凑不出{nnodes}个节点做跨机分片；"
+                "请挑选架构一致的节点列表"
+            )
 
 
 def probe_placement(
@@ -339,9 +395,11 @@ def _probe_reason(instances, gpu_pool, err: LLMPodValidationError) -> str:
     reasons = getattr(err, "reasons", {}) or {}
     detail = "、".join(f"{reasons.get(name, name)}×{n}" for name, n in sorted(rejections.items()))
     tail = f"；被拦原因 {detail}" if detail else ""
+    # 混架构导致的跨机组合落空：卡都在线、架构也对，不补这句就成了「在线卡不足」误报
+    arch_note = getattr(err, "cpu_arch_note", None) or ""
     return (
         f"集群在线卡不足：本部署需 {len(per_engine)} 份引擎（{shape}，共 {sum(per_engine.values())} 张），"
-        f"当前在线 {online}{tail}"
+        f"当前在线 {online}{tail}{arch_note}"
     )
 
 
@@ -574,6 +632,8 @@ def plan_placement(
             # 手选路径 place_engine 走 manual 早退，arch_order 不生效。
             # None（不给候选序）与空元组（给了但没有候选）语义不同，见 EngineRequest
             arch_order=prefs.arch_order,
+            # force 部署放开跨机同 CPU 架构约束（镜像能否真跑起来由用户自担）
+            allow_mixed_cpu_arch=prefs.allow_mixed_cpu_arch,
         )
         placement = place_engine(gpu_pool, req, card_ok=engine_card_ok)
         for shard, (node_id, cards) in zip(shards, placement.shards):
@@ -720,9 +780,17 @@ class GpuScheduler:
 
         ``force``：强制部署——跳过容量过滤（``card_ok`` 不注入，显存不足的卡仍调度）并改走
         ``force_reserve``（不计容量直接记账，超额由引擎/NCCL 最终裁决 OOM）。结构校验
-        （在线/架构/分布）不受 force 影响，仍硬拒。非 force 时容量过滤含**物理可用**闸
+        （在线/架构/分布）不受 force 影响，仍硬拒；跨机分片的 CPU 架构一致性属策略类
+        （多架构镜像 + 特殊环境理论上可跑），force 一并放开——与 orchestrator 的
+        ``validate_same_cpu_arch`` force 豁免同口径。非 force 时容量过滤含**物理可用**闸
         （心跳实况：卡上已有占用——含平台外进程——则拒），见 :meth:`card_fits`。
         """
+        # force 部署放开跨机同 CPU 架构约束：单点置位 prefs，下方校验与内核组合都
+        # 从它读——校验侧不另设开关，避免「校验拦了、内核放行」的两处口径
+        if force:
+            prefs = (prefs or PlacementPrefs()).model_copy(update={"allow_mixed_cpu_arch": True})
+        allow_mixed_cpu = bool(prefs and prefs.allow_mixed_cpu_arch)
+
         # 手动选卡 / 选节点集预校验（结构 + 在线 + arch + 分布；VRAM 留给 reserve 兜底）。
         # shapes 取 instances 中 node_rank=0 的逐份形状（多机份每节点一个实例，只取首秩）；
         # 同形/异构分流在 validate_manual_gpu_selection（与 inspect 预检共用）
@@ -732,7 +800,9 @@ class GpuScheduler:
                 for i in instances
                 if int(i.node_rank or 0) == 0
             ]
-            validate_manual_gpu_selection(gpu_pool, gpu_selector.gpu_uuids, shapes=shapes, arch=arch)
+            validate_manual_gpu_selection(
+                gpu_pool, gpu_selector.gpu_uuids, shapes=shapes, arch=arch, check_cpu_arch=not allow_mixed_cpu
+            )
         if gpu_selector and gpu_selector.node_ids and instances:
             inst0 = instances[0]
             _validate_node_selection(
@@ -742,6 +812,7 @@ class GpuScheduler:
                 nnodes=max(1, int(inst0.nnodes or 1)),
                 arch=arch,
                 pp=max(1, int(inst0.pp or 1)),
+                check_cpu_arch=not allow_mixed_cpu,
             )
 
         # 选卡（无状态内核）——card_ok 用 ledger 版（乐观预留口径）。选卡是纯规划、

@@ -30,6 +30,9 @@ class GpuPoolEntry:
     arch: str
     total_vram_gb: float
     available_vram_gb: float
+    # 所在节点 CPU 架构（空 = 未上报）：跨机推荐按它分组——同一实例的分片不能横跨
+    # amd64/arm64（共用镜像 ref 与分布式栈），混架构集群按整池数卡会推荐出必死组合
+    cpu_arch: str = ""
 
 
 @dataclass
@@ -253,6 +256,24 @@ def derive_tp(
     return min(feasible)
 
 
+def cross_node_same_cpu_ok(qualified: dict[str, list], tp: int) -> bool:
+    """跨机推荐的同 CPU 架构判：有某个架构组的互异节点数 ≥ tp 即可行。
+
+    同一引擎实例的分片不能横跨 amd64/arm64（共用镜像 ref），跨机推荐按节点 CPU 架构
+    分组数卡；未上报架构（空串）可入任一组。混架构集群若各组都凑不齐 tp 个节点，
+    该集群不再给出「跨机可行」的假推荐。
+    """
+    archs: dict[str, int] = {}
+    unknown = 0
+    for cards in qualified.values():
+        cpu = getattr(cards[0], "cpu_arch", "") or ""
+        if cpu:
+            archs[cpu] = archs.get(cpu, 0) + 1
+        else:
+            unknown += 1
+    return max(archs.values(), default=0) + unknown >= tp
+
+
 def pick_cluster(
     cluster_gpu_pools: dict[int, list[GpuPoolEntry]],
     vram_per_gpu: float,
@@ -268,7 +289,8 @@ def pick_cluster(
       平台默认整卡预留装得下「模型每卡需求」且卡的实时可用装得下预留；
       tp>1 时每卡需求 = ``vram_per_gpu`` ÷ tp）
     - 单节点可行 = 有节点满足 ≥ tp 张合格 GPU → cross_node=False
-    - 跨机可行 = 集群总合格 GPU ≥ tp（至少 tp 个不同节点各出 1 张）→ cross_node=True
+    - 跨机可行 = 同一 CPU 架构组内 ≥ tp 个不同节点各出 1 张
+      （``cross_node_same_cpu_ok``，混架构组不出组合）→ cross_node=True
     - 优先选单节点可行的集群；其次跨机；不可行 → None
 
     **``shape`` 给了且 ``tp == 1``**（= 并行度还没定，由自动推导决定）时改用「该集群能不能用某个
@@ -313,8 +335,8 @@ def pick_cluster(
         if max(len(cards) for cards in qualified.values()) >= tp:
             # 单节点可行
             candidates.append((cluster_id, False))
-        elif len(qualified) >= tp:
-            # 跨机可行（至少 tp 个不同节点各出 1 张）
+        elif cross_node_same_cpu_ok(qualified, tp):
+            # 跨机可行（同一 CPU 架构组内 ≥ tp 个不同节点各出 1 张；混架构组不出组合）
             candidates.append((cluster_id, True))
 
     if not candidates:

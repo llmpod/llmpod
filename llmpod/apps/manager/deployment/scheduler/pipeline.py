@@ -159,6 +159,9 @@ class EngineRequest:
     # 为空**（上游把架构全闸掉了，如本拓扑服务不了或没有匹配镜像）→ 直接否决。空必须与
     # None 区分：当成 None 处理会静默回退到未经闸门的 arch，把闸门变成不生效。
     arch_order: tuple[str, ...] | None = None
+    # 允许跨机分片横跨 CPU 架构（force 部署专用；默认跨机组合只在同 cpu_arch 节点间
+    # 生成，见 _cross_node_candidates / _manual_placement）
+    allow_mixed_cpu_arch: bool = False
 
 
 @dataclass(frozen=True)
@@ -184,6 +187,7 @@ class PipelineRejection(LLMPodValidationError):
         ladder: str = "",
         user_reason: str | None = None,
         reasons: dict[str, str] | None = None,
+        cpu_arch_note: str | None = None,
     ):
         super().__init__(message)
         self.rejections = rejections or {}
@@ -194,6 +198,9 @@ class PipelineRejection(LLMPodValidationError):
         # 给用户看的中文原因（部署失败时落到 deployment.last_error）。``message`` 保留
         # 原文供排障——它带 ladder 与计数明细，说给用户听太内部。
         self.user_reason = user_reason
+        # 跨机组合因「同 CPU 架构节点不足」落空的补充说明（inspect 探针把它并进
+        # 「在线卡不足」的人读原因——卡明明都在线，不说明白混架构就是误报）
+        self.cpu_arch_note = cpu_arch_note
 
 
 # ==================== ② 候选生成器阶梯 ====================
@@ -242,17 +249,46 @@ def _single_node_candidates(scoped: dict[str, list], req: EngineRequest) -> tupl
 
 
 def _cross_node_candidates(scoped: dict[str, list], req: EngineRequest) -> tuple[list[Placement], dict[str, int]]:
-    """级别二（跨机引擎）：等卡数节点组——nnodes 个互异节点、各出 need 张同档卡。"""
+    """级别二（跨机引擎）：等卡数节点组——nnodes 个互异节点、各出 need 张同档卡。
+
+    同组节点的 CPU 架构须一致（同一引擎实例共用镜像 ref 与分布式通信栈，amd64/arm64
+    混排要到拉镜像或 rendezvous 阶段才暴露）：按 cpu_arch 分桶后桶内组合。未上报
+    （空串，旧版 agent / 未上报心跳）与任意桶兼容——缺数据不卡，与驱动未知不过滤
+    同口径；真混架构时创建期的 validate_same_cpu_arch 兜底拒绝。
+    ``req.allow_mixed_cpu_arch``（force 部署）：放开同架构约束照旧单池组合。
+    """
     eligible, capacity = _eligible_picks(scoped, req)
     if len(eligible) < req.nnodes:
         return [], capacity
-    # 截断下限抬到 nnodes：池上限低于要求的节点数时 combinations 恒空，跨机部署会
-    # 永远排不开（报「在线卡不足」而集群其实放得下）
-    pool = sorted(eligible)[: max(_MAX_COMBO_POOL, req.nnodes)]
-    out: list[Placement] = [
-        Placement(shards=tuple((nid, eligible[nid]) for nid in combo), ladder="cross_node")
-        for combo in combinations(pool, req.nnodes)
-    ]
+    # 分桶：force（allow_mixed_cpu_arch）= 单池不分；全部未上报 = 单桶照旧组合；
+    # 有已上报的桶则各自并入未知节点（未上报可入任一组——缺数据不卡，与驱动未知
+    # 不过滤同口径）
+    if req.allow_mixed_cpu_arch:
+        buckets: list[list[str]] = [sorted(eligible)]
+    else:
+        by_cpu: dict[str, list[str]] = defaultdict(list)
+        unknown: list[str] = []
+        for nid in eligible:
+            cpu = getattr(eligible[nid][0], "cpu_arch", "") or ""
+            if cpu:
+                by_cpu[cpu].append(nid)
+            else:
+                unknown.append(nid)
+        if by_cpu:
+            buckets = [sorted(nids + unknown) for nids in by_cpu.values()]
+        else:
+            buckets = [sorted(unknown)]
+    out: list[Placement] = []
+    for nids in buckets:
+        if len(nids) < req.nnodes:
+            continue
+        # 桶内已排序；截断下限抬到 nnodes：池上限低于要求的节点数时 combinations 恒空，
+        # 跨机部署会永远排不开（报「在线卡不足」而集群其实放得下）
+        pool = nids[: max(_MAX_COMBO_POOL, req.nnodes)]
+        out.extend(
+            Placement(shards=tuple((nid, eligible[nid]) for nid in combo), ladder="cross_node")
+            for combo in combinations(pool, req.nnodes)
+        )
     return out, capacity
 
 
@@ -381,6 +417,19 @@ def _manual_placement(scoped: dict[str, list], req: EngineRequest, vetoes: dict[
             f"指定 GPU 无法满足节点分布：需 {req.nnodes} 个节点各 {req.need_per_node} 张"
             f"（排除已占节点后实际落在 {len(by_node)} 个节点）"
         )
+    # 同一引擎实例的分片还须同 CPU 架构（跨机共用镜像 ref 与通信栈）。未上报的节点
+    # 不参与拦截（与跨机组合的兼容口径一致）；已知架构 ≥2 即拒，force 放开
+    if not req.allow_mixed_cpu_arch:
+        known_archs: set[str] = set()
+        for cards in by_node.values():
+            cpu = getattr(cards[0], "cpu_arch", "") or ""
+            if cpu:
+                known_archs.add(cpu)
+        if len(known_archs) > 1:
+            raise LLMPodValidationError(
+                f"跨机手选的节点 CPU 架构不一致（{'/'.join(sorted(known_archs))}），"
+                "同一实例的分片无法共用镜像；请改选同架构节点的卡或强制部署"
+            )
     for nid in sorted(by_node):
         on_node = sorted(by_node[nid], key=lambda g: (getattr(g, "index", 0), getattr(g, "uuid", "")))
         if len(on_node) < req.need_per_node:
@@ -440,6 +489,35 @@ def place_engine(
     raise first_err
 
 
+def _cpu_arch_mix_note(scoped: dict[str, list], req: EngineRequest) -> str | None:
+    """跨机组合落空时归因「同 CPU 架构节点不足」的人读说明；其它原因落空 → None。
+
+    粗归因，只按节点数判：口径取 scoped（已过 Filter 链、未做显存档筛选的节点）——
+    连不含显存档的节点集都凑不出同架构 nnodes 个节点才归因混架构；逐节点卡数不足
+    落空时不会走到这里（单一架构早退）。
+    """
+    archs: dict[str, int] = {}
+    unknown = 0
+    for nid, cards in scoped.items():
+        if nid in req.exclude_nodes:
+            continue
+        # run_filters 只在有卡通过时建节点，cards 恒非空；防直调路径空列表的兜底
+        cpu = ""
+        if cards:
+            cpu = getattr(cards[0], "cpu_arch", "") or ""
+        if cpu:
+            archs[cpu] = archs.get(cpu, 0) + 1
+        else:
+            unknown += 1
+    if len(archs) < 2 or max(archs.values()) + unknown >= req.nnodes:
+        return None  # 已知架构不足两个（凑不齐另有原因），或某架构本可凑齐
+    names = "/".join(sorted(archs))
+    return (
+        f"；在线节点横跨 CPU 架构（{names}），同一实例的跨机分片须同架构——"
+        "请补同架构节点、缩小 nnodes，或强制部署"
+    )
+
+
 def _place_once(gpu_pool, req: EngineRequest, filters: list[CardFilter], arch_label: str) -> Placement:
     """单 arch 口径跑一遍 Filter → 候选阶梯 → Scorer 裁决（place_engine 的单次尝试）。"""
     passed, rejections, reasons = run_filters(gpu_pool, filters)
@@ -477,12 +555,16 @@ def _place_once(gpu_pool, req: EngineRequest, filters: list[CardFilter], arch_la
         candidates, capacity = _cross_node_candidates(scoped, req)
         ladder = "cross_node"
     if not candidates:
+        mix_note = (
+            _cpu_arch_mix_note(scoped, req) if req.nnodes > 1 and not req.allow_mixed_cpu_arch else None
+        )
         raise PipelineRejection(
             _reject_message(req, rejections, ladder, arch_label),
             rejections=rejections,
             ladder=ladder,
-            user_reason=_user_reject_reason(req, rejections, reasons, arch_label),
+            user_reason=_user_reject_reason(req, rejections, reasons, arch_label) + (mix_note or ""),
             reasons=reasons,
+            cpu_arch_note=mix_note,
         )
 
     # 裁决：策略链求和 + 卡痕迹降权（同分按节点字典序最小，确定性）。链只建一次——

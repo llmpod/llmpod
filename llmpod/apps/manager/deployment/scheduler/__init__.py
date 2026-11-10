@@ -11,7 +11,12 @@ from llmpod.apps.manager.deployment.scheduler.topology import (
     validate_topology,
 )
 from llmpod.apps.manager.deployment.scheduler.gpu import GpuScheduler
-from llmpod.apps.manager.deployment.scheduler.rank import RankResolver, subnet_warning, validate_same_subnet
+from llmpod.apps.manager.deployment.scheduler.rank import (
+    RankResolver,
+    subnet_warning,
+    validate_same_cpu_arch,
+    validate_same_subnet,
+)
 
 __all__ = [
     "expand_standard",
@@ -20,5 +25,6 @@ __all__ = [
     "GpuScheduler",
     "RankResolver",
     "validate_same_subnet",
+    "validate_same_cpu_arch",
     "subnet_warning",
 ]

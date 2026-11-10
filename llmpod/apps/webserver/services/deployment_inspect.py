@@ -9,7 +9,7 @@
     _load_gpu_pool      卡池装配 + 逐卡评估 + 占用/现状合并
     _derive_tp          未显式 tp 时按可选卡推导并回写拓扑（必须先于 _solve_lane）
     _solve_lane         CPU/混合部署逐层求解（复用 node_resources，不重查）
-    _warn_cross_subnet  多机跨子网提醒
+    _warn_multinode_risks 多机风险提醒（跨子网 NCCL / 显式选节点集横跨 CPU 架构）
     _validate_selection 手选卡/选节点校验（含容量预检三分支）
     _build_node_support 逐节点可选性
     _resolve_target_arch 目标 arch/型号/驱动（dry-run 与推荐共用）
@@ -204,8 +204,8 @@ async def run_inspect(db: AsyncSession, request: InspectDeploymentRequest) -> In
     # CPU / 混合部署逐层求解：纯 CPU 按节点内存判、显存档逐卡双闸复核；产出 memory / memory_by_node（node_support 直接复用不重算）；阻断：指定节点不在线 / 结构非法 / 内存不足 / 显存档装不下
     if c.cpu_lane_ok:
         await _solve_lane(db, c)
-    # 多机跨子网 NCCL 可达性：仅提醒不阻断（create 第一遍硬拒，force 可绕）
-    await _warn_cross_subnet(db, c)
+    # 多机风险提醒（跨子网 NCCL / 选节点集横跨 CPU 架构）：仅提醒不阻断（create 第一遍硬拒，force 可绕）
+    await _warn_multinode_risks(db, c)
     # 手选卡 / 选节点校验（结构规则与 create assign 共用同一对校验函数）+ 手选容量三分支预检（装不下模型 > 平台内占用 > 平台外进程；权威硬拒在 create）
     _validate_selection(c)
     # 逐节点可选性（引擎 + 镜像视角，前端节点选择禁用用）；直接复用 _solve_lane 的逐节点表；本段无 issue
@@ -297,6 +297,7 @@ async def _pick_cluster(db: AsyncSession, c: InspectState) -> None:
         )
         if not node_rows:
             continue
+        node_cpu_archs = {n.id: (n.cpu_arch or "") for n in node_rows}
         nids = [n.id for n in node_rows]
         gpu_rows = list(
             (await db.execute(select(Gpu).where(Gpu.node_id.in_(nids), Gpu.status == GpuStatus.ONLINE))).scalars()
@@ -313,6 +314,7 @@ async def _pick_cluster(db: AsyncSession, c: InspectState) -> None:
                     arch=g.arch or "",
                     total_vram_gb=g.total_vram_gb or 0.0,
                     available_vram_gb=max(0.0, (g.total_vram_gb or 0.0) - used),
+                    cpu_arch=node_cpu_archs.get(g.node_id, ""),
                 )
             )
         cluster_pools[cl.id] = entries
@@ -449,6 +451,7 @@ async def _load_gpu_pool(db: AsyncSession, c: InspectState) -> None:
     if not nids:
         return
     # 不按 Gpu.status 过滤：离线/stale 卡也要返回（前端灰化展示）；节点仍限在线
+    node_cpu_archs = {n.id: (n.cpu_arch or "") for n in c.node_rows}
     raw: list[ClusterGpuInfo] = []
     for g in (await db.execute(select(Gpu).where(Gpu.node_id.in_(nids)))).scalars():
         used = c.realtime.get(g.uuid, 0.0)
@@ -459,6 +462,7 @@ async def _load_gpu_pool(db: AsyncSession, c: InspectState) -> None:
                 index=g.index,
                 status=g.status,
                 arch=g.arch or "",
+                cpu_arch=node_cpu_archs.get(g.node_id, ""),
                 name=g.name or "",
                 driver_version=g.driver_version,
                 total_vram_gb=g.total_vram_gb or 0.0,
@@ -718,10 +722,13 @@ async def _solve_lane(db: AsyncSession, c: InspectState) -> None:
         c.fail("目标节点内存装不下纯 CPU 部署（权重 + KV + 系统保留超过可用内存）")
 
 
-async def _warn_cross_subnet(db: AsyncSession, c: InspectState) -> None:
-    """多机跨子网提醒（仅 warning 不阻断；create 第一遍硬拒，force 可绕）。
+async def _warn_multinode_risks(db: AsyncSession, c: InspectState) -> None:
+    """多机风险提醒（仅 warning 不阻断；create 第一遍硬拒，force 可绕）。
 
-    可能追加 warning：跨 /N 子网 NCCL 可达性风险。
+    可能追加 warning：跨 /N 子网 NCCL 可达性风险（候选集口径）、显式选节点集横跨
+    CPU 架构（调度将只在同架构节点间组合——信息性说明，不拦）。手选卡的混架构由
+    _validate_selection 出阻断级 issue，此处不重复；自动调度不提——内核本就只出
+    同架构组合，真凑不齐时推荐调度段的归因 issue 会说明原因。
     """
     if not (
         c.request.engine
@@ -745,6 +752,15 @@ async def _warn_cross_subnet(db: AsyncSession, c: InspectState) -> None:
         warn = subnet_warning(node_ips, settings.multinode_same_subnet_prefix)
         if warn:
             c.warn(warn)
+        # CPU 架构提醒只对显式选节点集发（用户圈定的范围会被静默收窄，值得告知）；
+        # 架构取节点行（与 create 校验同数据源），未上报不提
+        if sel and sel.node_ids:
+            picked_archs = {n.cpu_arch for n in c.node_rows if n.id in candidate_nodes and n.cpu_arch}
+            if len(picked_archs) > 1:
+                c.warn(
+                    f"所选节点横跨不同 CPU 架构（{'/'.join(sorted(picked_archs))}），"
+                    "调度将只在同架构节点间组合分片"
+                )
 
 
 def _validate_selection(c: InspectState) -> None:

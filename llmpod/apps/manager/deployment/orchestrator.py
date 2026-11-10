@@ -34,12 +34,14 @@ from llmpod.apps.manager.deployment.scheduler import (
     GpuScheduler,
     RankResolver,
     validate_cpu_lane,
+    validate_same_cpu_arch,
     validate_same_subnet,
 )
 from llmpod.apps.manager.model_source.inference import WEIGHT_EXTS
 from llmpod.apps.manager.deployment.scheduler.topology import cpu_lane_pins, unit_parallel
 from llmpod.apps.manager.deployment.scheduler.gpu import (
     card_reserve,
+    group_engines,
     infer_selection_arch,
     physical_fits,
     plan_cpu_placement,
@@ -809,6 +811,14 @@ class DeploymentOrchestrator:
         # force=True 跳过（启发式，最终由 NCCL rendezvous 兜底）
         if not config.force and any(max(1, int(i.nnodes or 1)) > 1 for i in instances):
             validate_same_subnet(node_ips, settings.multinode_same_subnet_prefix)
+            # 跨机分片兜底：同一引擎实例（group_engines 同键分组）的各分片节点还须同
+            # CPU 架构——内核已按架构分组，这里按实例聚合复核（多副本份间允许异架构；
+            # 单机引擎只占一个节点，天然不触发）；force 可绕——多架构镜像等特殊环境
+            # 由用户自担
+            node_cpu_archs = await deployment_service.load_node_cpu_archs(db, node_ids)
+            for engine_instances in group_engines(instances).values():
+                engine_nodes = {i.assigned_node for i in engine_instances if i.assigned_node}
+                validate_same_cpu_arch({nid: node_cpu_archs.get(nid, "") for nid in engine_nodes})
         RankResolver.fill(
             instances,
             default_master_port=adapter.default_master_port,

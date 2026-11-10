@@ -415,6 +415,19 @@ def _probe_structural(c, rec_instances, rec_plan) -> bool:
     return False
 
 
+def _node_set_arch_blocked(c: "InspectState", cluster_gpus) -> bool:
+    """跨机请求 + 显式选节点集横跨 ≥2 个已上报 CPU 架构（放不下的真因是架构组合，
+    阻断 issue 已由 _validate_selection 给出）→ True，容量归因让路。
+    单机请求混架构无影响（各份独立落一个节点），不参与判定。"""
+    if max(1, int(c.topo.nnodes or 1)) <= 1:
+        return False
+    node_ids = set(c.request.gpu_selector.node_ids or []) if c.request.gpu_selector else set()
+    if not node_ids:
+        return False
+    archs = {cg.cpu_arch for cg in cluster_gpus if cg.node_id in node_ids and cg.cpu_arch}
+    return len(archs) > 1
+
+
 def _attribute_empty_placement(c, free_pool, rec_uuids, req_vram, structural_failed) -> None:
     """有可选卡但当前 tp 选不出 → 放不下的原因分流，避免误导性提示：
 
@@ -448,6 +461,7 @@ def _attribute_empty_placement(c, free_pool, rec_uuids, req_vram, structural_fai
         and not resource.is_cpu_only(c.memory)
         and not cpu_lane_request
         and not structural_failed  # 结构性已经报过原因，不再叠一条容量口径
+        and not _node_set_arch_blocked(c, c.cluster_gpus)  # 选节点集混架构：真因已报，容量归因让路
     ):
         return
     tp = max(1, int(topo.tp or 1))

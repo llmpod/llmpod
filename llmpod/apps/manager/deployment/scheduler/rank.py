@@ -88,3 +88,19 @@ def subnet_warning(node_ips: dict[str, str], prefix: int = 24) -> str | None:
     return (
         f"多机节点分布在 {len(nets)} 个 /{prefix} 子网 {sorted(nets)}，NCCL 可能不可达（跨子网部署需 force 才能提交）"
     )
+
+
+def validate_same_cpu_arch(node_archs: dict[str, str]) -> None:
+    """多机部署校验：同一引擎实例各分片节点的 CPU 架构须一致（amd64/arm64 不混跑）。
+
+    引擎实例共用一个镜像 ref、跑同一套分布式通信栈：跨机分片横跨 CPU 架构时镜像最多
+    只有一侧能拉起来，失败被推迟到拉镜像/容器启动才暴露。未上报（空串）不在此拦——
+    缺数据硬拦会把刚注册、首次心跳前的节点全部判死；由调度内核的同架构分组尽量避开。
+    """
+    archs = {a for a in node_archs.values() if a}
+    if len(archs) > 1:
+        detail = "、".join(f"{nid}: {a or '未上报'}" for nid, a in sorted(node_archs.items()))
+        raise LLMPodValidationError(
+            f"跨机分片被调度到不同 CPU 架构的节点（{'/'.join(sorted(archs))}）：{detail}；"
+            "请改选同架构节点或强制部署"
+        )

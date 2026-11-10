@@ -60,6 +60,7 @@ class ClusterGpuInfo(BaseModel):
     node_id: str
     index: int
     arch: str
+    cpu_arch: str = Field("", description="所在节点 CPU 架构，如 x86_64 / aarch64（空 = 未上报）")
     name: str = Field("", description="GPU 型号（catalog gpu_model glob 匹配用）")
     driver_version: str | None = Field(None, description="驱动/CANN 版本（catalog 区间匹配用）")
     total_vram_gb: float

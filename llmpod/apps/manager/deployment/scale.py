@@ -27,7 +27,6 @@ import asyncio
 import logging
 import time
 
-
 from sqlalchemy import select
 
 from llmpod.apps.manager import dispatch
@@ -48,8 +47,8 @@ from llmpod.apps.manager.deployment.orchestrator import (
     get_orchestrator,
 )
 from llmpod.apps.manager.deployment.schemas import DeploymentConfig, InstanceSpec, Topology, set_topology_copies
-from llmpod.apps.manager.deployment.scheduler import validate_same_subnet
-from llmpod.apps.manager.deployment.scheduler.gpu import GpuScheduler, infer_selection_arch, plan_placement
+from llmpod.apps.manager.deployment.scheduler import validate_same_cpu_arch, validate_same_subnet
+from llmpod.apps.manager.deployment.scheduler.gpu import GpuScheduler, group_engines, infer_selection_arch, plan_placement
 from llmpod.apps.manager.deployment.scheduler.pipeline import default_filters, run_filters
 from llmpod.apps.manager.deployment.scheduler.rank import RankResolver
 from llmpod.apps.manager.deployment.scheduler.topology import expand_standard
@@ -544,6 +543,10 @@ async def _scale_up(deployment_id: str, target: int, trigger: str) -> None:
             prefs = await deployment_service.placement_prefs(
                 db, model_id=model.id, pool=gpu_pool, arch_order=arch_candidates
             )
+            # 扩容不走 assign 的 force 通道（容量照判），混架构豁免经 prefs 传入——
+            # 与下方 guard 的 `not config.force` 同语义：force 部署扩容允许混架构分片
+            if config.force:
+                prefs = prefs.model_copy(update={"allow_mixed_cpu_arch": True})
             assignments = await GpuScheduler(orch.ledger).assign(
                 deployment_id,
                 insts,
@@ -571,6 +574,12 @@ async def _scale_up(deployment_id: str, target: int, trigger: str) -> None:
             node_ips = await deployment_service.load_node_ips(db, node_ids)
             if not config.force and any(max(1, int(i.nnodes or 1)) > 1 for i in insts):
                 validate_same_subnet(node_ips, settings.multinode_same_subnet_prefix)
+                # 跨机分片兜底：同一引擎实例（group_engines 同键分组）的分片节点须同
+                # CPU 架构，与 _plan 同口径；force 可绕
+                node_cpu_archs = await deployment_service.load_node_cpu_archs(db, node_ids)
+                for engine_instances in group_engines(insts).values():
+                    engine_nodes = {i.assigned_node for i in engine_instances if i.assigned_node}
+                    validate_same_cpu_arch({nid: node_cpu_archs.get(nid, "") for nid in engine_nodes})
             RankResolver.fill(
                 insts,
                 default_master_port=adapter.default_master_port,
