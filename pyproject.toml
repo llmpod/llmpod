@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "llmpod"
 # 与 llmpod/__init__.py 的 __version__ 保持一致（运行时读后者；发版用
 # make bump-version V=x.y.z 一条命令同步两处 + 刷新 uv.lock）
-version = "26.10.21"
+version = "26.11.11-beta"
 description = "AI Inference Gateway Platform"
 license = "AGPL-3.0-only"
 requires-python = ">=3.12"
