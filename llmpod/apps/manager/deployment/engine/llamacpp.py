@@ -62,6 +62,15 @@ class LlamaCppAdapter(EngineAdapter):
     # ``--n-gpu-layers`` / ``--no-kv-offload`` **不在此列**——系统只给两端（0=纯 CPU、999=全量
     # 上卡），KV 落点也由引擎默认（随权重）；要混合层数或 KV 下沉，用户自己在部署参数里加。
     protected_flags = ["--model", "--host", "--port", "--alias"]
+
+    # 完整启动命令回显时换成占位符的参数（部署期逐实例回填）
+    command_placeholder_flags = {
+        "--model": "{model_path}",
+        "--port": "{port}",
+        "--alias": "{served_model_name}",
+    }
+    command_prefix = ["llama-server"]
+
     type_to_task = {
         ModelType.LLM: "generate",
         ModelType.MULTIMODAL: "generate",  # VLM 走 chat/completions（图像输入），与 LLM 同任务

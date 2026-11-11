@@ -56,6 +56,19 @@ class SGLangAdapter(EngineAdapter):
         "--node-rank",
         "--dist-init-addr",
     ]
+
+    # 完整启动命令回显时换成占位符的参数（部署期逐实例回填）
+    command_placeholder_flags = {
+        "--model-path": "{model_path}",
+        "--served-model-name": "{served_model_name}",
+        "--port": "{port}",
+        "--tp-size": "{tp}",
+        "--pp-size": "{pp}",
+        "--nnodes": "{nnodes}",
+        "--node-rank": "{node_rank}",
+        "--dist-init-addr": "{master_addr}:{master_port}",
+    }
+    command_prefix = ["python3", "-m", "sglang.launch_server"]
     # 推荐自由参数（均非 protected）。--mem-fraction-static 不在 protected：它是用户熟悉的显存占比
     # 取值依据，可在前端 args 预览直接改（账本预留经 memory_utilization_from 跟随其值）。
     # chip 只保证「能拼出 flag」——实际可用性由镜像 tag 的引擎版本决定（slru/priority 等为

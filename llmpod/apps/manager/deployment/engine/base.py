@@ -18,6 +18,7 @@ from llmpod.apps.manager.deployment.schemas import (
     InstanceSpec,
     Topology,
 )
+from llmpod.apps.manager.deployment.command import command_argv, join_command
 from llmpod.apps.manager.deployment import parallel
 from llmpod.apps.manager.deployment import resource
 from llmpod.apps.manager.deployment.resource_ledger import DEFAULT_GPU_MEMORY_UTILIZATION
@@ -195,6 +196,16 @@ class EngineAdapter(ABC):
 
     # None=沿用镜像 ENTRYPOINT；SGLang 等无 ENTRYPOINT 的必须显式传
     entrypoint: list[str] | None = None
+
+    # 完整命令模板回显时，这些 flag 的值替换成占位符（用户可直接编辑；部署期逐实例回填）。
+    # 键是 flag 名，值是占位符写法（如 ``--port`` → ``{port}``）。
+    command_placeholder_flags: dict[str, str] = {}
+    # 完整命令的默认入口前缀（容器实际执行的程序/子命令）。镜像 ENTRYPOINT 只是
+    # bootstrap 脚本时（如 CANN 镜像 source 环境后 ``exec "$@"``），前缀已在 args 里，
+    # 由子类在 split_command 里自行处理。
+    command_prefix: list[str] = []
+    # 多机部署时完整命令必须包含的引擎占位符（如 vLLM worker 的 ``{headless}``）。
+    multinode_command_placeholders: list[str] = []
 
     # 多机分片启动顺序（reconciler 消费，不硬编码）：head_first（默认——head 当
     # rendezvous 服务端，workers 连它）| workers_first（特殊引擎用：head 启动即注册
@@ -560,18 +571,31 @@ class EngineAdapter(ABC):
             for i, unit in enumerate(topology.per_copy_units())
         }
 
-    def raw_memory_utilization(self, engine_params: dict | None) -> float | None:
-        """用户引擎 flag 的原始显存占比（未钳制）：未设 / 非法 / 越界返回 None。"""
-        return parse_memory_utilization((engine_params or {}).get("extra_args") or [], self.memory_utilization_flag)
+    def raw_memory_utilization(self, engine_params: dict | None, command: str | None = None) -> float | None:
+        """用户引擎 flag 的原始显存占比（未钳制）：未设 / 非法 / 越界返回 None。
 
-    def memory_utilization_from(self, engine_params: dict | None) -> float:
+        ``command`` 是完整启动命令模板（``DeploymentConfig.command``）：填了它之后真正
+        执行的参数在命令里，账本必须读同一份来源，否则「引擎按 0.5 跑、账本按 0.9 记」。
+        """
+        args = list((engine_params or {}).get("extra_args") or [])
+        if command:
+            try:
+                # 命令模式下真正执行的是命令本身，extra_args 不参与，账本不能读它
+                args = command_argv(command)
+            except LLMPodValidationError:
+                # 命令本身解析失败由入口校验报错；这里按未设占比回退默认，避免预检
+                # 在错误提示之前先抛一个不相干的 500
+                args = []
+        return parse_memory_utilization(args, self.memory_utilization_flag)
+
+    def memory_utilization_from(self, engine_params: dict | None, command: str | None = None) -> float:
         """生效显存占比 = 用户引擎 flag（如 ``--gpu-memory-utilization``），未设则引擎默认。
 
         引擎自己的显存 flag 是唯一定义处（vLLM ``--gpu-memory-utilization`` /
         SGLang ``--mem-fraction-static``）；账本预留与注入 flag 均取它，不再另设系统字段。
         越界/非法值按未提供处理（回退默认）。
         """
-        parsed = self.raw_memory_utilization(engine_params)
+        parsed = self.raw_memory_utilization(engine_params, command)
         if parsed is not None:
             # 账本预留上限 = 引擎默认占比（0.9，留 10% 给 CUDA context/framework）。用户显式
             # 调高（如 0.95）会让 GpuScheduler.card_fits 永远算不过（需 util×total > 账本容量
@@ -579,7 +603,12 @@ class EngineAdapter(ABC):
             return min(parsed, self.default_gpu_memory_utilization)
         return self.default_gpu_memory_utilization
 
-    def effective_memory_utilization(self, engine_params: dict | None, stamped_values: list[float | None]) -> float:
+    def effective_memory_utilization(
+        self,
+        engine_params: dict | None,
+        stamped_values: list[float | None],
+        command: str | None = None,
+    ) -> float:
         """存量实例在场时的生效显存占比（扩缩/重启预留与预览共用的单一口径）。
 
         取值序：config 引擎 flag（经 :meth:`memory_utilization_from`，未设给引擎默认）
@@ -589,7 +618,7 @@ class EngineAdapter(ABC):
         别的部署。典型来源：规划期落盘、旧版 ``gpu_selector.vram_percent`` 历史配置。
         存量值有分歧（多副本各份不同）时维持 config 口径，不擅自选边。
         """
-        util = self.memory_utilization_from(engine_params)
+        util = self.memory_utilization_from(engine_params, command)
         stamped = {u for u in stamped_values if u}
         if len(stamped) == 1:
             util = next(iter(stamped))
@@ -688,6 +717,48 @@ class EngineAdapter(ABC):
         user_env = (engine_params or {}).get("env") or {}
         return {**image_env, **system_env, **user_env}
 
+    # ---- 完整启动命令（DeploymentConfig.command）----
+
+    def command_placeholder_values(self, inst: InstanceSpec) -> dict[str, str]:
+        """本引擎特有的完整命令占位符取值；通用占位符由 command.render_command_template 给。"""
+        return {}
+
+    def split_command(self, tokens: list[str], arch: str) -> tuple[list[str] | None, list[str]]:
+        """把用户的完整命令拆成 ``(容器入口, 启动参数)``。
+
+        命令仍以本引擎默认入口开头时，入口沿用镜像/适配器缺省（保留镜像自带的环境
+        初始化），剩余 token 作为参数；否则整条命令作为入口，参数为空（用户完全接管
+        进程，镜像 ENTRYPOINT 与 CMD 都不再执行）。镜像入口只是 bootstrap 脚本的引擎
+        覆写本方法，把整条命令继续作为 args。
+        """
+        prefix = self.command_prefix
+        starts_with_prefix = bool(prefix) and tokens[: len(prefix)] == prefix
+        if not starts_with_prefix:
+            return list(tokens), []
+        return self.entrypoint, list(tokens[len(prefix) :])
+
+    def command_template(self, tokens: list[str], inst: InstanceSpec) -> str:
+        """把按占位实例生成的 argv 反推成可编辑模板（实例相关值换成占位符）。
+
+        只替换 ``command_placeholder_flags`` 登记的 flag 值；位置参数形式的模型路径
+        （vLLM-Ascend 的 ``vllm serve <路径>``）按整 token 精确匹配替换。
+        """
+        out = list(tokens)
+        for index, token in enumerate(out):
+            if token in self.command_placeholder_flags and index + 1 < len(out):
+                out[index + 1] = self.command_placeholder_flags[token]
+                continue
+            for flag, placeholder in self.command_placeholder_flags.items():
+                if token.startswith(flag + "="):
+                    out[index] = f"{flag}={placeholder}"
+                    break
+        model_path = str(inst.model_path or "")
+        if model_path:
+            for index, token in enumerate(out):
+                if token == model_path:
+                    out[index] = "{model_path}"
+        return join_command(out)
+
 
 # ---- 启动参数三层覆盖（image < system < user）：解析成结构 → 字典合并 → 一次性渲染 ----
 def _flag_name(token: str) -> str:
@@ -709,6 +780,17 @@ def has_flag(extra_args, flag: str) -> bool:
     return any(_flag_name(str(a)) == flag for a in extra_args or ())
 
 
+def trust_remote_code_arg(adapter: "EngineAdapter", model, args) -> str | None:
+    """模型需要信任远程代码、且给定参数里还没有该 flag 时，返回要补的 flag 名。
+
+    create 自动补 flag、inspect 提示「将自动加」、完整命令模板回显三处共用同一判据。
+    """
+    flag = adapter.trust_remote_code_flag
+    if flag and model.needs_trust_remote_code and not has_flag(args, flag):
+        return flag
+    return None
+
+
 def ensure_trust_remote_code(adapter: "EngineAdapter", model, engine_params: dict) -> dict:
     """模型声明 ``needs_trust_remote_code`` 且引擎有对应 flag 时，给 extra_args 补上它。
 
@@ -717,11 +799,9 @@ def ensure_trust_remote_code(adapter: "EngineAdapter", model, engine_params: dic
     部署不出去。模型行上的声明是 inspect 从 config 落库、且管理端可显式改写的
     授权信号——创建部署时据此落实；用户已在 extra_args 给出同名 flag 时不重复加。
     """
-    flag = adapter.trust_remote_code_flag
-    if not flag or not model.needs_trust_remote_code:
-        return engine_params
     extra = [str(a) for a in (engine_params or {}).get("extra_args") or []]
-    if has_flag(extra, flag):
+    flag = trust_remote_code_arg(adapter, model, extra)
+    if flag is None:
         return engine_params
     return {**(engine_params or {}), "extra_args": extra + [flag]}
 

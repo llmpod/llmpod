@@ -57,6 +57,9 @@ class EngineOut(BaseModel):
     protected_flags: list[str] = Field(
         default_factory=list, description="系统保留的启动参数，extra_args 中的同名参数会被忽略"
     )
+    memory_utilization_flag: str = Field(
+        "", description="本引擎的显存占比 flag（如 --gpu-memory-utilization）；空=引擎无此 flag"
+    )
     param_suggestions: list[dict] = Field(
         default_factory=list, description="推荐的部署参数，包含 name、hint、default 和 choices"
     )
@@ -134,6 +137,7 @@ async def list_engines(
                     supports_multinode=a.supports_multinode_at(image_tag),
                     deployable=a.deployable,
                     protected_flags=list(a.protected_flags),
+                    memory_utilization_flag=a.memory_utilization_flag,
                     param_suggestions=[p.model_dump() for p in a.param_suggestions],
                     kv_cache_dtype_options=[o.model_dump() for o in a.kv_cache_dtype_options],
                     supports_model=None if verdict is None else verdict.supported,

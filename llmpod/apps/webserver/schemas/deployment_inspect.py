@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from llmpod.apps.manager.deployment.command import COMMAND_PLACEHOLDER_DOC
 from llmpod.apps.manager.deployment.resource import MemoryEstimate
 from llmpod.apps.manager.deployment.schemas import (
     CardOccupant,
@@ -49,6 +50,14 @@ class InspectDeploymentRequest(CpuLaneConfig):
     image: str | None = Field(None, description="镜像全量覆盖（escape-hatch，覆盖 catalog 与 adapter 默认）")
     image_tag: str | None = Field(None, description="镜像 tag（= catalog engine_version 维度）")
     model_path: str | None = Field(None, description="模型权重路径（覆盖 canonical 路径）")
+    command: str | None = Field(
+        None,
+        description=(
+            "完整启动命令模板（用户编辑后回传做校验与回显）。占位符由平台按实例回填："
+            + COMMAND_PLACEHOLDER_DOC
+            + "；{port} 必填"
+        ),
+    )
 
 
 class ClusterGpuInfo(BaseModel):
@@ -137,6 +146,13 @@ class ResolvedSpec(BaseModel):
         description="三层选中最终镜像（config.image > catalog entry）；None=未解析出（如驱动/版本不兼容，见 issues）",
     )
     args: list[str] = Field(default_factory=list, description="三层覆盖后最终启动参数（image<system<user）")
+    command: str | None = Field(
+        None,
+        description=(
+            "完整启动命令模板：用户填了原样回显，未填则由平台按引擎默认生成（命令以引擎默认入口开头）。"
+            "{...} 为部署期按实例回填的占位符，用户可直接编辑后随 create 提交"
+        ),
+    )
     env: dict[str, str] = Field(
         default_factory=dict,
         description="用户自定义环境变量（engine_params.env 原样回显）——系统/镜像层注入项不回显，前端预填后回传不会把系统值固化成用户层",

@@ -68,6 +68,16 @@ class TestSpecToRunKwargs:
         kw = _spec_to_run_kwargs(_spec(args=["serve", "--port", "8000"]))
         assert kw["command"] == ["serve", "--port", "8000"]
 
+    def test_empty_args_clears_image_cmd(self):
+        """完整命令直接 exec 时 args=[] 必须显式下发 command=[]：不传 command 时
+        Docker 会把镜像自带的 CMD 接到入口后面。"""
+        kw = _spec_to_run_kwargs(_spec(entrypoint=["myrun", "xxxx"], args=[]))
+        assert kw["command"] == []
+
+    def test_args_none_leaves_command_unset(self):
+        kw = _spec_to_run_kwargs(_spec())
+        assert "command" not in kw
+
     def test_entrypoint(self):
         kw = _spec_to_run_kwargs(_spec(entrypoint=["vllm", "serve"]))
         assert kw["entrypoint"] == ["vllm", "serve"]

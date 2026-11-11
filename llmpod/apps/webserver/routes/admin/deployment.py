@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from llmpod.apps.manager.deployment import resource
+from llmpod.apps.manager.deployment.command import validate_command_for_topology
 from llmpod.apps.manager.deployment.feasibility import assess_feasibility
 from llmpod.apps.manager.deployment.schemas import DeploymentConfig
 from llmpod.apps.webserver.auth.deps import get_current_user, require_permission
@@ -206,6 +207,10 @@ async def create_deployment(
         cpu_lane=request.spec.offload_preference == resource.SCENARIO_CPU_ONLY,
     )
 
+    # 完整启动命令占位符校验（多机/节点数约束按拓扑推导）。命令模式下 extra_args
+    # 不参与执行，也不再为它报错——用户填了就按命令跑，多余参数静默忽略。
+    validate_command_for_topology(request.spec.command, request.spec.topology, adapter)
+
     # 手选 GPU 与 CPU 部署互斥（手选即固定显存部署）。判据用 cpu_lane_requested
     # （= allow_cpu 或显式 cpu_only）——只认 allow_cpu 会漏掉「显式 cpu_only + 手选卡」：
     # 该请求被静默接受后调度走纯 CPU 分支，用户手选的卡被丢弃、架构/显存校验也被跳过，
@@ -270,18 +275,20 @@ async def create_deployment(
         except Exception as e:
             log.warning("create_deployment feasibility precheck failed for model %s: %s", request.model_id, e)
 
-    # 模型带自定义代码（auto_map）且引擎有信任 flag → 自动补进 extra_args（引擎缺它必拒启）
+    # 模型带自定义代码（auto_map）且引擎有信任 flag → 自动补进 extra_args（引擎缺它必拒启）。
+    # 完整命令模式下参数已由用户写死，不再补（补了也不会参与执行）。
     from llmpod.apps.manager.deployment.engine.base import ensure_trust_remote_code
 
-    request.spec.engine_params = ensure_trust_remote_code(adapter, model, request.spec.engine_params)
+    if not request.spec.command:
+        request.spec.engine_params = ensure_trust_remote_code(adapter, model, request.spec.engine_params)
 
-    # 引擎参数 overlap 告警（advisory：protected flag 会被参数合并器忽略，不阻塞部署）
-    from llmpod.apps.manager.deployment.assess import check_protected_overlap
+        # 引擎参数 overlap 告警（advisory：protected flag 会被参数合并器忽略，不阻塞部署）
+        from llmpod.apps.manager.deployment.assess import check_protected_overlap
 
-    extra_args = (request.spec.engine_params or {}).get("extra_args")
-    overlap = check_protected_overlap(request.engine, extra_args)
-    if overlap:
-        log.warning("deployment model=%s extra_args 含系统必控 flag 将被忽略: %s", request.model_id, overlap)
+        extra_args = (request.spec.engine_params or {}).get("extra_args")
+        overlap = check_protected_overlap(request.engine, extra_args)
+        if overlap:
+            log.warning("deployment model=%s extra_args 含系统必控 flag 将被忽略: %s", request.model_id, overlap)
 
     # 手选卡占用预检（声明+status-aware）：被别的 active 部署占用、剩余装不下 → 409 带明细。
     # 本部署需占 = 生效显存占比 × total（整卡独占默认 0.9，与调度器 card_reserve 同口径）。
@@ -289,7 +296,7 @@ async def create_deployment(
     # 手选时池已在上方 arch 预检加载（manual_pool），此处复用不再查第二遍
     if sel_uuids:
         try:
-            util = adapter.memory_utilization_from(request.spec.engine_params)
+            util = adapter.memory_utilization_from(request.spec.engine_params, request.spec.command)
             occupancy = await deployment_service.resolve_gpu_occupancy(db, sel_uuids)
             totals = {g.uuid: (g.total_vram_gb or 0.0) for g in manual_pool if g.uuid in sel_uuids}
             conflicts = []

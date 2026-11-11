@@ -190,7 +190,7 @@ async def preview_scale(db, deployment_id: str) -> dict:
     # 生效占比与真实扩容同口径（存量份落盘值优先），预览容量才不会「预览说能扩、
     # 真扩按继承占比判不够」
     util = adapter.effective_memory_utilization(
-        config.engine_params, [(s.spec or {}).get("vram_percent") for s in existing]
+        config.engine_params, [(s.spec or {}).get("vram_percent") for s in existing], config.command
     )
     vram_per_gpu = adapter.vram_per_gpu(model, topo, engine_params=config.engine_params, kv_cache=config.kv_cache)
     arch = infer_selection_arch(gpu_pool, None, adapter.default_arch)
@@ -527,7 +527,7 @@ async def _scale_up(deployment_id: str, target: int, trigger: str) -> None:
             # effective_memory_utilization）——新份与存量份必须同占比，否则引擎实际行为
             # 与账本记账两头分叉
             util = adapter.effective_memory_utilization(
-                config.engine_params, [(s.spec or {}).get("vram_percent") for s in existing_shards]
+                config.engine_params, [(s.spec or {}).get("vram_percent") for s in existing_shards], config.command
             )
             arch = infer_selection_arch(gpu_pool, None, adapter.default_arch)
             # 与 _plan 同三件套：架构回落序（服务得了 + 有镜像）+ 本地性 + 卡痕迹

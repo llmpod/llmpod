@@ -496,3 +496,29 @@ class TestPreviewTopology:
         assert d["preview_topology"] is None
         assert d["deployable"] is True
         assert d["cluster_gpus"]  # 主视图未受影响
+
+
+class TestResolvedCommandTemplate:
+    """完整启动命令：未填时回显带占位符的模板；填了原样回显并做占位符校验。"""
+
+    async def test_generated_template_has_placeholders(self):
+        s = _seed(_M, _node("n1"), _gpu(1, "g1"))
+        d = (await _inspect(s))["data"]
+        command = d["resolved"]["command"]
+        assert command.startswith("vllm serve ")
+        assert "--model {model_path}" in command
+        assert "--served-model-name {served_model_name}" in command
+        assert "--port {port}" in command
+
+    async def test_user_command_echoed(self):
+        s = _seed(_M, _node("n1"), _gpu(1, "g1"))
+        command = "myvllm xxxx --model {model_path} --port {port}"
+        d = (await _inspect(s, command=command))["data"]
+        assert d["resolved"]["command"] == command
+        assert d["issues"] == []
+
+    async def test_invalid_command_reported_as_issue(self):
+        s = _seed(_M, _node("n1"), _gpu(1, "g1"))
+        d = (await _inspect(s, command="myvllm xxxx"))["data"]
+        assert d["deployable"] is False
+        assert any("{port}" in issue for issue in d["issues"])

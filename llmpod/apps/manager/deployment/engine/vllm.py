@@ -87,6 +87,22 @@ class VLLMAdapter(EngineAdapter):
     # 显存占比取值依据，可在前端 args 预览直接改（账本预留经 memory_utilization_from 跟随其值）。
     # chip 只保证「能拼出 flag」——实际可用性由镜像 tag 的引擎版本决定（如 KV 卸载两件套需
     # vLLM ≥0.11，旧镜像要走 LMCache 连接器路线）；Ascend(cann) 路径对 fp8 类特性支持有限。
+
+    # 完整启动命令回显时换成占位符的参数（部署期逐实例回填）
+    command_placeholder_flags = {
+        "--model": "{model_path}",
+        "--served-model-name": "{served_model_name}",
+        "--port": "{port}",
+        "--tensor-parallel-size": "{tp}",
+        "--pipeline-parallel-size": "{pp}",
+        "--nnodes": "{nnodes}",
+        "--node-rank": "{node_rank}",
+        "--master-addr": "{master_addr}",
+        "--master-port": "{master_port}",
+    }
+    command_prefix = ["vllm", "serve"]
+    multinode_command_placeholders = ["headless"]
+
     param_suggestions = [
         ParamSuggestion(name="--trust-remote-code", hint="信任远程代码（自定义模型架构）"),
         ParamSuggestion(name="--quantization", hint="量化方案", choices=["awq", "gptq", "fp8"]),
@@ -486,6 +502,22 @@ class VLLMAdapter(EngineAdapter):
         if known_recent and not is_ascend and not flags & _CUDAGRAPH_FLAGS:
             args += ["--compilation-config", json.dumps({"cudagraph_mode": "FULL_DECODE_ONLY"})]
         return args
+
+    def split_command(self, tokens: list[str], arch: str) -> tuple[list[str] | None, list[str]]:
+        """cann 镜像入口是 bash-source 脚本，``vllm serve`` 须留在 args 里，不剥离前缀。"""
+        if arch == "cann" and tokens[: len(self.command_prefix)] == self.command_prefix:
+            return self.entrypoint, list(tokens)
+        return super().split_command(tokens, arch)
+
+    def command_placeholder_values(self, inst: InstanceSpec) -> dict[str, str]:
+        return {"headless": "--headless" if inst.node_rank > 0 else ""}
+
+    def command_template(self, tokens: list[str], inst: InstanceSpec) -> str:
+        """多机模板补 ``{headless}``：head 渲染为空，worker 渲染成 ``--headless``。"""
+        template = super().command_template(tokens, inst)
+        if inst.nnodes > 1 and "{headless}" not in template:
+            template = f"{template} {{headless}}"
+        return template
 
     def generate_start_args(
         self,

@@ -37,8 +37,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from llmpod.apps.manager.deployment import image_catalog, parallel, resource
 from llmpod.apps.manager.deployment.assess import assess_per_gpu, check_protected_overlap
+from llmpod.apps.manager.deployment.command import validate_command_for_topology
 from llmpod.apps.manager.deployment.engine import get_adapter
-from llmpod.apps.manager.deployment.engine.base import has_flag
+from llmpod.apps.manager.deployment.engine.base import trust_remote_code_arg
 from llmpod.apps.manager.deployment.feasibility import (
     assess_feasibility,
     collect_node_resources,
@@ -243,7 +244,7 @@ def _prepare_baseline(c: InspectState) -> None:
     # 生效显存占比：**只用于回显**「启动命令长什么样」（用户自己填的 flag 属于他的输入，
     # 照旧出现在预览里）。inspect 的一切判定都按平台默认口径算——一张卡只推荐一个部署，
     # 不看用户覆盖：改显存占比是「我知道要共享这张卡」的显式表达，只在 create 落账本时生效。
-    c.util = adapter.memory_utilization_from(c.request.engine_params)
+    c.util = adapter.memory_utilization_from(c.request.engine_params, c.request.command)
     # 生效 KV 精度档（字节数）与模型架构形状：KV 估算的唯一定义处，贯穿推荐/预检/逐卡/推导
     c.kv_dtype_bytes = adapter.kv_cache_dtype_bytes_from(c.request.engine_params)
     c.arch_meta = resource.KVArchMeta.from_model(c.model)
@@ -364,14 +365,13 @@ async def _validate_config(db: AsyncSession, c: InspectState) -> None:
     # 模型带自定义代码（auto_map）→ 引擎要求显式信任才肯加载。创建时已按模型行声明
     # 自动补 flag（见 create 路由 ensure_trust_remote_code），这里只提示安全含义——
     # 信任远程代码等于放行模型仓库里的 Python，用户应知情。
-    trust_flag = adapter.trust_remote_code_flag
-    if trust_flag and model.needs_trust_remote_code:
-        extra_args = (request.engine_params or {}).get("extra_args") or ()
-        if not has_flag(extra_args, trust_flag):
-            c.warn(
-                f"该模型带自定义代码（config auto_map），创建部署时将自动在引擎参数里加 "
-                f"{trust_flag}（模型仓库里的 Python 将在引擎容器内执行，请确认来源可信）"
-            )
+    extra_args = (request.engine_params or {}).get("extra_args") or ()
+    trust_flag = trust_remote_code_arg(adapter, model, extra_args)
+    if trust_flag:
+        c.warn(
+            f"该模型带自定义代码（config auto_map），创建部署时将自动在引擎参数里加 "
+            f"{trust_flag}（模型仓库里的 Python 将在引擎容器内执行，请确认来源可信）"
+        )
     if request.engine and request.topology:
         # 引擎-类别能力闸（与 create 路由同判据）：引擎服务不了该模型类别时 create 必
         # 422，预检不提前说就是「绿灯走完向导、提交才死」
@@ -692,7 +692,7 @@ async def _solve_lane(db: AsyncSession, c: InspectState) -> None:
             # 且物理/账本可用装得下 reserve），不是「need ≤ min(两池)」的单侧比较
             # ——卡被平台外进程占超 (1−util)×total 时，need 装得下池却装不下
             # reserve，单侧比较会给出「预检绿灯、create 报无可用卡」
-            util = adapter.memory_utilization_from(request.engine_params)
+            util = c.util
             lane_gpus = [
                 cg
                 for cg in c.cluster_gpus
@@ -980,7 +980,8 @@ def _dry_run_resolve(c: InspectState) -> None:
         return
     request, adapter, topo = c.request, c.adapter, c.topo
     # 占位 InstanceSpec：不落库、不调度，仅供 assemble_args/assemble_env 三层合并
-    multi_node = max(1, int(topo.nnodes or 1)) > 1
+    unit_nnodes = topo.nnodes_values()
+    multi_node = any(nnodes > 1 for nnodes in unit_nnodes)
     # 层数回显：只在两端（0=纯 CPU / 999=全量上卡），与编排器取解同口径
     lane_fields: dict = {
         "offload_layers": 0 if c.cpu_only else resource.NGL_ALL,
@@ -1031,11 +1032,36 @@ def _dry_run_resolve(c: InspectState) -> None:
     # 适配器在参数组装期也会给结构级硬拒（如 Ascend 不支持 pp>1）——转成 issue
     # 呈现，不让单个引擎规则把整个预检 422 掉（用户改完参数还得能继续预览）
     final_args: list = []
+    assembly_failed = False
     try:
         final_args = adapter.assemble_args(inst, topo, entry, request.engine_params)
     except LLMPodValidationError as e:
         c.fail(str(e))
-    overlap = check_protected_overlap(c.engine, (request.engine_params or {}).get("extra_args"))
+        assembly_failed = True
+    # 完整启动命令：用户填了就校验并原样回显（部署期按实例回填占位符）；未填则把平台
+    # 按占位实例拼出的 argv 反推成模板——实例相关值换成占位符，用户在前端直接编辑。
+    command_template: str | None = None
+    overlap: list[str] = []
+    if request.command:
+        command_template = request.command
+        try:
+            validate_command_for_topology(request.command, topo, adapter)
+        except LLMPodValidationError as e:
+            c.fail(str(e))
+    elif not assembly_failed:
+        # 模型带自定义代码时创建期会自动补信任 flag；模板里也补上，用户原样回传后
+        # 命令模式不会因「跳过自动补齐」而在启动期被引擎拒启（自己删掉则自行承担）。
+        trust_flag = trust_remote_code_arg(adapter, c.model, final_args)
+        if trust_flag:
+            final_args = final_args + [trust_flag]
+        command_prefix = adapter.command_prefix
+        if command_prefix and final_args[: len(command_prefix)] == command_prefix:
+            # cann 镜像把 ``vllm serve`` 放在 args 里，模板不再重复加前缀
+            prefix: list[str] = []
+        else:
+            prefix = command_prefix
+        command_template = adapter.command_template(prefix + final_args, inst)
+        overlap = check_protected_overlap(c.engine, (request.engine_params or {}).get("extra_args"))
     # env 只回显用户自定义项，系统/镜像层注入不回显。前端把 resolved.env 整表预填进
     # 环境变量编辑器、create 时原样回传——回传即升为用户层，系统注入值（按调度到的节点
     # 定稿的 SOCKET_IFNAME、随健康检查联动的 VLLM_ENGINE_READY_TIMEOUT_S 等）会被
@@ -1044,6 +1070,7 @@ def _dry_run_resolve(c: InspectState) -> None:
     c.resolved = ResolvedSpec(
         image=image_ref,
         args=final_args,
+        command=command_template,
         env=user_env,
         protected_overlap=overlap,
         gpu_memory_utilization=c.util,

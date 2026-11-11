@@ -21,6 +21,7 @@ class _FakeAdapter(EngineAdapter):
     supported_features = ["pd"]
     supported_protocols = ["openai"]
     entrypoint = ["fake-serve"]
+    command_prefix = ["fake-serve"]
     # 故意与 vLLM 不同，验证编排器用适配器的值
     default_port = 9000
     default_network_mode = "bridge"
@@ -86,9 +87,54 @@ class TestBuildRunSpecAdapterDefaults:
         assert EngineAdapter.default_protocol is None
 
 
+class TestCommandOverride:
+    """完整启动命令：命令接管后不再拼系统参数；以默认入口开头时保留镜像入口。"""
+
+    def _dep(self, command: str):
+        return SimpleNamespace(
+            deployment_id="dep-x",
+            engine="fake",
+            spec={"topology": {"tp": 1}, "image": "fake/engine:latest", "command": command},
+        )
+
+    def _inst(self) -> InstanceSpec:
+        return InstanceSpec(
+            instance_id="i1", assigned_node="n1", assigned_gpus=[0], model_path="/data/m", port=9000
+        )
+
+    def test_custom_binary_replaces_entrypoint(self, monkeypatch):
+        monkeypatch.setattr(orch_mod, "get_adapter", lambda engine: _FakeAdapter())
+        spec = orch_mod.build_run_spec(self._dep("myrun {model_path} --port {port}"), SimpleNamespace(), self._inst())
+        assert spec.entrypoint == ["myrun", "/data/m", "--port", "9000"]
+        assert spec.args == []
+
+    def test_default_prefix_keeps_image_entrypoint(self, monkeypatch):
+        monkeypatch.setattr(orch_mod, "get_adapter", lambda engine: _FakeAdapter())
+        spec = orch_mod.build_run_spec(self._dep("fake-serve --port {port}"), SimpleNamespace(), self._inst())
+        assert spec.entrypoint == ["fake-serve"]
+        assert spec.args == ["--port", "9000"]
+
+    def test_shell_command_runs_through_bash(self, monkeypatch):
+        monkeypatch.setattr(orch_mod, "get_adapter", lambda engine: _FakeAdapter())
+        spec = orch_mod.build_run_spec(
+            self._dep("fake-serve --port {port} | tee /tmp/x"), SimpleNamespace(), self._inst()
+        )
+        assert spec.entrypoint is not None
+        assert spec.entrypoint[:2] == ["/bin/bash", "-c"]
+        assert spec.args == []
+
+    def test_no_command_keeps_generated_args(self, monkeypatch):
+        monkeypatch.setattr(orch_mod, "get_adapter", lambda engine: _FakeAdapter())
+        dep = SimpleNamespace(
+            deployment_id="dep-x", engine="fake", spec={"topology": {"tp": 1}, "image": "fake/engine:latest"}
+        )
+        spec = orch_mod.build_run_spec(dep, SimpleNamespace(), self._inst())
+        assert spec.entrypoint == ["fake-serve"]
+        assert spec.args == ["--serve"]
+
+
 class TestModelVolumes:
     """模型卷口径：单文件权重挂所在目录（配套件 mmproj/分片随目录进容器）。"""
-
     def test_dir_mounts_itself(self):
         assert orch_mod.model_volumes("/data/models/m-abc") == {"/data/models/m-abc": "/data/models/m-abc"}
 

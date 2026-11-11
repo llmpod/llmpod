@@ -402,7 +402,9 @@ class DockerDeployer(Deployer):
         # entrypoint(list|None) / args[](→command)
         if spec.entrypoint is not None:
             kwargs["entrypoint"] = spec.entrypoint
-        if spec.args:
+        # 显式空表也要下发：完整启动命令直接 exec 时 entrypoint 已含全部 argv，必须把
+        # 镜像自带的 CMD 清掉（不传 command 时 Docker 会把镜像 CMD 接到入口后面）。
+        if spec.args is not None:
             kwargs["command"] = spec.args
 
         # 直传字段

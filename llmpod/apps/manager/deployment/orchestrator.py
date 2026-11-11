@@ -17,6 +17,12 @@ from collections import defaultdict
 from sqlalchemy import select
 
 from llmpod.apps.manager.deployment.category import category_to_path
+from llmpod.apps.manager.deployment.command import (
+    command_argv,
+    command_needs_shell,
+    render_command_template,
+    validate_command_for_topology,
+)
 from llmpod.apps.manager.deployment.engine import get_adapter
 from llmpod.apps.manager.deployment.placement import (
     ModelStagingGate,
@@ -561,7 +567,9 @@ class DeploymentOrchestrator:
         )
         # 生效占比：存量实例 spec 已落盘的 vram_percent 优先于 config 重解（口径见
         # effective_memory_utilization）——重启复用存量实例，账本必须与引擎参数同源
-        util = adapter.effective_memory_utilization(config.engine_params, [i.vram_percent for i in instances])
+        util = adapter.effective_memory_utilization(
+            config.engine_params, [i.vram_percent for i in instances], config.command
+        )
 
         wanted: list[str] = []
         # 逐卡预期 arch：异构多副本各份各的镜像（instance.gpu_arch 已随 assign 逐卡盖章）。
@@ -700,6 +708,8 @@ class DeploymentOrchestrator:
             adapter.validate_parallel(config.topology, architecture=model.architecture, model_type=model.model_type)
         # tp 能否切开模型权重：结构类硬约束，不受 force 影响（路由已 422，此处覆盖直调路径）
         parallel.validate_parallel_shape(config.topology, parallel.shape_for(adapter, model))
+        # 完整启动命令占位符校验（路由已 422，此处覆盖 controller/直调路径）
+        validate_command_for_topology(config.command, config.topology, adapter)
 
         # 幂等守卫：部署已有 Instance 行（重启恢复/控制器重驱动再次进入 _plan）→ 直接复用
         # 持久化的规划结果，不重复调度/预留/建行（调度与 VRAM 预留只允许发生一次）。
@@ -757,7 +767,7 @@ class DeploymentOrchestrator:
             model, config.topology, engine_params=config.engine_params, kv_cache=config.kv_cache
         )
         # 生效显存占比：用户引擎 flag(--gpu-memory-utilization/--mem-fraction-static)，未设则引擎默认
-        util = adapter.memory_utilization_from(config.engine_params)
+        util = adapter.memory_utilization_from(config.engine_params, config.command)
         # 手选卡时按所选卡 arch 推断（选 cann 卡 → cann 部署，解锁 Ascend；否则用默认 arch）
         sel_uuids = config.gpu_selector.gpu_uuids if config.gpu_selector else None
         arch = infer_selection_arch(gpu_pool, sel_uuids, adapter.default_arch)
@@ -1328,16 +1338,30 @@ def build_run_spec(
     # engine_config 默认值兜底（hf_endpoint/nccl_ifname）在 adapter.build_env 内做（唯一定义处），
     # 此处只透传 config.engine_config 原始值；health_timeout_s 由 health_check 合成传入。
     device = adapter.build_device_config(inst, arch)
+    # 完整命令：用户给了就按实例回填占位符后原样执行（平台不再拼参数）；命令仍以引擎
+    # 默认入口开头时拆分回「镜像入口 + 参数」，保留镜像自带的环境初始化（如 CANN 入口）。
+    if config.command:
+        rendered = render_command_template(config.command, inst, adapter)
+        if command_needs_shell(rendered):
+            entrypoint: list[str] | None = ["/bin/bash", "-c", rendered]
+            args: list[str] = []
+        else:
+            entrypoint, args = adapter.split_command(command_argv(rendered), arch)
+    else:
+        entrypoint = adapter.entrypoint
+        args = adapter.assemble_args(inst, config.topology, entry, config.engine_params)
     return DeploySpec(
         image=image_ref,
         name=deployment_container_name(dep.deployment_id, inst.instance_id),
-        entrypoint=adapter.entrypoint,
-        args=adapter.assemble_args(inst, config.topology, entry, config.engine_params),
+        entrypoint=entrypoint,
+        args=args,
         env=adapter.assemble_env(
             inst,
             config.topology,
             config.engine_config,
-            entry,
+            # 完整命令模式下镜像换成了用户自己的：catalog 条目的 env 是给 catalog 镜像配的，
+            # 不再保证适用；系统 env 与用户 env 照常生效
+            None if config.command else entry,
             config.engine_params,
             health_timeout_s=config.health_check.timeout_seconds,
         ),

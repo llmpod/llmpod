@@ -320,3 +320,84 @@ class TestCreateOccupancyPrecheck:
             assert r.status_code == 200
         finally:
             app.dependency_overrides.pop(get_db, None)
+
+
+class TestCreateCommandOverride:
+    """完整启动命令：校验在 create 同步 422；合法命令原样进 spec。"""
+
+    def _session(self) -> FakeSession:
+        session = FakeSession()
+        session.preload(Model(id=1, name="m", model_type="llm", size_gb=1.0))
+        return session
+
+    async def _post(self, client: AsyncClient, session: FakeSession, spec: dict):
+        async def _fake_db() -> AsyncIterator[FakeSession]:
+            yield session
+
+        app.dependency_overrides[get_db] = _fake_db
+        app.dependency_overrides[get_current_user] = _admin_user
+        try:
+            return await client.post(
+                "/api/v1/admin/model-deployments",
+                json={
+                    "cluster_id": 1,
+                    "name": "d",
+                    "model_id": 1,
+                    "engine": "vllm",
+                    "force": True,
+                    "spec": spec,
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    async def test_missing_port_422(self, client: AsyncClient):
+        r = await self._post(client, self._session(), {"topology": {"tp": 1}, "command": "myvllm xxxx"})
+        assert r.status_code == 422
+        assert "{port}" in r.json()["message"]
+
+    async def test_command_with_extra_args_is_accepted(self, client: AsyncClient, monkeypatch):
+        """命令模式下 extra_args 不再参与执行；同时传不报错（用户自己承担）。"""
+        captured: dict = {}
+
+        async def _capture(db, **kw):
+            captured.update(kw)
+            return await _fake_create(db, **kw)
+
+        monkeypatch.setattr("llmpod.apps.manager.deployment.controller.get_controller", lambda: _Ctrl())
+        monkeypatch.setattr("llmpod.services.deployment_service.create_deployment", _capture)
+        command = "myvllm xxxx --port {port}"
+        r = await self._post(
+            client,
+            self._session(),
+            {
+                "topology": {"tp": 1},
+                "command": command,
+                "engine_params": {"extra_args": ["--max-model-len", "4096"]},
+            },
+        )
+        assert r.status_code == 200
+        assert captured["spec"].command == command
+
+    async def test_multinode_placeholder_without_multinode_422(self, client: AsyncClient):
+        r = await self._post(
+            client,
+            self._session(),
+            {"topology": {"tp": 1}, "command": "myvllm xxxx --port {port} --master-addr {master_addr}"},
+        )
+        assert r.status_code == 422
+        assert "master_addr" in r.json()["message"]
+
+    async def test_command_passed_through(self, client: AsyncClient, monkeypatch):
+        captured: dict = {}
+
+        async def _capture(db, **kw):
+            captured.update(kw)
+            return await _fake_create(db, **kw)
+
+        monkeypatch.setattr("llmpod.apps.manager.deployment.controller.get_controller", lambda: _Ctrl())
+        monkeypatch.setattr("llmpod.services.deployment_service.create_deployment", _capture)
+        command = "myvllm xxxx --model {model_path} --port {port}"
+        r = await self._post(client, self._session(), {"topology": {"tp": 1}, "command": command})
+        assert r.status_code == 200
+        assert captured["spec"].command == command

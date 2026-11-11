@@ -18,6 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from llmpod.apps.manager.deployment.command import COMMAND_PLACEHOLDER_DOC
 from llmpod.config.enums import ModelTag
 
 # 拓扑形状键（explicit_fields 快照口径：两写法七键）
@@ -205,6 +206,10 @@ class Topology(BaseModel):
         if isinstance(self.copies, list):
             return list(self.copies)
         return [self.units[0]] * max(1, int(self.copies or 1))
+
+    def nnodes_values(self) -> set[int]:
+        """逐份跨机节点数集合（完整命令模式要求各副本一致；inspect 判多机占位符同源）。"""
+        return {max(1, int(unit.nnodes or 1)) for unit in self.per_copy_units()}
 
     def gpus_per_engine(self) -> int:
         """首份每引擎总卡数（tp×pp×ep）。异构副本各份不同——逐份口径用
@@ -428,6 +433,14 @@ class DeploymentConfig(CpuLaneConfig):
     image: str | None = Field(None, description="推理引擎容器镜像（覆盖默认镜像）")
     image_tag: str | None = Field(None, description="镜像 tag（与 image 二选一或组合）")
     model_path: str | None = Field(None, description="模型权重在节点上的本地路径（或挂载路径）")
+    command: str | None = Field(
+        None,
+        description=(
+            "完整启动命令模板（覆盖镜像入口与系统生成的参数；填了之后 engine_params.extra_args 不再参与）。"
+            "可用占位符：" + COMMAND_PLACEHOLDER_DOC + "；其中 {port} 必填（平台按节点分配端口并就绪探活用它）。"
+            "命令带 shell 语法（管道/重定向/变量展开）时经 bash -c 执行，否则按 argv 直接 exec"
+        ),
+    )
     force: bool = Field(
         False, description="强制部署：忽略预检/同子网等启发式约束（显存不足/跨子网仍会尝试，由调度器/NCCL 最终裁决）"
     )
