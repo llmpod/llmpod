@@ -175,13 +175,61 @@ describe('StepConfirm 确认页回显', () => {
   })
 })
 
-describe('StepConfirm 高级参数编辑', () => {
-  it('高级参数折叠面板存在(args/env 增删逻辑由 store 单测覆盖)', async () => {
+describe('StepConfirm 高级参数折叠面板存在(args/env 增删逻辑由 store 单测覆盖)', () => {
+  it('高级参数折叠面板存在', async () => {
     // n-collapse 在 happy-dom 无法经点击展开(内部测量限制),
     // editArgs/editEnv 的增删改由 deploy-wizard-store 用例覆盖,此处锁定面板结构存在
     const wrapper = mount(StepConfirm, { attachTo: document.body })
     await nextTick()
     expect(document.body.textContent).toContain('高级参数')
+    wrapper.unmount()
+  })
+})
+
+// 折叠面板在 happy-dom 里无法展开(测量限制),用 stub 摊平后验证新增的命令框/参数区结构。
+// naive-ui 组件以 defineComponent({name:'Collapse'}) 命名,stub 键要按组件内部名匹配。
+const collapseStubs = {
+  Collapse: { template: '<div><slot /></div>' },
+  CollapseItem: { template: '<div><slot /></div>' },
+}
+
+describe('StepConfirm 启动命令与逐行参数区', () => {
+  it('命令为空(回退平台自动生成)时:命令框存在、逐行区锁定并给出原因', async () => {
+    const wrapper = mount(StepConfirm, {
+      attachTo: document.body,
+      global: { stubs: collapseStubs },
+    })
+    await nextTick()
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('启动命令(command)')
+    expect(text).toContain('重置为平台生成')
+    expect(text).toContain('已回退为平台自动生成')
+    wrapper.unmount()
+  })
+
+  it('命令生效且保留默认入口时:逐行参数区可编辑,不展示锁定原因', async () => {
+    store.editCommand.value = 'vllm serve --model {model_path} --port {port}'
+    const wrapper = mount(StepConfirm, {
+      attachTo: document.body,
+      global: { stubs: collapseStubs },
+    })
+    await nextTick()
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('添加参数')
+    expect(text).not.toContain('已回退为平台自动生成')
+    expect(text).not.toContain('请直接在命令里改')
+    wrapper.unmount()
+  })
+
+  it('命令含 shell 语法时逐行参数区锁定,提示直接在命令里改', async () => {
+    store.editCommand.value = 'source /usr/local/Ascend/set_env.sh && exec vllm serve --port {port}'
+    const wrapper = mount(StepConfirm, {
+      attachTo: document.body,
+      global: { stubs: collapseStubs },
+    })
+    await nextTick()
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('请直接在命令里改')
     wrapper.unmount()
   })
 })
@@ -228,6 +276,25 @@ describe('StepConfirm 提交门控', () => {
     const validate = (wrapper.vm as unknown as { validate: () => Promise<boolean> }).validate
     await expect(validate()).resolves.toBe(false)
     expect(message.success).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('命令缺 {port} 时本地阻断:不提交并提示原因', async () => {
+    createDeploy.mockResolvedValue({ deployment_id: 'd-1' })
+    // 用户手改命令时把 {port} 删了:就绪探活依赖它,后端必 422,先在前端拦住
+    store.editCommand.value = 'vllm serve --model {model_path}'
+    store.markCommandDirty()
+    const wrapper = mount(StepConfirm, { attachTo: document.body })
+    await nextTick()
+
+    const validate = (wrapper.vm as unknown as { validate: () => Promise<boolean> }).validate
+    await expect(validate()).resolves.toBe(false)
+    expect(createDeploy).not.toHaveBeenCalled()
+    expect(message.error).toHaveBeenCalledWith(
+      expect.stringContaining('{port}'),
+      expect.anything(),
+    )
+    expect(store.commandIssues.value.length).toBeGreaterThan(0)
     wrapper.unmount()
   })
 })

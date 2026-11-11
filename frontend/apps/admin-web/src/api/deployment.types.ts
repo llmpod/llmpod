@@ -234,6 +234,11 @@ export interface InspectResolved {
   env: Record<string, string>
   /** 用户 extra_args 撞系统必控项(已被忽略) */
   protected_overlap: string[]
+  /**
+   * 按当前配置会跑的那条完整命令(带平台占位符);用户传了 command 时原样回显。
+   * 前端直接拿来预填命令框,并把用户手改后的文本回传做占位符校验。
+   */
+  command?: string | null
 }
 
 /** 部署预检响应(POST /api/v1/admin/model-deployments/inspect) */
@@ -277,6 +282,8 @@ export interface InspectDeploymentPayload {
   image?: string | null
   /** 镜像 tag(= catalog engine_version 维度) */
   image_tag?: string | null
+  /** 完整启动命令模板(传了就原样回显并做占位符校验,错误走 issues) */
+  command?: string | null
   /** 模型权重路径覆盖(一般不传,走自动下发) */
   model_path?: string | null
   /** 允许调度落到 CPU / 混合 offload(手选 GPU 卡时后端忽略该部署) */
@@ -320,6 +327,13 @@ export interface DeploymentConfig {
   gpu_selector?: GpuSelector | null
   image?: string | null
   image_tag?: string | null
+  /**
+   * 完整启动命令模板:填了整条接管(平台不再拼 --model/--port/并行度/多机参数,
+   * engine_params.extra_args 不再参与执行);不填沿用 catalog 镜像 + 适配器生成参数。
+   * 占位符 {model_path}/{served_model_name}/{port}/{tp}/{pp}/{nnodes}/{node_rank}/
+   * {master_addr}/{master_port}/{headless} 由平台逐实例回填。
+   */
+  command?: string | null
   model_path?: string | null
   /** 允许调度落到 CPU / 混合 offload(与手选 GPU 卡互斥) */
   allow_cpu?: boolean

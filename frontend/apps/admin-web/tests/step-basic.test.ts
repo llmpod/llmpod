@@ -74,6 +74,15 @@ function summaryText(): string {
   return document.querySelector('.deploy-cluster-summary')?.textContent ?? ''
 }
 
+/** 镜像地址输入框(按占位文案定位,与「镜像版本」下拉区分) */
+function imageInput(): HTMLInputElement {
+  const input = [...document.querySelectorAll<HTMLInputElement>('input')].find((item) =>
+    item.placeholder.includes('vllm-ascend'),
+  )
+  expect(input, '镜像地址输入框').toBeTruthy()
+  return input!
+}
+
 async function settle() {
   await nextTick()
   await Promise.resolve()
@@ -218,6 +227,61 @@ describe('StepBasic 推荐回填与镜像版本联动(f8cac24)', () => {
     expect(await validate()).toBe(true)
     expect(store.form.replicas).toBe(2)
     expect(store.form.maxModelLen).toBe(4096)
+    wrapper.unmount()
+  })
+})
+
+describe('StepBasic 镜像地址(可选,任意镜像完整地址)', () => {
+  it('按预检解析结果自动预填,并在概要里展示将使用的镜像', async () => {
+    store.form.modelId = 7
+    const wrapper = mount(StepBasic, { attachTo: document.body })
+    await vi.waitFor(() => expect(summaryText()).toContain('reg/vllm:0.9.5'))
+    // 预填 = 推荐镜像(resolved 缺失时的兜底),同时记为自动值基线
+    expect(imageInput().value).toBe('reg/vllm:0.9.5')
+    expect(store.autoImage.value).toBe('reg/vllm:0.9.5')
+    wrapper.unmount()
+  })
+
+  it('用户手改后,推荐迟到不覆盖;validate 写回手填地址', async () => {
+    store.form.modelId = 7
+    // 集群先手动选定:本用例只验证镜像地址的「迟到不覆盖」,不依赖推荐回填
+    store.form.clusterId = 3
+    // 预检迟到:首次推荐请求失败(store.inspect 仍为空 → 无自动预填)
+    vi.mocked(inspectDeployment).mockRejectedValueOnce(new Error('pending'))
+    const wrapper = mount(StepBasic, { attachTo: document.body })
+    await settle()
+    expect(imageInput().value).toBe('')
+
+    const input = imageInput()
+    input.value = 'xxx.io/xxa/vllm-ascend:0.313'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+
+    // 推荐迟到补齐:不覆盖手填值
+    store.inspect.value = makeInspect()
+    await settle()
+    expect(imageInput().value).toBe('xxx.io/xxa/vllm-ascend:0.313')
+
+    const validate = (wrapper.vm as unknown as { validate: () => Promise<boolean> }).validate
+    expect(await validate()).toBe(true)
+    expect(store.form.image).toBe('xxx.io/xxa/vllm-ascend:0.313')
+    wrapper.unmount()
+  })
+
+  it('清空镜像地址 = 回到 catalog「镜像版本」解析', async () => {
+    store.form.modelId = 7
+    const wrapper = mount(StepBasic, { attachTo: document.body })
+    await vi.waitFor(() => expect(summaryText()).toContain('reg/vllm:0.9.5'))
+
+    const input = imageInput()
+    input.value = ''
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+
+    const validate = (wrapper.vm as unknown as { validate: () => Promise<boolean> }).validate
+    expect(await validate()).toBe(true)
+    expect(store.form.image).toBe('')
+    expect(store.imageOverride.value).toBe('')
     wrapper.unmount()
   })
 })

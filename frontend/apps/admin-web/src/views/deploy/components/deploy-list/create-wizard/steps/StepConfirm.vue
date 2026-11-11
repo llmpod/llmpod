@@ -6,7 +6,7 @@ import { useWizardStore } from '../useStore'
 
 const store = useWizardStore()
 // 模板里使用的成员必须解构为顶层 ref(store 是普通对象,嵌套 ref 在模板不会自动解包)
-const { editArgs, editEnv } = store
+const { editArgs, editEnv, editCommand, platformCommand, commandDirty, commandIssues } = store
 
 /** 引擎展示文案:auto 时附 inspect 推荐结果 */
 const engineLabel = computed(() => {
@@ -136,9 +136,32 @@ function argOptions(value: string) {
   )
 }
 
+/** 逐行参数区是否锁定(命令为空/含 shell 语法/自定义入口):锁定后逐行输入禁用并展示原因 */
+const commandLocked = store.commandLocked
+/** 锁定原因(展示在启动参数标题右侧) */
+const commandLockReason = store.commandLockReason
+
+/** 是否可重置为平台生成(有基线且当前文本已不同) */
+const canResetCommand = computed(
+  () => Boolean(platformCommand.value) && editCommand.value !== platformCommand.value,
+)
+
+/** 命令框失焦:回传校验(只取 issues 展示,不用返回的 resolved.command 覆盖用户文本) */
+async function onCommandBlur() {
+  await store.validateCommand()
+}
+
 defineExpose({
   /** 确认部署:提交创建;成功后由向导控制器退出,失败停留本步可重试 */
   validate: async () => {
+    // 命令非空:提交前回传一次校验,缺 {port}/{headless} 等本地阻断项直接拦住(后端必 422)
+    if (editCommand.value.trim()) {
+      const { blocking } = await store.validateCommand()
+      if (blocking.length) {
+        message.error(blocking[0], { closable: true })
+        return false
+      }
+    }
     try {
       await store.submitCreate()
     } catch {
@@ -335,25 +358,34 @@ defineExpose({
         <n-collapse>
           <n-collapse-item title="高级参数" name="advanced">
             <!-- 展开限高:仅高视口(≥40rem,媒体查询 rem 按初始字号 16px 计)限高内部滚动;小屏不限制,避免内外双滚动条 -->
+            <!-- 加入启动命令 textarea 与参数区后内容变高,限高相应放宽到 52rem -->
             <div
-              class="flex flex-col gap-[1.6rem] pt-[.4rem] [@media(max-height:100rem)]:max-h-[32rem] [@media(max-height:100rem)]:overflow-y-auto"
+              class="flex flex-col gap-[1.6rem] pt-[.4rem] [@media(max-height:100rem)]:max-h-[52rem] [@media(max-height:100rem)]:overflow-y-auto"
             >
-              <!-- 启动参数:resolved.args 按配对口径成行回显(flag 与值合并一行),提交时拆回扁平 argv 作为 engine_params.extra_args -->
+              <!-- 启动参数:resolved.args 按配对口径成行回显(flag 与值合并一行) -->
               <!-- 命中 preview_topology 引擎 protected_flags 前缀的行为系统必控项:只读且不可删;AutoComplete 聚焦出引擎 param_suggestions 推荐选项 -->
+              <!-- 单向写入:改行 → 按 flag 名写进下方启动命令;改命令不回写行(命令文本是唯一权威) -->
               <div class="flex flex-col gap-[.8rem]">
-                <span class="text-small text-secondary">启动参数(args)</span>
+                <div class="flex items-center justify-between gap-[.8rem]">
+                  <span class="text-small text-secondary">启动参数(args)</span>
+                  <!-- 命令锁定(为空/含 shell 语法/自定义入口)时逐行区不可编辑,原因就显示在这里 -->
+                  <span v-if="commandLocked" class="text-small text-warning">
+                    {{ commandLockReason }}
+                  </span>
+                </div>
                 <div
                   v-for="index in editArgs.length"
                   :key="index"
                   class="flex items-center gap-[.8rem]"
                 >
                   <n-auto-complete
-                    v-model:value="editArgs[index - 1]"
+                    :value="editArgs[index - 1]"
                     :options="argOptions(editArgs[index - 1])"
                     :get-show="() => true"
-                    :disabled="store.isArgProtected(editArgs[index - 1])"
+                    :disabled="commandLocked || store.isArgProtected(editArgs[index - 1])"
                     class="font-mono min-w-0"
                     placeholder="如 --max-model-len 4096 或 --trust-remote-code"
+                    @update:value="store.setArg(index - 1, $event)"
                   />
                   <n-button
                     v-if="!store.isArgProtected(editArgs[index - 1])"
@@ -361,6 +393,7 @@ defineExpose({
                     type="error"
                     class="shrink-0"
                     :aria-label="`删除第 ${index} 条参数`"
+                    :disabled="commandLocked"
                     @click="store.removeArg(index - 1)"
                   >
                     <template #icon>
@@ -372,7 +405,7 @@ defineExpose({
                   暂无启动参数,可点击下方按钮添加
                 </div>
                 <div>
-                  <n-button dashed size="small" @click="store.addArg()">
+                  <n-button dashed size="small" :disabled="commandLocked" @click="store.addArg()">
                     <template #icon>
                       <n-icon><AddOutline /></n-icon>
                     </template>
@@ -387,7 +420,39 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- 环境变量:resolved.env 按 key-value 回显,提交时作为 engine_params.env -->
+              <!-- 启动命令:用户手改/逐行参数写入的唯一权威文本;留空 = 回退平台自动生成 -->
+              <div class="flex flex-col gap-[.8rem]">
+                <div class="flex items-center justify-between gap-[.8rem]">
+                  <span class="text-small text-secondary">启动命令(command)</span>
+                  <div class="flex items-center gap-[.6rem]">
+                    <n-tag v-if="commandDirty" size="small" type="warning" :bordered="false">
+                      已手改
+                    </n-tag>
+                    <n-button
+                      size="tiny"
+                      quaternary
+                      :disabled="!canResetCommand"
+                      @click="store.resetCommand()"
+                    >
+                      重置为平台生成
+                    </n-button>
+                  </div>
+                </div>
+                <n-input
+                  v-model:value="editCommand"
+                  type="textarea"
+                  :rows="4"
+                  class="font-mono"
+                  placeholder="留空 = 平台自动生成;也可直接粘贴一条完整命令"
+                  @update:value="store.markCommandDirty()"
+                  @blur="onCommandBlur"
+                />
+                <LmAlert v-if="commandIssues.length" type="warning">
+                  <div v-for="issue in commandIssues" :key="issue">{{ issue }}</div>
+                </LmAlert>
+              </div>
+
+              <!-- 环境变量:resolved.env 按 key-value 回显,提交时作为 engine_params.env(独立于命令) -->
               <div class="flex flex-col gap-[.8rem]">
                 <span class="text-small text-secondary">环境变量(env)</span>
                 <div

@@ -12,6 +12,7 @@ import {
   type CreateDeploymentPayload,
   type EngineParams,
   type InspectClusterGpu,
+  type InspectDeploymentPayload,
   type InspectDeploymentResult,
   type ModelDeploymentOut,
   type NodeSupportInfo,
@@ -30,6 +31,14 @@ import {
   type TopologyGpu,
   type TopologyNode,
 } from '@/api/topology'
+import {
+  commandPlaceholderIssues,
+  flagName,
+  hasShellSyntax,
+  isCustomEntry,
+  tokenize,
+  writeFlagGroup,
+} from './commandTemplate'
 import { useStore as useDeployStore } from '../useStore'
 
 /**
@@ -139,6 +148,12 @@ export function paramSuggestionOptions(
   return options
 }
 
+/** 命令校验结果:blocking 为本地阻断项(缺 {port} 等,后端必 422),issues 为全部展示项 */
+export interface CommandValidation {
+  blocking: string[]
+  issues: string[]
+}
+
 /** 向导表单值(modelId 对齐创建接口的 model_id) */
 export interface WizardFormValues {
   /** 部署名称 */
@@ -149,6 +164,8 @@ export interface WizardFormValues {
   engine: string
   /** 镜像版本(= catalog engine_version;null 由后端按默认版本解析,提交时作 spec.image_tag) */
   imageTag: string | null
+  /** 镜像完整地址(预填预检解析结果;用户改动过才作为 spec.image 提交,留空/未改走 catalog) */
+  image: string
   /** 最大上下文长度;默认 8K,null 按模型推荐,非空随预检传 topology.max_model_len */
   maxModelLen: number | null
   /** 目标集群主键 */
@@ -221,11 +238,14 @@ const form = reactive<WizardFormValues>({
   modelId: null,
   engine: 'auto',
   imageTag: null,
+  image: '',
   maxModelLen: 8 * 1024,
   clusterId: null,
   replicas: 1,
   kvCacheDtype: '',
 })
+/** 平台最近一次自动预填的镜像(resolved.image):字段为空或仍是该值即「未手改」,不覆盖用户输入 */
+const autoImage = ref('')
 /** 发布配置(Step3 表单态,提交时经 buildPublishSpec 挂到 spec.publish) */
 const publish = reactive<WizardPublishValues>({
   autoPublish: true,
@@ -261,6 +281,8 @@ const inspectKey = ref('')
 let inspectRecommendationSeq = 0
 /** 基础预检请求序号:Step2 快速改副本数/上下文并发触发时只认最后一次响应 */
 let inspectLoadSeq = 0
+/** 命令校验请求序号:命令框连续失焦/提交前重复校验时只认最后一次响应 */
+let commandValidateSeq = 0
 
 /** 镜像目录(Step1 镜像版本下拉数据源;按引擎缓存) */
 const imageEntries = shallowRef<ImageEntryOut[]>([])
@@ -358,6 +380,17 @@ const editArgs = ref<string[]>([])
 const resolvedArgBaseline = ref<string[]>([])
 /** 可编辑环境变量(全量预检 resolved.env 回显初始化,提交时作为 engine_params.env) */
 const editEnv = ref<{ key: string; value: string }[]>([])
+/**
+ * 完整启动命令模板(Step3 命令框的唯一权威文本;空串 = 回退平台自动生成,提交不带 spec.command)。
+ * 只由「预检回填(未手改时)/ 用户手改 / 参数区按 flag 名写入 / 重置」改动。
+ */
+const editCommand = ref('')
+/** 平台最近一次生成的命令(预检 resolved.command):「重置为平台生成」的基线 + 入口前缀判定用 */
+const platformCommand = ref('')
+/** 命令是否被用户改过:true 时后续预检只更新基线,不覆盖文本(命令文本唯一权威) */
+const commandDirty = ref(false)
+/** 命令校验未通过项(本地占位符阻断 + 后端 issues),展示在输入框下方 */
+const commandIssues = ref<string[]>([])
 /** 强制部署标记(Step2→3 预检存在 issues 且用户确认「强制部署」后置位,提交时带 force) */
 const forced = ref(false)
 /** 最近一次创建成功的部署记录(提交成功后暂存,退出向导时携带供列表层直接打开部署详情) */
@@ -580,6 +613,38 @@ export function useWizardStore() {
   })
 
   /**
+   * 镜像覆盖(spec.image):仅用户改动过才非空——预填只作展示,不改就继续走 catalog 的
+   * image_tag,异构架构(nvidia+cann)的变体自动裁决不受影响。
+   */
+  const imageOverride = computed(() => {
+    const value = form.image.trim()
+    return value && value !== autoImage.value ? value : ''
+  })
+
+  /** 命令文本是否生效(非空 = 命令模式:整条接管,提交只发 spec.command) */
+  const commandActive = computed(() => editCommand.value.trim() !== '')
+
+  /**
+   * 逐行参数区锁定原因;空串 = 可用。
+   * 锁定即不做解析与写入:命令为空/粘贴自定义程序/带 shell 语法时,逐行编辑无处落地,
+   * 往上追加 vLLM 风格 flag 也可能被拒。
+   */
+  const commandLockReason = computed(() => {
+    if (!commandActive.value) return '已回退为平台自动生成;如需调参请先点「重置为平台生成」'
+    if (!tokenize(editCommand.value)) return '命令引号不配对,参数区不解析'
+    if (hasShellSyntax(editCommand.value)) {
+      return '命令含 shell 语法(管道/重定向/变量展开),请直接在命令里改'
+    }
+    if (isCustomEntry(editCommand.value, effectiveEngine.value, platformCommand.value)) {
+      return '自定义命令模式,请直接在命令里改'
+    }
+    return ''
+  })
+
+  /** 逐行参数区是否锁定(锁定后输入禁用并展示 commandLockReason) */
+  const commandLocked = computed(() => commandLockReason.value !== '')
+
+  /**
    * 预检拓扑中的引擎项(protected_flags/param_suggestions 事实源):
    * 优先匹配生效引擎,匹配不到回退首项(后端通常仅返回当前引擎一条)。
    */
@@ -597,9 +662,74 @@ export function useWizardStore() {
     paramSuggestionOptions(previewEngine.value?.param_suggestions),
   )
 
+
   /** 参数行是否只读(命中系统必控 flag 前缀) */
   function isArgProtected(line: string): boolean {
     return isProtectedArgLine(line, protectedFlags.value)
+  }
+
+  /**
+   * 参数区写入命令的唯一入口(逐行 args / 显存占比 / KV 精度 / chip 都走这里)。
+   * 返回 false 表示被锁定或写入被忽略(含平台占位符),调用方据此决定是否更新控件态。
+   */
+  function writeCommandGroup(group: string[], relatedFlags: string[]): boolean {
+    if (commandLocked.value) return false
+    const next = writeFlagGroup(editCommand.value, group, relatedFlags)
+    if (next === editCommand.value) return false
+    editCommand.value = next
+    commandDirty.value = true
+    return true
+  }
+
+  /** 显存占比:写/删本引擎的显存占比 flag(空值 = 删除) */
+  /** 参数行 → flag 名(空行/非 flag 行返回空串) */
+  function argLineFlag(line: string): string {
+    const first = line.trim().split(/\s+/)[0] ?? ''
+    return first.startsWith('-') ? flagName(first) : ''
+  }
+
+  /** 命令框手改:标记 dirty(后续预检不覆盖文本)并清掉上一轮校验结果 */
+  function markCommandDirty() {
+    commandDirty.value = true
+    commandIssues.value = []
+  }
+
+  /** 重置为平台生成:把预检基线写回命令框(命令手改后拓扑变更时的唯一显式同步入口) */
+  function resetCommand() {
+    editCommand.value = platformCommand.value
+    commandDirty.value = false
+    commandIssues.value = []
+  }
+
+  /**
+   * 命令校验(失焦/提交前):本地占位符检查 + 后端 issues。
+   * 只取校验结果展示,**不**用返回的 resolved.command 覆盖用户已手改的文本。
+   */
+  async function validateCommand(): Promise<CommandValidation> {
+    const command = editCommand.value.trim()
+    if (!command) {
+      commandIssues.value = []
+      return { blocking: [], issues: [] }
+    }
+    const blocking = commandPlaceholderIssues(
+      command,
+      derivedTopology.value?.nnodes ?? 1,
+      effectiveEngine.value,
+    )
+    const payload = finalInspectPayload()
+    let remote: string[] = []
+    if (payload) {
+      const seq = ++commandValidateSeq
+      try {
+        const result = await inspectDeployment({ ...payload, command })
+        if (seq === commandValidateSeq) remote = result.issues ?? []
+      } catch {
+        // 接口异常已由 HTTP 层统一提示:保留本地校验结果,不覆盖已有 issues
+        if (seq !== commandValidateSeq) return { blocking, issues: commandIssues.value }
+      }
+    }
+    commandIssues.value = [...new Set([...blocking, ...remote])]
+    return { blocking, issues: commandIssues.value }
   }
 
   /**
@@ -747,8 +877,8 @@ export function useWizardStore() {
     // 后,复用旧缓存会给出单份落点(每份的卡与推荐总卡数都不随份数刷新);
     // KV 精度影响显存估算与推荐落点,同键;CPU 钉定集(配齐时)整体进键——改任一份落点都要按新拓扑重检;
     // 镜像版本进键——recommendation 的能力折算(supported_parallel/supports_multinode)按 image_tag
-    // 版本感知,换版本不重检会拿陈旧能力把拓扑组装错。
-    const key = `${form.modelId}:${form.clusterId}:${form.engine}:${form.imageTag ?? ''}:${form.maxModelLen ?? ''}:${Math.max(1, form.replicas)}:${form.kvCacheDtype}:${cpuMode.value && cpuPinComplete.value ? cpuNodeSelections.value.join(',') : ''}`
+    // 版本感知,换版本不重检会拿陈旧能力把拓扑组装错;镜像地址覆盖同键(resolved.image 随它变)。
+    const key = `${form.modelId}:${form.clusterId}:${form.engine}:${form.imageTag ?? ''}:${imageOverride.value}:${form.maxModelLen ?? ''}:${Math.max(1, form.replicas)}:${form.kvCacheDtype}:${cpuMode.value && cpuPinComplete.value ? cpuNodeSelections.value.join(',') : ''}`
     if (!force && inspect.value && inspectKey.value === key) return
     const seq = ++inspectLoadSeq
     inspectLoading.value = true
@@ -782,8 +912,10 @@ export function useWizardStore() {
           : isLlamaCpp.value
             ? { allow_cpu: true }
             : {}),
-        // 已选镜像版本随预检传入,resolved.image 按该版本解析,与最终部署一致
-        image_tag: form.imageTag ?? undefined,
+        // 已选镜像版本随预检传入,resolved.image 按该版本解析,与最终部署一致;
+        // 用户填了完整镜像地址时以它为准(image 优先于 image_tag)
+        ...(form.imageTag ? { image_tag: form.imageTag } : {}),
+        ...(imageOverride.value ? { image: imageOverride.value } : {}),
       })
       // 竞态守卫:请求期间又发起了新的预检(Step2 快速改副本数/上下文)则丢弃本次结果
       if (seq !== inspectLoadSeq) return
@@ -800,41 +932,53 @@ export function useWizardStore() {
   }
 
   /**
+   * 全量预检负载(命令校验与 Step2→3 预检共用同一套口径,避免「校验口径」与「提交口径」不一致)。
+   * 模型/集群/拓扑不全,或 CPU 逐份钉定未配齐时返回 null。
+   */
+  function finalInspectPayload(): InspectDeploymentPayload | null {
+    if (form.modelId === null || form.clusterId === null || !derivedTopology.value) return null
+    // CPU 逐份钉定未配齐不发请求(正常路径被 Step2 校验拦下;此处兜底,防 null 混进 node_ids)
+    if (cpuMode.value && !cpuPinComplete.value) return null
+    return {
+      model_id: form.modelId,
+      cluster_id: form.clusterId,
+      engine: effectiveEngine.value,
+      topology: derivedTopology.value,
+      // CPU 部署(配齐)逐份钉节点(node_ids[i]=第 i 份落点);GPU 部署按全部副本所选卡并集(份序拼接)。
+      // cpuMode 未配齐走不到这里(Step2 topologyRuleError 已拦),守卫兜底防 null 漏发。
+      ...(cpuMode.value
+        ? {
+            gpu_selector: { node_ids: [...cpuNodeSelections.value] as string[] },
+            allow_cpu: true,
+            offload_preference: 'cpu_only' as const,
+          }
+        : { gpu_selector: { gpu_uuids: [...allSelectedUuids.value] } }),
+      // 已选 KV 精度档随全量预检传入:resolved.args / resolved.command 都会回显对应 flag
+      ...(kvCacheExtraArgs.value.length
+        ? { engine_params: { extra_args: [...kvCacheExtraArgs.value] } }
+        : {}),
+      // 镜像:用户填了完整地址则按它解析,否则按 catalog 版本解析
+      ...(form.imageTag ? { image_tag: form.imageTag } : {}),
+      ...(imageOverride.value ? { image: imageOverride.value } : {}),
+    }
+  }
+
+  /**
    * 全量部署预检(Step2→3 门控):带 engine+topology+gpu_selector,回写 inspect 供确认页展示;失败返回 null。
    * 基线差集口径:resolved.args 回显里含「本轮由前端注入的用户层选项」(如 KV 精度 flag)——
    * 它们属于用户配置而非系统生成项,记录基线时必须剔除,否则提交差集会把它们当系统项
    * 静默丢弃(用户选的量化档 end-to-end 失效)。
    */
   async function runFinalInspect(): Promise<InspectDeploymentResult | null> {
-    if (form.modelId === null || form.clusterId === null || !derivedTopology.value) return null
-    // CPU 逐份钉定未配齐不发请求(正常路径被 Step2 校验拦下;此处兜底,防 null 混进 node_ids)
-    if (cpuMode.value && !cpuPinComplete.value) return null
+    const payload = finalInspectPayload()
+    if (!payload) return null
     // 使在途基础预检失效:防抖中的 loadInspect 迟到响应不得覆盖全量结果
     ++inspectLoadSeq
     inspectLoading.value = true
     // 每次全量预检重置强制标记,存在 issues 时由控制器确认后再置回
     forced.value = false
     try {
-      const result = await inspectDeployment({
-        model_id: form.modelId,
-        cluster_id: form.clusterId,
-        engine: effectiveEngine.value,
-        topology: derivedTopology.value,
-        // CPU 部署(配齐)逐份钉节点(node_ids[i]=第 i 份落点);GPU 部署按全部副本所选卡并集(份序拼接)。
-        // cpuMode 未配齐走不到这里(Step2 topologyRuleError 已拦),守卫兜底防 null 漏发。
-        ...(cpuMode.value
-          ? {
-              gpu_selector: { node_ids: [...cpuNodeSelections.value] as string[] },
-              allow_cpu: true,
-              offload_preference: 'cpu_only' as const,
-            }
-          : { gpu_selector: { gpu_uuids: [...allSelectedUuids.value] } }),
-        // 已选 KV 精度档随全量预检传入:resolved.args 会回显对应 flag,Step3 参数列表可继续编辑
-        ...(kvCacheExtraArgs.value.length
-          ? { engine_params: { extra_args: [...kvCacheExtraArgs.value] } }
-          : {}),
-        image_tag: form.imageTag ?? undefined,
-      })
+      const result = await inspectDeployment(payload)
       // 纯 CPU 部署:该节点内存装不下时后端按偏好回退到显存档(静默改用 GPU),与所选不符。
       // 前置成阻断 issue,由 Step2→3 确认弹窗让用户改选节点或显式强制部署。
       if (cpuMode.value && result.memory && result.memory.scenario !== 'cpu_only') {
@@ -856,6 +1000,13 @@ export function useWizardStore() {
       editEnv.value = result.resolved
         ? Object.entries(result.resolved.env).map(([key, value]) => ({ key, value }))
         : []
+      // 命令模板:平台按当前配置反推的完整命令作为基线;用户已手改时不覆盖文本(命令文本唯一权威),
+      // 拓扑变更后由「重置为平台生成」显式同步
+      platformCommand.value = result.resolved?.command ?? ''
+      if (!commandDirty.value) {
+        editCommand.value = platformCommand.value
+        commandIssues.value = []
+      }
       return result
     } catch {
       // 接口异常已由 HTTP 层统一提示,返回 null 让控制器停留本步
@@ -1653,14 +1804,40 @@ export function useWizardStore() {
     editArgs.value = []
     editEnv.value = []
     resolvedArgBaseline.value = []
+    // 命令模板与基线同批失效:dirty 标记一并复位,重检后按新配置重新回填
+    editCommand.value = ''
+    platformCommand.value = ''
+    commandDirty.value = false
+    commandIssues.value = []
   }
 
   function addArg() {
     editArgs.value = [...editArgs.value, '']
   }
 
+  /**
+   * 逐行参数改动:写回行 + 把该行按 flag 名写进命令(命令是唯一权威,行只往命令里写)。
+   * 改掉 flag 名时旧 flag 一并移除,避免命令里残留两个互斥参数。
+   */
+  function setArg(index: number, line: string) {
+    const previous = editArgs.value[index] ?? ''
+    const next = [...editArgs.value]
+    next[index] = line
+    editArgs.value = next
+    const tokens = argLineToTokens(line)
+    const flag = tokens[0]
+    if (!flag || !flag.startsWith('-')) return
+    const previousFlag = argLineFlag(previous)
+    const related = previousFlag && previousFlag !== flag ? [previousFlag, flag] : [flag]
+    writeCommandGroup(tokens, related)
+  }
+
+  /** 删除参数行:同时把该 flag 从命令里摘掉(系统必控行不可删,由模板层拦住) */
   function removeArg(index: number) {
+    const removed = editArgs.value[index] ?? ''
     editArgs.value = editArgs.value.filter((_, itemIndex) => itemIndex !== index)
+    const flag = argLineFlag(removed)
+    if (flag && !isArgProtected(removed)) writeCommandGroup([], [flag])
   }
 
   function addEnvVar() {
@@ -1675,7 +1852,7 @@ export function useWizardStore() {
    * Step1 写回表单。
    * 集群变化:清拓扑缓存 + 预检 + 已选 GPU(防止把 A 集群的 uuid 提交给 B 集群);
    * 模型/最大上下文/副本数变化:清预检 + 已选 GPU(逐份规划与显存评估随之重算,
-   * 旧选择按新份数可能凑不出整份);引擎变化:仅清预检(推荐结果随引擎变)。
+   * 旧选择按新份数可能凑不出整份);引擎/镜像地址变化:仅清预检(推荐结果随引擎与镜像变)。
    */
   function applyForm(values: WizardFormValues) {
     if (values.clusterId !== form.clusterId) {
@@ -1690,7 +1867,7 @@ export function useWizardStore() {
     ) {
       clearInspect()
       clearSelection(false)
-    } else if (values.engine !== form.engine) {
+    } else if (values.engine !== form.engine || values.image !== form.image) {
       clearInspect()
     }
     Object.assign(form, values)
@@ -1718,18 +1895,22 @@ export function useWizardStore() {
     if (form.clusterId === null || form.modelId === null || !derivedTopology.value) return
     // CPU 逐份钉定未配齐不提交(正常路径被 Step2 校验拦下;防 null 混进 node_ids 或空卡集漏发)
     if (cpuMode.value && !cpuPinComplete.value) return
-    // 编辑后的参数行拆回扁平 argv 作为用户层参数(三层覆盖最高层);空行剔除,全空则不传。
-    // 只回传**不在预检基线里**的行:基线含系统生成项(如 --model 占位路径/--port 等),
-    // 整条回传会以用户层覆盖真实值(--model 占位路径 → 容器 GGUF 打开失败)。
-    const baseline = new Set(resolvedArgBaseline.value.map((line) => line.trim()))
-    const extraArgs = editArgs.value
-      .filter((line) => !baseline.has(line.trim()))
-      .flatMap(argLineToTokens)
+    // 命令模式下整条命令接管:extra_args 不再参与执行(后端会忽略,发了只会误导),
+    // 逐行参数/显存占比/KV 精度都已在编辑期按 flag 名写进命令文本。
+    const command = editCommand.value.trim()
+    const engineParams: EngineParams = {}
+    if (!command) {
+      // 回退平台自动生成:沿用差集口径——只回传**不在预检基线里**的行(基线含系统生成项,
+      // 如 --model 占位路径/--port,整条回传会以用户层覆盖真实值)
+      const baseline = new Set(resolvedArgBaseline.value.map((line) => line.trim()))
+      const extraArgs = editArgs.value
+        .filter((line) => !baseline.has(line.trim()))
+        .flatMap(argLineToTokens)
+      if (extraArgs.length) engineParams.extra_args = extraArgs
+    }
     const env = Object.fromEntries(
       editEnv.value.filter((item) => item.key.trim()).map((item) => [item.key.trim(), item.value]),
     )
-    const engineParams: EngineParams = {}
-    if (extraArgs.length) engineParams.extra_args = extraArgs
     if (Object.keys(env).length) engineParams.env = env
     const payload: CreateDeploymentPayload = {
       cluster_id: form.clusterId,
@@ -1750,8 +1931,15 @@ export function useWizardStore() {
               offload_preference: 'cpu_only' as const,
             }
           : { gpu_selector: { gpu_uuids: [...allSelectedUuids.value] } }),
-        // 选了镜像版本则传 image_tag(同版本多 gpu_model 变体时由 catalog 自动裁决),不钉完整 image
-        ...(form.imageTag ? { image_tag: form.imageTag } : {}),
+        // 镜像:用户填了完整地址则以它为准(image 优先,不再传 image_tag);否则按 catalog
+        // 版本解析(同版本多 gpu_model/driver 变体时由后端自动裁决)
+        ...(imageOverride.value
+          ? { image: imageOverride.value }
+          : form.imageTag
+            ? { image_tag: form.imageTag }
+            : {}),
+        // 完整启动命令:非空才传(传 "" 会被后端 422);为空 = 平台自动生成
+        ...(command ? { command } : {}),
         ...(Object.keys(engineParams).length ? { engine_params: engineParams } : {}),
         // 发布配置:部署 READY 后自动发布对外路由(对外名/定价/标签/描述)
         publish: buildPublishSpec(publish),
@@ -1780,11 +1968,14 @@ export function useWizardStore() {
       modelId: null,
       engine: 'auto',
       imageTag: null,
+      image: '',
       maxModelLen: 8 * 1024,
       clusterId: null,
       replicas: 1,
       kvCacheDtype: '',
     })
+    // 镜像自动预填基线一并复位:下次打开由 StepBasic 按新预检结果重新预填
+    autoImage.value = ''
     Object.assign(publish, {
       autoPublish: true,
       name: '',
@@ -1840,6 +2031,18 @@ export function useWizardStore() {
     hasKvCache,
     protectedFlags,
     argSuggestionOptions,
+    autoImage,
+    imageOverride,
+    editCommand,
+    platformCommand,
+    commandDirty,
+    commandActive,
+    commandIssues,
+    commandLocked,
+    commandLockReason,
+    markCommandDirty,
+    resetCommand,
+    validateCommand,
     selectedGpuUuids,
     allSelectedUuids,
     replicaSelections,
@@ -1856,6 +2059,7 @@ export function useWizardStore() {
     editEnv,
     lastCreated,
     addArg,
+    setArg,
     removeArg,
     isArgProtected,
     addEnvVar,
