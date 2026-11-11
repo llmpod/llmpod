@@ -6,12 +6,14 @@
 - ``install_probe_transport``：把探测模块内自建的 httpx.AsyncClient 换成挂 MockTransport
   的桩，并返回请求记录供断言；只替换探测模块看到的 ``httpx`` 名字，**不**全局改
   ``httpx.AsyncClient``（那会把同测试内其它地方，含 ASGI 测试客户端，一起换掉）；
-- ``replies`` / ``unreachable``：最常用的两个上游桩（按状态码应答 / 连接层失败）；
+- ``replies`` / ``unreachable`` / ``models_payload``：最常用的上游桩（按状态码应答 /
+  连接层失败 / ``GET /models`` 清单体）；
 - ``endpoint_row``：已登记的外部端点行（默认 OpenAI + 带 Key + 未登记主路径 + 健康）。
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -56,6 +58,11 @@ def replies(status: int, body: str = '{"ok":true}'):
         return httpx.Response(status, content=body.encode(), headers={"content-type": "application/json"})
 
     return handler
+
+
+def models_payload(*ids: str) -> str:
+    """上游 ``GET /models`` 的清单响应体：``{"data": [{"id": ...}]}``（去重交给被测方）。"""
+    return json.dumps({"object": "list", "data": [{"id": i, "object": "model"} for i in ids]})
 
 
 def unreachable(request: httpx.Request) -> httpx.Response:

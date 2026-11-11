@@ -1,4 +1,8 @@
-"""来源端点连通性探测（管理端专用）：接入/编辑前置闸门 + /admin/endpoints/test 诊断。
+"""来源端点连通性探测与上游模型清单拉取（管理端专用）。
+
+探测：接入/编辑前置闸门 + ``/admin/endpoints/test`` 诊断。
+模型清单拉取：``/admin/endpoints/models`` 的发现出口 + 登记时其余模型的成员资格
+校验（共用 :func:`fetch_upstream_models`）。
 
 管理端此前从不验证来源端点：登记外部端点时 ``health_status`` 无条件写死 healthy
 （``services/endpoint_service.py``），全仓没有一处连过上游；而网关拿
@@ -38,7 +42,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from llmpod.apps.proxyserver.protocol.base import bearer_headers, json_payload, resolve_url
+from llmpod.apps.proxyserver.protocol.base import bearer_headers, json_payload, normalize_api_base, resolve_url
 from llmpod.apps.proxyserver.snapshot import RouteTarget
 from llmpod.config.settings import settings
 from llmpod.core.exceptions import LLMPodValidationError
@@ -60,6 +64,13 @@ _DETAIL_BYTES = _DETAIL_LIMIT * 4
 # 探测响应体的字节上限：流式收体、超限即断——非流式会把整个响应物化进内存，错配地址
 # （文件服务/大 blob）在墙钟内可灌满管理端内存。最小 chat 应答（含错误信封）远小于此。
 _PROBE_BODY_BYTES = 64 * 1024
+# 模型清单响应体的字节上限：清单比最小 chat 应答大得多（聚合网关数百模型 × 每条
+# 百余字节），探测的 64KB 会误杀；1MiB 覆盖千级模型仍远离内存风险。
+_MODELS_BODY_BYTES = 1024 * 1024
+# anthropic /models 默认每页 20 条，不带 limit 只能看到 20 个模型；1000 是其单页
+# 上限，一次拉满即够选模型（不做翻页循环）。openai 系不带参数：兼容网关对陌生
+# query 参数有直接 400 的，不冒这个险。
+_ANTHROPIC_MODELS_LIMIT = 1000
 
 
 @dataclass(frozen=True)
@@ -379,3 +390,121 @@ def _clamp(text: str) -> str:
 
 def _ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
+
+
+async def fetch_upstream_models(*, protocol: str, api_base: str, api_key: str | None) -> list[str]:
+    """向上游 ``GET {api_base}/models`` 拉模型清单，返回去重排序后的模型 id。
+
+    前端「填完 Key/地址 → 多选模型」的发现出口（/admin/endpoints/models）与批量
+    登记的成员资格校验（ensure_models_present）共用本函数。入参只有连接三元组：
+    清单发现发生在端点登记之前，没有 path / served_model 可言。
+
+    清单地址固定 ``normalize_api_base(api_base) + "/models"``（openai/anthropic
+    两协议同形），**不走** ``resolve_url``：端点登记的 ``path`` 是 chat 主路径
+    （如 chat/completions），拿它拼 /models 会拼出错误地址。
+
+    失败（非 2xx / 连不上 / 超时 / 非 JSON / 形状不对 / 体超限）抛 422：中文标题 +
+    上游原文，与探测闸门同款表达。上游返回空清单是如实回答，返回 ``[]``。连接
+    分段超时与墙钟双层时限同 ``probe_endpoint``（同 ``settings.endpoint_probe_timeout``）。
+    """
+    try:
+        url = normalize_api_base(api_base).rstrip("/") + "/models"
+    except ValueError as e:
+        raise LLMPodValidationError(f"端点地址无法解析（api_base={api_base!r}）：{e}") from e
+    params = {"limit": _ANTHROPIC_MODELS_LIMIT} if protocol == "anthropic" else None
+    try:
+        async with asyncio.timeout(settings.endpoint_probe_timeout):
+            async with httpx.AsyncClient(timeout=settings.endpoint_probe_timeout) as client:
+                # 流式收体并设字节上限（同 probe_endpoint 的防灌内存口径）
+                chunks: list[bytes] = []
+                received = 0
+                overflow = False
+                headers = _models_headers(protocol=protocol, api_key=api_key)
+                async with client.stream("GET", url, params=params, headers=headers) as resp:
+                    async for chunk in resp.aiter_bytes():
+                        received += len(chunk)
+                        if received > _MODELS_BODY_BYTES:
+                            overflow = True
+                            break
+                        chunks.append(chunk)
+                    body_bytes = b"".join(chunks)
+                    status_code = resp.status_code
+    except httpx.InvalidURL as e:
+        raise LLMPodValidationError(f"端点地址无法解析（api_base={api_base!r}）：{e}") from e
+    except httpx.TimeoutException as e:
+        raise _fetch_fail(
+            f"{url} → 拉取超时", f"超过 {settings.endpoint_probe_timeout:g}s（{type(e).__name__}）"
+        ) from e
+    except TimeoutError as e:
+        raise _fetch_fail(f"{url} → 拉取超时", f"超过 {settings.endpoint_probe_timeout:g}s") from e
+    except httpx.HTTPError as e:
+        raise _fetch_fail(f"{url} → 连接失败", _exc_detail(e)) from e
+
+    text = body_bytes[:_DETAIL_BYTES].decode("utf-8", "replace")
+    if 200 <= status_code < 300 and not overflow:
+        try:
+            payload = json.loads(body_bytes)
+        except ValueError:
+            raise _fetch_fail(f"{url} → 响应异常", f"响应体不是 JSON：{_clamp(text)}") from None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise _fetch_fail(f"{url} → 响应异常", '响应体缺少 data 数组（应为形如 {"data": [{"id": ...}]} 的对象）')
+        # 条目缺 id / id 非字符串的跳过（个别网关混入杂项条目），全缺才算形状不对
+        ids: set[str] = set()
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            model_id = item.get("id")
+            if isinstance(model_id, str) and model_id:
+                ids.add(model_id)
+        if data and not ids:
+            raise _fetch_fail(f"{url} → 响应异常", "data 数组里解析不出任何模型 id（条目均缺少字符串 id）")
+        return sorted(ids)
+    if overflow:
+        raise _fetch_fail(f"{url} → 响应异常", f"响应体超过 {_MODELS_BODY_BYTES} 字节，不是模型清单的形状")
+    raise _fetch_fail(f"{url} → HTTP {status_code}", _clamp(text))
+
+
+def _models_headers(*, protocol: str, api_key: str | None) -> dict:
+    """模型清单请求的鉴权头。
+
+    anthropic 三行规则与 ``_probe_request`` 同款（共用 ``_ANTHROPIC_VERSION``，
+    抄错守卫测试会红）；openai 系复用网关 ``bearer_headers``——GET 请求多带的
+    content-type 无害，Bearer 规则只维护网关这一份。
+    """
+    if protocol == "anthropic":
+        headers = {"anthropic-version": _ANTHROPIC_VERSION}
+        if api_key:
+            headers["x-api-key"] = api_key
+        return headers
+    return bearer_headers(api_key)
+
+
+async def ensure_models_present(
+    *,
+    protocol: str,
+    api_base: str,
+    api_key: str | None,
+    served_models: list[str],
+    skip_probe: bool = False,
+) -> None:
+    """登记的成员资格闸门：拉一次上游清单，请求的模型缺任何一个即 422。
+
+    调用方传**未被 chat 探测覆盖的模型**（登记路由只对第一个模型做 chat 强验证，
+    其余模型的存在性由这里把关）；空清单直接返回（单条登记没有其余模型，不发
+    这次 ``GET /models``）。跳过条件与 ``ensure_reachable`` 的前两档同源、也集中
+    在本模块：全局 ``settings.endpoint_probe_enabled`` 或请求体 ``skip_probe``。
+    """
+    if not served_models:
+        return
+    if not settings.endpoint_probe_enabled or skip_probe:
+        return
+    upstream_models = await fetch_upstream_models(protocol=protocol, api_base=api_base, api_key=api_key)
+    missing = sorted(set(served_models) - set(upstream_models))
+    if missing:
+        raise LLMPodValidationError(f"上游模型清单中没有以下模型：{'、'.join(missing)}")
+
+
+def _fetch_fail(where: str, detail: str | None) -> LLMPodValidationError:
+    """清单拉取失败的 422：失败位置 + 上游原文/异常文案（口径同 ``_reject_message``）。"""
+    return LLMPodValidationError(f"上游模型清单拉取失败（{where}）：{detail or '（上游未返回内容）'}")

@@ -123,6 +123,21 @@ def _extract_id(data: Any) -> str | None:
     return str(id_val) if id_val is not None else None
 
 
+def _clamp_resource_id(resource_id: str) -> str | None:
+    """resource_id 归一化：空串→None；超 ``AuditLog.RESOURCE_ID_MAX_CHARS`` 列宽收短。
+
+    PG 对 VARCHAR 超宽直接拒写，而审计写入失败只留 error 日志（绝不抛）——不收短
+    等于审计行整条静默丢失。这里只做硬截断兜底；批量等天然超宽的生产者应自己先
+    收成可读的快照（如端点批量登记的「前几个 id…共N个」），别依赖这里的硬切。
+    """
+    if not resource_id:
+        return None
+    if len(resource_id) <= AuditLog.RESOURCE_ID_MAX_CHARS:
+        return resource_id
+    log.warning("审计 resource_id 超列宽 %d，硬截断（action 侧应自收短）", len(resource_id))
+    return resource_id[: AuditLog.RESOURCE_ID_MAX_CHARS]
+
+
 def _result_data_id(result: Any) -> str | None:
     """从统一响应里兜底取资源 ID：``Result.data`` 的 ``id``（dict 或对象均支持）。"""
     if not isinstance(result, dict):
@@ -246,7 +261,8 @@ def _build_audit_entry(
     detail: dict | None = None,
     ip_address: str | None = None,
 ) -> AuditLog:
-    """构建一条审计行，统一字段归一化（空串→None、``detail`` 兜底空 dict）。
+    """构建一条审计行，统一字段归一化（空串→None、``detail`` 兜底空 dict、
+    ``resource_id`` 超列宽收短）。
 
     唯一定义处：``write_audit`` / 装饰器 ``_record`` 两条路径共用，
     避免字段约定（空串 vs None、``result`` 默认值）在多处漂移。
@@ -259,7 +275,7 @@ def _build_audit_entry(
         action=action,
         result=result,
         resource_type=resource_type or None,
-        resource_id=resource_id or None,
+        resource_id=_clamp_resource_id(resource_id),
         detail=detail or {},
         ip_address=ip_address or None,
     )
@@ -485,6 +501,7 @@ _ACTION_LABELS: dict[str, str] = {
     "upgrade_batch": "批量升级",
     "bootstrap": "节点引导",
     "probe": "探测",
+    "fetch_models": "拉取模型清单",
     "execute": "执行",
     # 以下只会出现在「权限拒绝」行（RBAC action 串）
     "read": "查看",

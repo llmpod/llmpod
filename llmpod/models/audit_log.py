@@ -23,6 +23,10 @@ class AuditLog(Base, IntIdMixin):
 
     __tablename__ = "audit_log"
 
+    # resource_id 列宽：快照超宽在这里收短（PG 对 VARCHAR 超宽直接拒写，审计写入
+    # 失败只留日志不抛，不收短等于整行静默丢失）
+    RESOURCE_ID_MAX_CHARS = 64
+
     actor_type: Mapped[str] = mapped_column(String(50), nullable=False, comment="操作者类型：user | system")
     # 未知/未认证主体记 0（system 预留 / 历史数据；登录失败审计只记注册用户，带真实 ID）
     actor_id: Mapped[int] = mapped_column(
@@ -49,7 +53,7 @@ class AuditLog(Base, IntIdMixin):
     resource_type: Mapped[str | None] = mapped_column(
         String(50), nullable=True, comment="资源类型（对齐权限 resource 串：user/tenant/api_key/...）"
     )
-    resource_id: Mapped[str | None] = mapped_column(String(64), nullable=True, comment="资源ID快照")
+    resource_id: Mapped[str | None] = mapped_column(String(RESOURCE_ID_MAX_CHARS), nullable=True, comment="资源ID快照")
     detail: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default="{}", comment="明细 JSONB：params（脱敏后请求参数）/ 返回摘要 / error"
     )

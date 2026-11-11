@@ -111,20 +111,19 @@ def route(admin_client, uniq):
     for protocol, served_model in (("openai", OPENAI_MODEL), ("anthropic", ANTHROPIC_MODEL)):
         ids: list[int] = []
         for tag in ("a", "b"):
-            endpoint = ok(
+            rows = ok(
                 admin_client,
                 "POST",
                 "/api/v1/admin/endpoints",
                 json={
                     "protocol": protocol,
                     "api_base": BASE,
-                    "served_model": served_model,
                     "api_key": KEY,
-                    "name": uniq(f"ep-{protocol}-{tag}"),
+                    "models": [{"served_model": served_model, "name": uniq(f"ep-{protocol}-{tag}")}],
                     "skip_probe": True,  # 真连由用例请求本身完成：不通会直接红
                 },
             )
-            ids.append(endpoint["id"])
+            ids.append(rows[0]["id"])
         endpoints[protocol] = ids
 
     bindings = [

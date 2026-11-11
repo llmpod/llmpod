@@ -50,6 +50,31 @@ async def list_endpoints(db: AsyncSession) -> list[ModelEndpoint]:
     return list((await db.execute(select(ModelEndpoint).order_by(ModelEndpoint.id))).scalars())
 
 
+async def find_external_endpoints_by_models(
+    db: AsyncSession,
+    *,
+    api_base: str,
+    protocol: str,
+    served_models: list[str],
+) -> list[ModelEndpoint]:
+    """按 (api_base, protocol, served_model) 查已登记的外部端点（登记的防重查）。
+
+    ``path`` 不参与同一性：它是 chat 主路径，不影响「同一上游的同一模型」这一定义；
+    ``api_base`` 按入参原样字符串比较（尾斜杠等写法差异视为不同地址，调用方口径
+    同此）。以 ``engine_type="external"`` 限定而非 ``deployment_id IS NULL``：语义
+    等价（外部登记恒写 external），等值条件也免去 IS NULL 在各测试桩上的解析差异。
+    """
+    rows = await db.execute(
+        select(ModelEndpoint).where(
+            ModelEndpoint.engine_type == "external",
+            ModelEndpoint.api_base == api_base,
+            ModelEndpoint.protocol == protocol,
+            ModelEndpoint.served_model.in_(served_models),
+        )
+    )
+    return list(rows.scalars())
+
+
 async def get_endpoint(db: AsyncSession, endpoint_id: int) -> ModelEndpoint:
     endpoint = await db.get(ModelEndpoint, endpoint_id)
     if endpoint is None:

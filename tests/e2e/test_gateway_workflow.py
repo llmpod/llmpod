@@ -150,20 +150,20 @@ def test_gateway_protocols_billing_isolation_and_revocation(admin_client, base_u
             ("embedding", "openai", EMBEDDING_MODEL),
             ("rerank", "openai", RERANK_MODEL),
         ):
-            endpoint = ok(
+            rows = ok(
                 admin_client,
                 "POST",
                 "/api/v1/admin/endpoints",
                 json={
-                    "name": uniq(f"gw-{kind}"),
                     "protocol": protocol,
                     "api_base": UPSTREAM_BASE,
                     "api_key": UPSTREAM_KEY,
-                    "served_model": served_model,
+                    "models": [{"served_model": served_model, "name": uniq(f"gw-{kind}")}],
                     # 登记探测固定发 chat；embedding/rerank 的真实连接由后面的对应请求验证。
                     "skip_probe": kind in ("embedding", "rerank"),
                 },
             )
+            endpoint = rows[0]
             endpoint_ids.append(endpoint["id"])
             endpoints[kind] = endpoint
             cleanup.callback(ok, admin_client, "POST", f"/api/v1/admin/endpoints/{endpoint['id']}/delete")

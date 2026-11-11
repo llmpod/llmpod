@@ -4,8 +4,9 @@
 
 - ``POST /admin/endpoints/test``：结论恒 200（报告结论，不把上游拒绝做成 4xx），
   上游原文原样回传；只有入参不足 422 / 端点不存在 404 / 本地部署端点 422 三种真错误；
-- 接入与编辑的闸门：探测不通 → 422 且**不落库**（行未被触碰）；跳过档（全局开关 /
-  ``skip_probe`` / 连接配置未变）各自生效；
+- 接入与编辑的闸门：探测不通 → 422 且**不落库**（行未被触碰）；编辑侧跳过档
+  （全局开关 / ``skip_probe`` / 连接配置未变）各自生效，登记侧的通过与跳过路径见
+  ``test_endpoint_models_routes.py``；
 - 健康写回只在「显式指定端点 + 探的正是该行存储配置」时发生，改了配置再测只报告。
 """
 
@@ -17,7 +18,6 @@ from httpx import AsyncClient
 
 from llmpod.app import app
 from llmpod.apps.webserver.auth.deps import get_current_user
-from llmpod.config.settings import settings
 from llmpod.core.exceptions import ErrorCode
 from llmpod.db import get_db
 from llmpod.models import ModelEndpoint
@@ -221,7 +221,12 @@ class TestProbeRoute:
 
 
 class TestCreateGate:
-    """接入前置闸门：不通即 422 且不落库。"""
+    """接入前置闸门：第一个模型 chat 探测不通即 422 且不落库。
+
+    通过路径 / 跳过档（skip_probe / 全局开关）的行为由
+    ``test_endpoint_models_routes.py`` 的登记套件覆盖（断言更强），此处只留
+    探测口径的两个独有断言：领域错误码与连接失败文案。
+    """
 
     async def test_blocked_when_unreachable(self, client: AsyncClient, session, monkeypatch):
         install_probe_transport(monkeypatch, replies(401, _UPSTREAM_ERROR))
@@ -231,9 +236,8 @@ class TestCreateGate:
             json={
                 "protocol": "openai",
                 "api_base": "https://api.example.com/v1",
-                "served_model": "gpt-4o",
-                "name": "错的 Key",
                 "api_key": "sk-bad",
+                "models": [{"served_model": "gpt-4o", "name": "错的 Key"}],
             },
         )
 
@@ -241,24 +245,6 @@ class TestCreateGate:
         assert response.json()["error_code"] == ErrorCode.VALIDATION_ERROR.value
         assert _UPSTREAM_ERROR in response.json()["message"]
         assert session.all(ModelEndpoint) == []  # 行未被触碰
-
-    async def test_created_when_reachable(self, client: AsyncClient, session, monkeypatch):
-        install_probe_transport(monkeypatch, replies(200, _OK_BODY))
-
-        response = await client.post(
-            BASE,
-            json={
-                "protocol": "openai",
-                "api_base": "https://api.example.com/v1",
-                "served_model": "gpt-4o",
-                "name": "对的 Key",
-                "api_key": "sk-live",
-            },
-        )
-
-        assert response.status_code == 200
-        rows = session.all(ModelEndpoint)
-        assert len(rows) == 1 and rows[0].name == "对的 Key"
 
     async def test_connection_failure_also_blocked(self, client: AsyncClient, session, monkeypatch):
         install_probe_transport(monkeypatch, unreachable)
@@ -268,49 +254,13 @@ class TestCreateGate:
             json={
                 "protocol": "openai",
                 "api_base": "https://nope.invalid/v1",
-                "served_model": "gpt-4o",
-                "name": "地址不通",
+                "models": [{"served_model": "gpt-4o", "name": "地址不通"}],
             },
         )
 
         assert response.status_code == 422
         assert "ConnectError" in response.json()["message"]
         assert session.all(ModelEndpoint) == []
-
-    async def test_skip_probe_bypasses(self, client: AsyncClient, session, monkeypatch):
-        seen = install_probe_transport(monkeypatch, unreachable)
-
-        response = await client.post(
-            BASE,
-            json={
-                "protocol": "openai",
-                "api_base": "https://nope.invalid/v1",
-                "served_model": "gpt-4o",
-                "name": "放行",
-                "skip_probe": True,
-            },
-        )
-
-        assert response.status_code == 200
-        assert seen == []
-        assert len(session.all(ModelEndpoint)) == 1
-
-    async def test_global_switch_off_bypasses(self, client: AsyncClient, session, monkeypatch):
-        seen = install_probe_transport(monkeypatch, unreachable)
-        monkeypatch.setattr(settings, "endpoint_probe_enabled", False)
-
-        response = await client.post(
-            BASE,
-            json={
-                "protocol": "openai",
-                "api_base": "https://nope.invalid/v1",
-                "served_model": "gpt-4o",
-                "name": "全局放行",
-            },
-        )
-
-        assert response.status_code == 200
-        assert seen == []
 
 
 class TestUpdateGate:
@@ -435,10 +385,10 @@ class TestUpdateGate:
 
 
 class TestSchemaContract:
-    """请求体字段契约（前端未改动，新字段必须是可选且向后兼容）。"""
+    """请求体字段契约（pydantic 默认忽略未知字段，别把拒绝未知字段当成约定）。"""
 
     async def test_extra_fields_ignored(self, client: AsyncClient, session, monkeypatch):
-        """老前端不带 skip_probe：请求照常可解（FastAPI 默认忽略未知字段）。"""
+        """未知字段照常可解：调用方多带的字段不阻断请求（FastAPI 默认行为）。"""
         install_probe_transport(monkeypatch, replies(200, _OK_BODY))
 
         response = await client.post(
@@ -446,8 +396,7 @@ class TestSchemaContract:
             json={
                 "protocol": "openai",
                 "api_base": "https://api.example.com/v1",
-                "served_model": "gpt-4o",
-                "name": "旧前端",
+                "models": [{"served_model": "gpt-4o", "name": "旧前端"}],
                 "unexpected_field": "ignored",
             },
         )
