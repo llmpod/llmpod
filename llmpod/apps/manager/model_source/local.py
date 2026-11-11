@@ -67,7 +67,7 @@ def build_local_model_files(probe: ModelProbe, path: str, revision: str | None =
     # 量化没写）降级为 None/False，不比现在差。
     # 有 config 也照样解析：GGUF 的 config.json 从不带量化信息，而 HF 路径是无条件把文件头
     # 传给 infer_quant 的——两条源口径必须一致，否则同一份产物在两处得到不同的量化值，
-    # recipe_digest 随之分叉成两个下载目录。config 优先的地方（is_moe / arch_shape）不受影响。
+    # 部署参数（量化相关 flag）随之算错。config 优先的地方（is_moe / arch_shape）不受影响。
     gguf_meta_obj = _infer_gguf_meta(probe, path, fmt)
     if probe.config:
         is_moe = inference.infer_moe(config)

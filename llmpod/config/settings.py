@@ -268,8 +268,9 @@ class Settings(BaseSettings):
 
     # ===== 模型分发（V1：HF 自动下载 + local）=====
     # upload/ 子目录为 POST /admin/models/upload 通用上传端点的落地路径（manager 本地）。
-    # 所有 Node 必须配同一 model_store_dir，canonical path = {model_store_dir}/{name-slug}-{recipe-digest}，
-    # 保多机 TP 路径一致（命名细节见 deployment/placement.py）。
+    # 所有 Node 必须配同一 model_store_dir（多机 TP 同路径不变量）；模型目录规则唯一定义处
+    # 见 deployment/placement.py（local 源 = source_url，远程源 = {store}/{name-slug}）。
+    # 必须是**绝对路径**：该路径由 manager 算好下发 node，且 docker 卷挂载要求绝对（相对会 invalid mount path 崩）。
     # 必须是**绝对路径**：该路径由 manager 算好下发 node，且 docker 卷挂载要求绝对（相对会 invalid mount path 崩）。
     model_store_dir: str = "/data/models"
     # 模型宿主侧真实目录（Node 侧卷改写用）。默认空 = 与 model_store_dir 同路径

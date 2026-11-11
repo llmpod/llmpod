@@ -15,14 +15,12 @@ secrets：仅内存随 RPC 下发，**不入 task.payload / 库 / 日志**（见
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import os
 import re
 import unicodedata
 
-from collections.abc import Sequence
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -47,7 +45,7 @@ from llmpod.config.constants import (
 from llmpod.config.enums import ModelSource
 from llmpod.config.settings import settings
 from llmpod.core.advertise import manager_http_origin
-from llmpod.core.exceptions import LLMPodError, NotFound
+from llmpod.core.exceptions import LLMPodError, LLMPodValidationError, NotFound
 from llmpod.core.secrets import build_secrets
 from llmpod.db import get_db_context
 from llmpod.models.instance import Instance
@@ -84,8 +82,8 @@ async def task_status_map(db, task_ids: dict[str, str]) -> dict[str, str]:
 def model_extra_files(model) -> list[str]:
     """模型的配套文件清单（repo 相对路径）——随主模型一起下载/校验（如 GGUF 视觉投影器）。
 
-    单一取用点：下发（``ensure_present``）与目录寻址（``canonical_local_dir`` 的 digest）
-    必须看到同一份清单，否则同一模型会算出两个目录。
+    清单随 payload 下发，node 侧两处消费：下载 allow_patterns 收窄、判在位逐项比对。
+    两处吃的是同一份（payload 里的 ``extra_files``），这里改口径即两端同步。
     """
     return [model.mmproj_file] if model.mmproj_file else []
 
@@ -104,77 +102,75 @@ def mmproj_path_for(model, base_dir: str | None) -> str | None:
 
 
 def slugify_name(name: str) -> str:
-    """``model.name`` → 路径安全 slug：小写、非字母数字→``-``、去头尾、截断、空回退 ``model``。
+    """``model.name`` → 路径安全 slug：取末段（repo 写法 ``Qwen/Qwen3-8B`` → ``Qwen3-8B``）、
+    小写、非字母数字→``-``、去头尾、截断、空回退 ``model``。
 
     保留 Unicode 字母/数字（中文等可读名不丢）；NFKC 归一化把全角/兼容字符折成标准形。
+    目录名与注册名直接对应（``/data/models/qwen3-8b``），用户可用 ``hf download
+    --local-dir`` / modelscope ``--local_dir`` 直接在 store 里预置与管理。
     """
-    s = unicodedata.normalize("NFKC", name or "").lower()
+    s = unicodedata.normalize("NFKC", (name or "")).lower()
+    s = s.rsplit("/", 1)[-1]  # repo 写法取末段：org 前缀不进目录名
     # [^\w]+ 一次吞掉全部非字母数字连片（含连续 ``-``），无需二次塌缩；截 48 再 strip 两端 ``-``
     s = re.sub(r"[^\w]+", "-", s)[:48].strip("-")
     return s or "model"
 
 
-def recipe_digest(
-    source: str | None,
-    source_url: str | None,
-    source_subpath: str | None,
-    revision: str | None,
-    format: str | None = None,
-    quantization: str | None = None,
-    source_kind: str | None = None,
-    hash: str | None = None,
-    extra_files: Sequence[str] | None = None,
-) -> str:
-    """下载配方的稳定短哈希（前 12 位 sha256），None 字段记空串。
-
-    身份 = 怎么获取（source + 来源 + 变体子路径 + 版本）+ 权重形态（format/quantization/
-    source_kind/hash）+ 配套文件（视觉投影器）——同仓库不同格式/量化/源形态的模型行解析到
-    **不同**目录，防未下载直接以第一份权重服务第二份（旧实现漏形态字段导致目录碰撞）。
-    与 DB 自增 id、与 ``model.name`` 都无关——清库 id 重建、改名都不会改变它。
-    """
-    fields = [
-        source or "",
-        source_url or "",
-        source_subpath or "",
-        revision or "",
-        format or "",
-        quantization or "",
-        source_kind or "",
-        hash or "",
-    ]
-    # 配套文件只在非空时入键：无 mmproj 的模型 digest 与旧版逐字节一致（已下载目录不失效）
-    if extra_files:
-        fields.append(",".join(sorted(extra_files)))
-    return hashlib.sha256("|".join(fields).encode("utf-8")).hexdigest()[:12]  # 12 位 = 48bit，碰撞概率可忽略
-
-
 def canonical_local_dir(model: Model) -> str:
-    """模型下载目录 ``{model_store_dir}/{name-slug}-{digest}``（恒为绝对路径）。
+    """模型目录（恒为绝对路径；规划期估计值，权威路径以节点回报为准）：
 
-    所有 Node 配同一 ``model_store_dir`` → 同 model 路径全 Node 一致，多机 TP 跑同一条
-    ``--model`` 不会路径分叉。远程源（hf/oss）身份用配方哈希（source + source_url + revision
-    + 形状，revision 固定 sha），可读部分用 name。local/manager 源的 ``source_url`` 是每次上传
-    生成的独立目录（含随机后缀）、``name`` 是可改显示名——身份改用「source + 形状 + 内容哈希」
-    的稳定 digest（排除 source_url/subpath/revision）：同名同内容不重下、内容变了才重下。
+    - local/manager 源：**= source_url**（node 与 manager 常共享同一存储挂载，同机
+      直接用源目录、远端下载到同一路径——所有节点 model_path 恒相同，多机 TP 不分叉；
+      内容身份由目录本身承载）。source_url 为单文件时取其所在目录，文件名由
+      source_subpath 定位。路径合法性（store 内、非根）由 ``ensure_present`` 下发前校验。
+    - hf/oss 等远程源：``{store}/{name-slug}``（slug 取 name 末段），下载器以
+      ``local_dir`` 模式直写该目录——与 ``hf download --local-dir`` / modelscope
+      ``--local_dir`` 的落盘布局一致，用户在 store 内用官方 CLI 预置/管理的目录平台
+      直接可用；重复下发由 ``hf_hub_download`` 的 etag 元数据校验跳过（不搬字节）。
     """
-    slug = slugify_name(model.name)
-    url, subpath, rev = (
-        (None, None, None)
-        if ModelSource.is_manager_source(model.source)
-        else (model.source_url, model.source_subpath, model.revision)
+    if ModelSource.is_manager_source(model.source):
+        d = manager_source_dir(model.source_url)
+        if d is None:
+            return os.path.abspath(settings.model_store_dir)  # 无源路径：占位，下发前被拦
+        return str(d)
+    return os.path.abspath(f"{settings.model_store_dir}/{slugify_name(model.name)}")
+
+
+def manager_source_dir(source_url: str | None) -> Path | None:
+    """local/manager 源的落盘目录推导（canonical / 建模与下发校验 / 清扫在役判定 /
+    删除级联共用，改路径规则只改这里）：
+
+    ``source_url`` → expanduser → 单文件取所在目录 → resolve。空 source_url → None。
+    """
+    raw = (source_url or "").strip()
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    if p.is_file():
+        p = p.parent
+    return p.resolve()
+
+
+def validate_manager_source(source: str | None, source_url: str | None) -> None:
+    """local 源 source_url 合法性校验（建模 create/update 与下发 ensure_present 共用）。
+
+    必须解析为 ``model_store_dir`` 之内的目录，且不是 store 根 / upload 根——坏路径
+    在入库或下发前显式报错，不静默落成「创建成功、部署才报错」的行。非 local 源恒通过。
+    """
+    if not ModelSource.is_manager_source(source):
+        return
+    resolved = manager_source_dir(source_url)
+    store_root = Path(settings.model_store_dir).expanduser().resolve()
+    ok = (
+        resolved is not None
+        and resolved != store_root
+        and resolved.is_relative_to(store_root)
+        and resolved != (store_root / "upload")
     )
-    digest = recipe_digest(
-        model.source,
-        url,
-        subpath,
-        rev,
-        format=model.format,
-        quantization=model.quantization,
-        source_kind=model.source_kind,
-        hash=model.hash,
-        extra_files=model_extra_files(model),
-    )
-    return os.path.abspath(f"{settings.model_store_dir}/{slug}-{digest}")
+    if not ok:
+        raise LLMPodValidationError(
+            f"local 源 source_url 不是 {settings.model_store_dir} 之内的合法目录: {source_url!r}（请修正模型来源路径）"
+        )
 
 
 def _is_manager_source(model_or_source) -> bool:
@@ -327,8 +323,6 @@ class PlacementService:
             #    自然转入下载。防「status=present 但目录空」直通容器（空权重上线）。
             nm = await self._lock_node_model(db, model_id, node_id)
             nm.desired_state = NodeModelDesiredState.PRESENT
-            if not nm.local_dir:
-                nm.local_dir = canonical_local_dir(model)
 
             # 2. 同 resource_key 的全部历史 task：一条查询取出（active 命中判 + attempt 推导共用）
             rows = list((await db.execute(select(Task).where(Task.resource_key == resource_key))).scalars())
@@ -337,12 +331,18 @@ class PlacementService:
             # staging 每轮轮询不重复 dispatch（省 build_secrets 解密 + ensure_task RPC）。
             need_dispatch = False
             if task is None:
+                # 新建任务前校验 local 源路径（存在 active 任务时不重跑——轮询热路径省
+                # 一次 stat/resolve，且在飞任务的目录本就不该再变）
+                validate_manager_source(model.source, model.source_url)
                 if trailing_fail_count(rows) >= MAX_AUTO_ATTEMPTS:
                     nm.status = NodeModelState.FAILED
                     nm.last_error = f"超过自动重试上限 ({MAX_AUTO_ATTEMPTS})，等待人工处理"
                     log.warning("placement %s: 连续失败 %d 次超上限，不再自动创建", resource_key, MAX_AUTO_ATTEMPTS)
                     return None
                 attempt = _next_attempt(rows)
+                # canonical 随建新任务刷新（不做首写冻结）：模型行更新（改源路径/换 revision）
+                # 后，新任务落到新目录；在飞任务不受影响——节点回报 local_dir 时投影写回权威值
+                nm.local_dir = canonical_local_dir(model)
                 # 3. 构造 task（payload 不含 secrets）。看门狗 12h：大模型下载
                 #    （node 内部 3 次重试 + 断点续传）合法耗时以小时计，取值只兜
                 #    「await 永不返回」的挂死，不误杀慢下载

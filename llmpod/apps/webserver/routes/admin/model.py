@@ -20,6 +20,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from llmpod.apps.manager.deployment.feasibility import FeasibilityReport, assess_feasibility
+from llmpod.apps.manager.deployment.placement import manager_source_dir, validate_manager_source
 from llmpod.apps.manager.model_source import ModelFiles, get_inspector
 from llmpod.apps.manager.model_source.content_hash import compute_content_hash
 from llmpod.apps.webserver.auth.deps import get_current_user, require_permission
@@ -224,7 +225,7 @@ class ModelDeleteData(BaseModel):
     deleted: bool = Field(True, description="删除是否生效")
     purged_dir: str | None = Field(None, description="连带清理的盘上目录（未清理为 None）")
     purged_dirs: list[str] = Field(
-        default_factory=list, description="连带清理的全部盘上目录（canonical + upload；purged_dir 为首个，兼容旧字段）"
+        default_factory=list, description="连带清理的全部盘上目录（仅平台上架的 upload 产物；purged_dir 为首个，兼容旧字段）"
     )
 
 
@@ -362,9 +363,11 @@ async def create_model(
 ):
     """创建模型。type 来自用户选择（前端预填 /inspect 的 suggested_type）；元数据取自回传 ``files``。"""
     files = request.files
+    # local 源路径合法性前置：坏路径不落库（否则创建成功、部署才报错）
+    validate_manager_source(request.source, request.source_url)
 
-    # local 源内容指纹：采样哈希（最大权重文件）填 Model.hash，让目录身份反映内容，
-    # 重传改了权重→换目录→node 重下；没改→不重下。
+    # local 源内容指纹（采样哈希）：溯源与内容比对用。下载目录由 source_url 决定
+    # （canonical = source_url），与指纹无关。
     content_digest = await _manager_content_hash(request.source, request.source_url)
 
     m = Model(
@@ -394,7 +397,7 @@ async def create_model(
         source_subpath=files.source_subpath,
         # 视觉投影器（GGUF 多模态）：随主模型下发 + 部署期注入 --mmproj
         mmproj_file=files.mmproj_file,
-        # 内容指纹（local 源采样哈希，其余源通常为 None）；进 recipe_digest 做内容寻址
+        # 内容指纹（local 源采样哈希，其余源通常为 None）：模型溯源与比对用
         hash=content_digest,
         hash_mode="fingerprint" if content_digest else "none",
         # source_auth：应用层加密入库（HF token 等）；API 永不回显明文（ModelOut exclude）
@@ -527,7 +530,10 @@ async def update_model(
     # 若改了 model_type，重推导 is_vision（与 create_model 口径一致），除非调用方显式传了 is_vision
     if "model_type" in updates and "is_vision" not in updates:
         m.is_vision = ModelType.is_vision(updates["model_type"])
-    # local 源：按当前盘上内容刷新内容指纹（覆盖重传后 update 一次即重算，目录随之换）
+    # 来源配方被改动时重校验 local 源路径（与 create_model 同口径；未动配方不打扰旧行）
+    if "source" in updates or "source_url" in updates:
+        validate_manager_source(m.source, m.source_url)
+    # local 源：按当前盘上内容刷新内容指纹（溯源用；下载目录恒 = source_url，与指纹无关）
     digest = await _manager_content_hash(m.source, m.source_url)
     if digest:
         m.hash = digest
@@ -554,12 +560,12 @@ async def delete_model(
 
     级联删盘只动**平台生成的目录**，用户手工预置的目录绝不级联删：
 
-    - canonical 下载目录（``{model_store_dir}/{slug}-{digest}``，配方哈希命名，平台生成）：
-      恒 best-effort 清理（单机部署 node 与 manager 同盘，不清会残留孤儿）；
-    - ``source_url`` 目录：仅当它是平台上架的 upload 产物（位于 ``{store}/upload/`` 之下）
-      才删——用户把模型手工放进 store 的目录（source_url 直指它）只删库行，整目录保留
-      （此前无差别 rmtree 误删过用户预置目录）；
-    - 远程（huggingface/oss/...）或 source 为空：仅删 DB，不动盘（远程权重本不在 manager 盘）。
+    - local 源：canonical = source_url（同目录直接用，不再单独生成下载目录），故清理
+      只看 source_url——平台上架的 upload 产物（位于 ``{store}/upload/`` 之下）级联删；
+      用户手工放进 store 的目录（source_url 直指它）只删库行，整目录保留（此前无差别
+      rmtree 误删过用户预置目录）。多行共享同一 source_url 时跳过（另一行还在用）；
+    - HF/远程源（huggingface/oss/...）：仅删 DB，不动盘（下载目录可能被同名模型行或
+      用户 CLI 预置内容沿用，平台不代删）。
     """
     m = await db.get(Model, model_id)
     if m is None:
@@ -580,67 +586,41 @@ async def delete_model(
     await db.commit()
 
     if ModelSource.is_manager_source(source) and src_url:
-        from llmpod.apps.manager.deployment.placement import canonical_local_dir
         from llmpod.apps.webserver.services.upload import upload_root
 
         store_root = Path(settings.model_store_dir).expanduser().resolve()
         upload_root = upload_root().resolve()
 
-        async def _purge(raw: Path | str) -> None:
-            """best-effort 删一个平台生成目录（严格位于 store 之内、非根、存在才动）。
-
-            rmtree 跳线程执行（大目录数十秒，事件循环内同步删会卡死整个 webserver）；
-            删除成功才记入回执——静默吞错却报「已清理」会让运维误以为盘已释放。
-            目标 resolve 后是文件（非目录）时按文件删，同样只有成功才入回执。
-            """
-            resolved = safe_resolve(store_root, raw)
-            if resolved is None or resolved == store_root or not resolved.exists():
-                return
-            if os.path.islink(resolved):
-                return  # 不穿透链接（与分发端点同口径）；``..`` 越界已由 safe_resolve 判 None
-            if resolved == upload_root:
-                return  # upload 根本身不删（source_url 直指根时整棵上传树会被端掉）
-            try:
-                if resolved.is_dir():
-                    await asyncio.to_thread(shutil.rmtree, resolved)
-                else:
-                    await asyncio.to_thread(resolved.unlink)
-            except OSError as e:
-                log.warning("delete_model %s: 清理 %s 失败（留孤儿目录）: %s", model_id, resolved, e)
-                return
-            purged_dirs.append(str(resolved))
-
-        # 1) canonical 目录：平台按配方哈希命名生成，恒属平台，清掉防孤儿残留。
-        #    但目录按「名字+内容哈希」命名，可被多条 Model 行共享（同名同内容只落一目录）——
-        #    还有别的行指向同一目录时跳过，只删本行（否则会把别行实例正挂载读取的权重删掉）。
-        canonical = canonical_local_dir(m)
-        siblings = list(
-            (
-                await db.execute(
-                    select(Model).where(
-                        Model.source == m.source,
-                        Model.name == m.name,
-                        Model.id != m.id,
-                    )
-                )
-            ).scalars()
-        )
-        shared = any(canonical_local_dir(sib) == canonical for sib in siblings)
-        if shared:
-            log.info(
-                "delete_model %s: canonical 目录 %s 被其他同名同内容行共享，保留目录仅删库行",
-                model_id,
-                canonical,
-            )
-        else:
-            await _purge(canonical)
-        # 2) source_url：仅平台上架的 upload 产物才级联删，用户预置目录保留
-        #    （store_root 本身不在 upload/ 之下，is_relative_to 已蕴含非根判定）
+        # local 源的 canonical = source_url（同一目录），无独立的平台下载目录可清——
+        # 级联只看 source_url 本身：平台上架的 upload 产物才删；upload 根本身与用户
+        # 预置目录恒保留。共享判定经 manager_source_dir 统一解析（尾斜杠/``..``/软链
+        # 别名同目录、单文件源取父目录——按字面量比会漏判误删他行在用的目录）
         src = safe_resolve(store_root, src_url)
-        if src is not None and src.is_relative_to(upload_root):
-            await _purge(src)
-        elif src is not None:
-            log.info("delete_model %s: source_url %s 非平台 upload 目录，保留用户目录仅删库行", model_id, src_url)
+        if src is None or not src.is_relative_to(upload_root) or src == upload_root:
+            log.info("delete_model %s: source_url %s 非平台 upload 产物，保留目录仅删库行", model_id, src_url)
+        else:
+            siblings = list((await db.execute(select(Model).where(Model.source == m.source))).scalars())
+            shared = any(
+                sib.id != model_id and manager_source_dir(sib.source_url) == src for sib in siblings
+            )
+            if shared:
+                log.info(
+                    "delete_model %s: source_url %s 被其他模型行共享，保留目录仅删库行",
+                    model_id,
+                    src_url,
+                )
+            elif src.exists():
+                # best-effort 删盘：rmtree 跳线程（大目录数十秒，事件循环内同步删会卡死
+                # webserver）；成功才记回执——静默吞错却报「已清理」会让运维误以为盘已释放
+                try:
+                    if src.is_dir():
+                        await asyncio.to_thread(shutil.rmtree, src)
+                    else:
+                        await asyncio.to_thread(src.unlink)
+                except OSError as e:
+                    log.warning("delete_model %s: 清理 %s 失败（留孤儿目录）: %s", model_id, src, e)
+                else:
+                    purged_dirs.append(str(src))
 
     return success(
         ModelDeleteData(

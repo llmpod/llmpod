@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 from llmpod.apps.manager.deployment.engine.llamacpp import LlamaCppAdapter
-from llmpod.apps.manager.deployment.placement import recipe_digest
 from llmpod.apps.manager.deployment.schemas import InstanceSpec, Topology
 from llmpod.apps.manager.model_source import inference
 from llmpod.apps.node.executors._hf import _allow_patterns
@@ -57,19 +56,6 @@ class TestAllowPatterns:
         assert _allow_patterns(None, ["mmproj-F16.gguf"]) is None
         assert _allow_patterns(None, []) is None
         assert _allow_patterns("", ["mmproj-F16.gguf"]) is None
-
-
-class TestRecipeDigest:
-    def test_backward_compatible_without_extras(self):
-        """无 mmproj 的模型 digest 与旧版逐字节一致（已下载目录不失效）。"""
-        base = recipe_digest("huggingface", "org/m", "m.gguf", "main")
-        assert base == recipe_digest("huggingface", "org/m", "m.gguf", "main", extra_files=[])
-        assert base == recipe_digest("huggingface", "org/m", "m.gguf", "main", extra_files=None)
-
-    def test_extra_files_change_digest(self):
-        base = recipe_digest("huggingface", "org/m", "m.gguf", "main")
-        with_mmproj = recipe_digest("huggingface", "org/m", "m.gguf", "main", extra_files=["mmproj-F16.gguf"])
-        assert base != with_mmproj
 
 
 class TestVerifyExtras:

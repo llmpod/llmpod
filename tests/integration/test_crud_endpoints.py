@@ -180,7 +180,7 @@ class _ModelFakeSession:
                 return self._rows
 
         # 按 select 目标实体分发：部署引用守卫（查 ModelDeployment）恒空，
-        # canonical 共享行查询（查 Model）返回预置 siblings
+        # 共享行查询（查 Model）返回预置 siblings
         target = stmt.column_descriptions[0]["entity"]
         if target is Model:
             return _Result(list(self.siblings))
@@ -231,6 +231,7 @@ class TestModelDelete:
         assert response.json()["error_code"] == ErrorCode.NOT_FOUND.value
 
     async def test_delete_local_purges_dir(self, client: AsyncClient, monkeypatch, tmp_path):
+        """canonical（= source_url）是平台上架的 upload 产物 → 级联删（防孤儿残留）。"""
         from llmpod.config.settings import settings
         from llmpod.models.model import Model
 
@@ -249,7 +250,7 @@ class TestModelDelete:
         assert response.status_code == 200, response.text
         data = response.json()["data"]
         assert data["model_id"] == 1 and data["deleted"] is True
-        # upload 产物属于平台生成目录 → 级联删（canonical 目录在 tmp_path 下不存在，仅 1 条）
+        # upload 产物属于平台生成目录 → 级联删
         assert data["purged_dir"] == str(staged.resolve())
         assert data["purged_dirs"] == [str(staged.resolve())]
         # 目录确实被删
@@ -277,49 +278,22 @@ class TestModelDelete:
         assert user_dir.exists(), "用户预置目录不得被级联删除"
         assert (user_dir / "model.gguf").exists()
 
-    async def test_delete_local_purges_canonical_dir(self, client: AsyncClient, monkeypatch, tmp_path):
-        """canonical 目录（slug-digest 命名，平台生成）确实被清掉，防孤儿残留。
-
-        digest 由 canonical_local_dir 按模型配方计算——用真实函数反推目录路径，
-        预建该目录后断言删除后不存在且回执如实列出（此前该用例只断言 deleted，
-        盘清理实际零覆盖）。
-        """
-        from llmpod.apps.manager.deployment.placement import canonical_local_dir
-        from llmpod.config.settings import settings
-
-        app.dependency_overrides[get_current_user] = _admin_user
-        monkeypatch.setattr(settings, "model_store_dir", str(tmp_path))
-
-        m = _local_gguf_model(3, "qwen", tmp_path / "upload" / "qwen-src")
-        app.dependency_overrides[get_db] = _db_yielding_model(m)
-
-        canonical = Path(canonical_local_dir(m))
-        canonical.mkdir(parents=True)
-        (canonical / "model.gguf").write_bytes(b"x" * 10)
-
-        response = await client.post("/api/v1/admin/models/3/delete")
-
-        assert response.status_code == 200, response.text
-        assert not canonical.exists(), "canonical 目录必须被清理"
-        assert str(canonical) in response.json()["data"]["purged_dirs"]
-
     async def test_delete_local_shared_canonical_dir_preserved(self, client: AsyncClient, monkeypatch, tmp_path):
-        """同名同内容的另一条 Model 行共享 canonical 目录 → 只删本行，目录保留。"""
-        from llmpod.apps.manager.deployment.placement import canonical_local_dir
+        """另一条 Model 行共享同一 source_url → 只删本行，目录保留。"""
         from llmpod.config.settings import settings
 
         app.dependency_overrides[get_current_user] = _admin_user
         monkeypatch.setattr(settings, "model_store_dir", str(tmp_path))
 
-        m = _local_gguf_model(3, "qwen", tmp_path / "upload" / "qwen-src")
-        sibling = _local_gguf_model(9, "qwen", tmp_path / "upload" / "qwen-src-2")
-        assert canonical_local_dir(m) == canonical_local_dir(sibling), "前置：同名同内容同目录"
+        shared_dir = tmp_path / "upload" / "qwen-src"
+        m = _local_gguf_model(3, "qwen", shared_dir)
+        sibling = _local_gguf_model(9, "qwen", shared_dir)
 
         session = _ModelFakeSession(m)
         session.siblings = [sibling]  # 共享行仍存活
         app.dependency_overrides[get_db] = _db_yielding_session(session)
 
-        canonical = Path(canonical_local_dir(m))
+        canonical = Path(shared_dir)
         canonical.mkdir(parents=True)
         (canonical / "model.gguf").write_bytes(b"x" * 10)
 

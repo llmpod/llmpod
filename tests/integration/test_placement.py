@@ -218,8 +218,8 @@ class TestEnsurePresent:
         nm = session.all(NodeModel)
         assert len(nm) == 1
         assert nm[0].desired_state == "present" and nm[0].status == "absent"
-        # local_dir 现为 {name-slug}-{digest}（不用自增 id，清库重建 id 不串模型）
-        assert nm[0].local_dir.endswith("/m-79436ad53f8c")
+        # local_dir 为 {store}/{name-slug}（与 hf download --local-dir 同布局，用户可直管）
+        assert nm[0].local_dir.endswith("/m")
 
         # secrets 边界：payload 不含凭证，dispatch 收独立 secrets（无凭证→None）
         assert "source_auth_encrypted" not in t.payload
@@ -287,6 +287,41 @@ class TestEnsurePresent:
         assert len(tasks) == 2  # 历史终态 + 新建
         new = next(t for t in tasks if t.id == tid)
         assert new.attempt == 2 and new.status == "PENDING"
+
+    async def test_local_dir_refreshed_on_new_task(self, monkeypatch, tmp_path):
+        """nm.local_dir 建新任务时刷新为当前 canonical（不再首写冻结）：模型行换
+        source_url 后，新任务落新目录，旧缓存目录不拖累。"""
+        monkeypatch.setattr(placement_mod.settings, "model_store_dir", str(tmp_path))
+        old_dir = tmp_path / "old-model"
+        new_dir = tmp_path / "new-model"
+        session = FakeSession()
+        model = _model(session, source="local", source_url=str(old_dir))
+        session.preload(
+            NodeModel(model_id=1, node_id="n1", desired_state="present", status="present", local_dir=str(old_dir))
+        )
+        model.source_url = str(new_dir)  # 模型行更新（旧实现冻结旧值）
+        ensures = []
+        _patch_db(monkeypatch, session)
+        _patch_dispatch(monkeypatch, ensures=ensures)
+
+        await PlacementService().ensure_present(1, "n1")
+
+        nm = session.all(NodeModel)[0]
+        assert nm.local_dir == str(new_dir)  # 刷新为当前 canonical
+        task = session.all(Task)[0]
+        assert task.payload["local_dir"] == str(new_dir)  # 任务用新目录下发
+
+    async def test_local_source_invalid_path_rejected(self, monkeypatch):
+        """local 源 source_url 在 store 外 → staging 显式失败（中文领域错误），
+        不产生「下载到意外路径」的任务。"""
+        session = FakeSession()
+        _model(session, source="local", source_url="/etc/passwd")
+        _patch_db(monkeypatch, session)
+        _patch_dispatch(monkeypatch, ensures=[])
+
+        with pytest.raises(LLMPodError, match="合法目录"):
+            await PlacementService().ensure_present(1, "n1")
+        assert session.all(Task) == []  # 未建任务
 
     async def test_attempt_cap_blocks_creation(self, monkeypatch):
         """超过 MAX_AUTO_ATTEMPTS 不再自动建，标 node_model.failed。"""

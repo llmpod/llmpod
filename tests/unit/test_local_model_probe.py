@@ -306,7 +306,7 @@ class TestLocalGGUFHeaderRead:
         """有 config.json 也读 GGUF 头——HF 路径无条件这么做，两条源口径必须一致。
 
         GGUF 的 config.json 从不带量化信息；不读头就会退回文件名，同一份产物在
-        local 与 HF 两条源上得到不同的量化值 → recipe_digest 分叉成两个下载目录。
+        local 与 HF 两条源上得到不同的量化值 → 部署参数随之算错。
         """
         (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen2"}), encoding="utf-8")
         (tmp_path / "model-Q5_K_L.gguf").write_bytes(_gguf_with_header(file_type=15, layers=48))

@@ -771,7 +771,7 @@ async def _find_staged_on_disk(sid: str) -> Path | None:
 # ============================================================
 
 
-async def sweep_expired_sessions(r: aioredis.Redis) -> int:
+async def sweep_expired_sessions(r: aioredis.Redis, referenced: set[str] | None = None) -> int:
     """扫 model_store_dir/upload/* 清过期/孤儿目录。返回清理数。
 
     挂 webserver 启动生命周期，每 upload_sweep_interval_seconds 跑一次。
@@ -779,12 +779,18 @@ async def sweep_expired_sessions(r: aioredis.Redis) -> int:
     - .session.json 的 sid Redis 无对应会话且已过期 → 删目录。
     - 无 .session.json 的孤儿分片目录，mtime 超 TTL → 删。
     - 顺手删 .tmp 残留（崩溃在 rename 前的）。
+    - ``referenced``：已被 Model.source_url 引用的目录（resolved 绝对路径集）恒跳过——
+      local 源模型的 canonical 就是 source_url 目录，引擎可能正挂载读取，TTL 到点也不删。
     """
     root = upload_root()
     if not await asyncio.to_thread(lambda: root.is_dir()):
         return 0
     cleaned = 0
     for d in await asyncio.to_thread(_list_dirs, root):
+        # 比对双侧统一 resolve：store 路径含符号链接时字面量（/data/models/...）与
+        # 真实路径（/mnt/.../models/...）不同，不 resolve 会永不命中、引用守卫失效
+        if referenced and str(d.resolve()) in referenced:
+            continue  # 在役模型权重目录（canonical=source_url），清扫不碰
         try:
             cleaned += await _sweep_one_dir(r, d)
         except Exception as e:  # 单目录异常不影响整体扫描
@@ -887,14 +893,51 @@ def _is_orphan_stale(d: Path) -> bool:
 
 
 async def _sweep_once(r: aioredis.Redis) -> None:
-    """单轮清理：清 .tmp/孤儿/超期目录。
+    """单轮清理：清 .tmp/孤儿/超期目录（跳过被 Model.source_url 引用的在役目录）。
 
     首轮由 every(immediate=True) 立即触发，启动即等同自愈——无需单独的
-    startup_self_heal 步骤。
+    startup_self_heal 步骤。引用集每轮现查（模型增删随时间变化，缓存会漏删/误删），
+    查不到（DB 故障）整轮跳过——宁可不清理，不在信息缺失时删盘。
     """
-    n = await sweep_expired_sessions(r)
+    referenced = await _referenced_model_dirs()
+    if referenced is None:
+        return
+    n = await sweep_expired_sessions(r, referenced=referenced)
     if n:
         log.info("upload sweep: cleaned %d dir(s)", n)
+
+
+async def _referenced_model_dirs() -> set[str] | None:
+    """local 源 Model.source_url 解析到 upload/ 之内的目录集（resolved 绝对路径）。
+
+    判定口径与删除路由一致：仅 manager 源且路径落在 upload 根内才算在役上传产物；
+    越界/不可解析路径直接忽略（sweep 本就只扫 upload/）。单文件 source_url 取其
+    所在目录——canonical 与 sweep 的遍历单位都是目录，按文件比对会永不命中。
+    DB 故障 → None：调用方跳过整轮清扫（fail-closed——按空集继续恰在 DB 故障时
+    把在役权重目录当过期产物删掉，不可逆）。
+    """
+    from sqlalchemy import select
+
+    from llmpod.apps.manager.deployment.placement import manager_source_dir
+    from llmpod.config.enums import ModelSource
+    from llmpod.db import get_db_context
+    from llmpod.models.model import Model
+
+    try:
+        async with get_db_context() as db:
+            rows = list((await db.execute(select(Model))).scalars())
+    except Exception as e:
+        log.warning("sweep: 读 Model 引用集失败，跳过本轮清扫: %s", e)
+        return None
+    root = upload_root().resolve()
+    out: set[str] = set()
+    for m in rows:
+        if not ModelSource.is_manager_source(m.source):
+            continue
+        resolved = manager_source_dir(m.source_url)
+        if resolved is not None and resolved.is_relative_to(root):
+            out.add(str(resolved))
+    return out
 
 
 # ============================================================

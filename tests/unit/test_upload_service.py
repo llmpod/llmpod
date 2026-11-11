@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import shutil
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -721,6 +722,78 @@ class TestSweep:
 
         monkeypatch.setattr(upl, "_inspect_dir_sync", boom)
         assert await upl.sweep_expired_sessions(rds) == 0
+
+    async def test_referenced_dir_survives_ttl(self, rds, tmp_path):
+        """被 Model.source_url 引用的目录恒跳过——local 源模型的 canonical 就是该目录，
+        引擎可能正挂载读取；TTL 到点也不清。"""
+        resp = await _declared(rds)
+        staged = _staged(resp, tmp_path)
+        mirror = json.loads((staged / ".session.json").read_text(encoding="utf-8"))
+        mirror["expires_at"] = 1  # 已过期：无引用时必删
+        (staged / ".session.json").write_text(json.dumps(mirror), encoding="utf-8")
+
+        cleaned = await upl.sweep_expired_sessions(rds, referenced={str(staged.resolve())})
+        assert cleaned == 0
+        assert staged.exists()
+
+    async def test_sweep_round_skipped_when_db_down(self, rds, tmp_path, monkeypatch):
+        """DB 故障 → 引用集不可得 → 整轮清扫跳过（fail-closed）：过期目录本轮保留——
+        按空集继续恰会在 DB 故障时把在役权重目录当过期产物删掉，不可逆。"""
+        import llmpod.db as dbmod
+
+        resp = await _declared(rds)
+        staged = _staged(resp, tmp_path)
+        mirror = json.loads((staged / ".session.json").read_text(encoding="utf-8"))
+        mirror["expires_at"] = 1  # 已过期：引用集可得时必删
+        (staged / ".session.json").write_text(json.dumps(mirror), encoding="utf-8")
+
+        @asynccontextmanager
+        async def _broken_db():
+            raise RuntimeError("db down")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(dbmod, "get_db_context", _broken_db)
+
+        assert await upl._referenced_model_dirs() is None
+        await upl._sweep_once(rds)
+        assert staged.exists()  # 目录保留
+        assert await rds.exists(f"llmpod:upload:{resp.sid}")  # 会话键也未被清扫清掉    async def test_referenced_model_dirs_builds_resolved_set(self, rds, tmp_path, monkeypatch):
+        """_referenced_model_dirs：仅 manager 源 + 解析到 upload/ 之内才入集；
+        单文件源取所在目录（sweep 的遍历单位是目录，按文件比对永不命中）；
+        返回 resolved 路径（与 sweep 的比对口径一致）。"""
+        import llmpod.db as dbmod
+        from llmpod.models.model import Model
+
+        upload_root = (tmp_path / "store" / "upload").resolve()
+        in_upload = upload_root / "qwen-src"
+        in_upload.mkdir(parents=True)
+        weight = in_upload / "m.gguf"
+        weight.write_bytes(b"x")  # 单文件源按盘上真实状态判（is_file）
+        outside = tmp_path / "store" / "user-dir"
+        outside.mkdir(parents=True)
+
+        models = [
+            Model(id=1, name="a", model_type="llm", source="local", source_url=str(in_upload)),
+            # 单文件源 → 取所在目录
+            Model(id=2, name="b", model_type="llm", source="local", source_url=str(weight)),
+            # store 外的用户目录：不入集（sweep 本就只扫 upload/）
+            Model(id=3, name="c", model_type="llm", source="local", source_url=str(outside)),
+            # 非 manager 源：不相关
+            Model(id=4, name="d", model_type="llm", source="huggingface", source_url="org/m"),
+        ]
+
+        async def _fake_exec(stmt):
+            return SimpleNamespace(scalars=lambda: iter(models))
+
+        @asynccontextmanager
+        async def _db_ctx():
+            yield SimpleNamespace(execute=_fake_exec)
+
+        # get_db_context 在函数体内 import（调用时取模块属性），patch 模块命名空间生效
+        monkeypatch.setattr(dbmod, "get_db_context", _db_ctx)
+
+        got = await upl._referenced_model_dirs()
+        assert got == {str(in_upload)}
 
 
 # ============================================================
