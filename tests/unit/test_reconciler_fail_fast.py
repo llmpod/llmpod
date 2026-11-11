@@ -162,12 +162,14 @@ class TestPullImageExistsPreCheck:
         await reconciler._step_pull_image("dep-test-1234")
 
         # 直接记 SUCCESS task（未走 ensure_task_row 下发 PULL）+ 补「跳过拉取」日志行
+        # （带节点与镜像名，用户能看出跳过的是哪个镜像）
         assert len(ctx.session.added) == 2
         assert ctx.session.added[0].status == "SUCCESS"
         assert ctx.session.added[0].type == "PULL_IMAGE"
         assert ctx.session.added[0].resource_key.startswith("image:node-a:")  # 按 node+镜像 hash 键控
         assert isinstance(ctx.session.added[1], DeployLog)
-        assert ctx.session.added[1].message == "镜像已存在，跳过拉取"
+        assert ctx.session.added[1].message == "镜像已存在，跳过拉取: img:1"
+        assert ctx.session.added[1].node_id == "node-a"
         assert dispatched == []  # 未下发任何 pull
         assert gotos == ["START_HEAD"]  # 全部 SUCCESS → 推进
 
@@ -194,7 +196,7 @@ class TestPullImageExistsPreCheck:
         logs = [a for a in ctx.session.added if isinstance(a, DeployLog)]
         assert len(logs) == 1
         assert "镜像复核不在位" in logs[0].message
-        assert not any(a.message == "镜像已存在，跳过拉取" for a in logs)
+        assert not any(a.message.startswith("镜像已存在，跳过拉取") for a in logs)
 
     async def test_stale_success_probe_error_keeps_shortcut(self, monkeypatch):
         """SUCCESS 复核通道异常（节点暂时抖动/RPC 失败）→ 保守信任短路，不触发重拉。"""

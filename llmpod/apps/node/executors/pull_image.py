@@ -110,7 +110,7 @@ class PullImageExecutor(Executor):
             await report(TaskStatus.FAILED, message=f"镜像拉取失败: {e}")
             return
         except Exception as e:
-            await report(TaskStatus.FAILED, message=f"镜像拉取异常: {e}")
+            await report(TaskStatus.FAILED, message=f"镜像拉取异常（{image}）: {e}")
             return
         finally:
             # 拉取先结束（秒完或探测比拉取慢）就不再等种子——探测任务自带 deadline；

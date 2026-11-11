@@ -434,18 +434,21 @@ async def _step_pull_image(deployment_id: str) -> None:
     latest = _latest_by_key(await _task_rows_by_keys(keys))
     if all((latest.get(k) is not None and latest[k].status == TaskStatus.SUCCESS) for k in keys):
         # 本轮未发起真实 pull（全为本地缓存/前置探测命中）→ 补「跳过拉取」行：真实答案在
-        # 探测这一刻已知，比 orchestrator 预探测可靠（不用重复 RPC 只为挑一句文案）
+        # 探测这一刻已知，比 orchestrator 预探测可靠（不用重复 RPC 只为挑一句文案）；
+        # 逐节点一行并带镜像名（多节点可异镜像，按节点区分）
         if not to_dispatch:
             async with get_db_context() as db:
-                await deploy_log_service.append_log(
-                    db,
-                    deployment_id=deployment_id,
-                    step=DeployStep.PULL_IMAGE,
-                    level=LogLevel.INFO,
-                    status=LogStatus.SUCCESS,
-                    message="镜像已存在，跳过拉取",
-                    extra={"trigger": "reconciler"},
-                )
+                for node_id, image in sorted(node_image.items()):
+                    await deploy_log_service.append_log(
+                        db,
+                        deployment_id=deployment_id,
+                        node_id=node_id,
+                        step=DeployStep.PULL_IMAGE,
+                        level=LogLevel.INFO,
+                        status=LogStatus.SUCCESS,
+                        message=f"镜像已存在，跳过拉取: {image}",
+                        extra={"trigger": "reconciler"},
+                    )
         await _goto_phase(deployment_id, DeploymentPhase.START_HEAD)
 
 

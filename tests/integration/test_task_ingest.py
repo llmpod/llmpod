@@ -326,7 +326,7 @@ class TestReportTaskEvent:
                 status="RUNNING",
                 progress=10,
                 stage="pulling",
-                extra={"bytes_done": 5 * 2**30, "bytes_total": 10 * 2**30},
+                extra={"image": "vllm/vllm-openai:v0.9.0", "bytes_done": 5 * 2**30, "bytes_total": 10 * 2**30},
             )
         )
         assert ack.ok

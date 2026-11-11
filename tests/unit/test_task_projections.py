@@ -162,10 +162,45 @@ class TestDeployLogProgress:
         await tp.project_deploy_log_progress(
             session,
             task,
+            _evt(
+                stage="pulling",
+                progress=50,
+                extra={"image": "vllm/vllm-openai:v0.9.0", "bytes_done": 5 * 2**30, "bytes_total": 10 * 2**30},
+            ),
+        )
+        logs = session.all(DeployLog)
+        # 镜像名只在启动行点一次名；进度行消息不重复，extra 结构化仍携带
+        assert logs[0].message == "已拉取 5.0GB / 10.0GB"
+        assert logs[0].extra["image"] == "vllm/vllm-openai:v0.9.0"
+
+    async def test_pull_start_message_with_image(self):
+        """拉取启动报点（无字节数）→ 「开始拉取镜像: {镜像名}」。"""
+        session = FakeSession()
+        task = _pull_task(session)
+        _deployment(session)
+        _instance(session)
+
+        await tp.project_deploy_log_progress(
+            session, task, _evt(stage="pulling", progress=0, extra={"image": "vllm/vllm-openai:v0.9.0"})
+        )
+        logs = session.all(DeployLog)
+        assert logs[0].message == "开始拉取镜像: vllm/vllm-openai:v0.9.0"
+
+    async def test_message_without_image_unchanged(self):
+        """extra 不带 image（旧节点 rolling 升级期）→ 消息维持原样不拼空尾巴。"""
+        session = FakeSession()
+        task = _pull_task(session)
+        _deployment(session)
+        _instance(session)
+
+        await tp.project_deploy_log_progress(
+            session,
+            task,
             _evt(stage="pulling", progress=50, extra={"bytes_done": 5 * 2**30, "bytes_total": 10 * 2**30}),
         )
         logs = session.all(DeployLog)
         assert logs[0].message == "已拉取 5.0GB / 10.0GB"
+        assert "image" not in logs[0].extra
 
     async def test_bytes_structured_into_extra(self):
         """字节结构化写进 deploy_log.extra（消息文本之外的可渲染字段，logs/nodes 透出）。"""
@@ -224,6 +259,7 @@ class TestDeployLogProgress:
                 stage="pulling",
                 progress=50,
                 extra={
+                    "image": "vllm/vllm-openai:v0.9.0",
                     "bytes_done": 5 * 2**30,
                     "bytes_total": 10 * 2**30,
                     "bytes_per_sec": 30 * 2**20,

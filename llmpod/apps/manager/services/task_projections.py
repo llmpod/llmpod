@@ -179,7 +179,9 @@ async def project_deploy_log_progress(db: AsyncSession, task: Task, evt: TaskEve
     40-120 行）。**阶段迁移必落**（downloading→
     verifying、pulling 开始），不受节流。终态只清节流状态不落行——成功/失败由
     set_phase 时间线与实例生命周期投影负责。``extra`` 除进度百分比外还结构化携带
-    bytes_done/bytes_total/bytes_per_sec（消息文本之外的可渲染字段，logs/nodes 端点透出）。
+    bytes_done/bytes_total/bytes_per_sec（消息文本之外的可渲染字段，logs/nodes 端点透出）；
+    镜像拉取事件另带 ``image``——消息文本只在拉取启动行点一次名，进度行不重复
+    （``extra`` 逐行携带供渲染层按行归属）。
     """
     if evt.status in TASK_TERMINAL_STATUSES:
         _LOG_THROTTLE.pop(task.id, None)
@@ -209,6 +211,11 @@ async def project_deploy_log_progress(db: AsyncSession, task: Task, evt: TaskEve
     has_bytes = isinstance(done, int) and isinstance(total, int) and total > 0
     rate = extra.get("bytes_per_sec")
     has_rate = isinstance(rate, int) and rate >= 0  # 0B/s 也是信号（停滞 vs 未上报）
+    # 镜像拉取事件自带 image（executor 逐报携带）；镜像名只在任务首条进度行点一次名
+    # （=「开始拉取」行；总量预探测失败时后续行全程无字节数，也不得重复点名）；
+    # extra 结构化字段仍逐行携带，供渲染层按行归属镜像
+    image = extra.get("image")
+    image_txt = f": {image}" if prev is None and isinstance(image, str) and image else ""
     sizes = f"{done / 2**30:.1f}GB / {total / 2**30:.1f}GB" if has_bytes else None
     rate_txt = f"（{_fmt_rate(rate)}）" if has_rate else ""
     if stage == EnsureModelStage.VERIFYING:
@@ -216,7 +223,7 @@ async def project_deploy_log_progress(db: AsyncSession, task: Task, evt: TaskEve
     elif stage == EnsureModelStage.DOWNLOADING:
         message = f"已下载 {sizes}{rate_txt}" if sizes else "开始下载"
     elif stage == PullImageStage.PULLING:
-        message = f"已拉取 {sizes}{rate_txt}" if sizes else "开始拉取镜像"
+        message = f"已拉取 {sizes}{rate_txt}" if sizes else f"开始拉取镜像{image_txt}"
     else:
         message = f"进度 {evt.progress}%"
 
@@ -232,6 +239,8 @@ async def project_deploy_log_progress(db: AsyncSession, task: Task, evt: TaskEve
         "node_hostname": host,
         "node_ip": ip,
     }
+    if isinstance(image, str) and image:
+        log_extra["image"] = image
     if has_bytes:
         log_extra["bytes_done"] = done
         log_extra["bytes_total"] = total
