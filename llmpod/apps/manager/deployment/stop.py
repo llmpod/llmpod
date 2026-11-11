@@ -44,7 +44,7 @@ from llmpod.tunnel.schemas import StopInstancePayload
 from llmpod.models.instance import Instance
 from llmpod.models.task import Task
 from llmpod.apps.manager.deployment.task_ops import instance_node_rank as _node_rank
-from llmpod.services import deployment_service
+from llmpod.services import deployment_projection, deployment_service
 from llmpod.utils.docker_naming import deployment_container_name
 
 log = logging.getLogger("llmpod.apps.manager.deployment.stop")
@@ -68,7 +68,8 @@ class StopService:
 
         ``instances`` 限定作用范围（缺省 = 该部署全部实例）：在线缩容按副本摘份时只停
         被摘份的分片，其余副本的容器不受影响——三件套（cancel START / STOPPING /
-        backfill）与全量停止共用同一实现，不另写一套。
+        backfill）与全量停止共用同一实现，不另写一套。全量停止结束后重算整部署投影；
+        传子集时不投影——缩容由 ``scale`` 删份后统一做，避免中途健康灯翻转。
         """
         if instances is None:
             async with get_db_context() as db:
@@ -79,6 +80,8 @@ class StopService:
         else:
             irows = list(instances)
         if not irows:
+            if instances is None:
+                await self._recompute_projection(deployment_id)
             return True
 
         await self._cancel_active_start_tasks(deployment_id, irows)
@@ -95,7 +98,18 @@ class StopService:
                 all_stopped = False
         if all_stopped:
             await self._backfill_stopped(deployment_id, irows)
+        if instances is None:
+            await self._recompute_projection(deployment_id)
         return all_stopped
+
+    @staticmethod
+    async def _recompute_projection(deployment_id: str) -> None:
+        """停止后重算四层投影（未确认/无实例也跑，避免副本/端点停在上一轮 serving/healthy）。"""
+        try:
+            async with get_db_context() as db:
+                await deployment_projection.project_upwards(db, deployment_id)
+        except Exception as e:  # 投影失败只告警，不阻断停止收敛（残影留待后续状态变更再投影）
+            log.warning("stop project failed deployment=%s: %s", deployment_id[:8], e)
 
     async def dispatch_stop(self, deployment_id: str) -> None:
         """仅派发停止（cancel 活跃 START + ensure STOP task），不轮询等待。

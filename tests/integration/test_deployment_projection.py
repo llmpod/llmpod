@@ -145,6 +145,17 @@ class TestProjectionChain:
 
         assert eng.status == "down" and rep.status == "down"
 
+    async def test_stopped_deployment_projects_down_to_endpoint(self):
+        """主动停止后：引擎/副本/端点一致收敛为 down，端点不得残留 healthy。"""
+        session = FakeSession()
+        dep, rep, eng, shards, ep = _mk_stack(session, dep_status="stopped", shard_statuses=("STOPPED",))
+
+        await deployment_projection.project_upwards(session, dep.deployment_id)
+
+        assert eng.status == "down"
+        assert rep.status == "down"
+        assert ep.health_status == "down"
+
     async def test_no_replica_rows_is_noop(self):
         """无副本行的旧数据：投影整体跳过，不误写端点/健康。"""
         session = FakeSession()

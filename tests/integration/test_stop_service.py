@@ -21,6 +21,7 @@ from llmpod.models.deployment_gpu_assignment import DeploymentGpuAssignment
 from llmpod.models.instance import Instance
 from llmpod.models.model_deployment import ModelDeployment
 from llmpod.models.task import Task
+from llmpod.services import deployment_projection
 
 
 class FakeSession:
@@ -228,6 +229,13 @@ def _patch_orch(monkeypatch, cleanups, released, instances):
     orch_mod._orchestrator = None
 
 
+def _patch_projection(monkeypatch, projected):
+    async def _project(db, deployment_id):
+        projected.append(deployment_id)
+
+    monkeypatch.setattr(deployment_projection, "project_upwards", _project)
+
+
 class TestStopInstances:
     async def test_stop_flow(self, patched_db, monkeypatch):
         """stop：cancel START → ensure STOP（纯停，payload 无 remove）→ 轮询 STOPPED → 全停。
@@ -289,8 +297,25 @@ class TestStopInstances:
         _deployment(session)
         rec = _Recorder(session)
         rec.install(monkeypatch)
+        projected: list[str] = []
+        _patch_projection(monkeypatch, projected)
         assert await StopService().stop_instances("dep-1") is True
         assert rec.ensures == [] and rec.cancels == []
+        assert projected == ["dep-1"]  # 无实例早退也要投影，清掉上一轮端点残影
+
+    async def test_subset_stop_leaves_projection_to_caller(self, patched_db, monkeypatch):
+        """缩容摘份（传 instances 子集）不在服务内投影：整部署投影由 scale 删份后统一做。"""
+        session = patched_db
+        _deployment(session)
+        inst = _instance(session, status="READY")
+        rec = _Recorder(session)
+        rec.install(monkeypatch)
+        _patch_orch(monkeypatch, [], [], [])
+        projected: list[str] = []
+        _patch_projection(monkeypatch, projected)
+
+        assert await StopService().stop_instances("dep-1", instances=[inst]) is True
+        assert projected == []  # 缩容中途不投影：避免健康灯无谓翻转
 
     async def test_dual_gate_stop_task_success(self, patched_db, monkeypatch):
         """实例上报丢失但 STOP task SUCCESS → 双门判定视为已停 + 补写 STOPPED。"""
@@ -314,10 +339,13 @@ class TestStopInstances:
         rec.install(monkeypatch)
         cleanups, released = [], []
         _patch_orch(monkeypatch, cleanups, released, [])
+        projected: list[str] = []
+        _patch_projection(monkeypatch, projected)
 
         ok = await StopService().stop_instances("dep-1")
         assert ok is True  # 双门：task SUCCESS 兜底
         assert (await session.get(Instance, "i-0")).status == "STOPPED"  # 补写
+        assert projected == ["dep-1"]  # 补写后重算投影，副本/端点不残留 serving/healthy
 
     async def test_timeout_returns_false_no_cleanup(self, patched_db, monkeypatch):
         """轮询超时 → 返回 False；StopService 不做 cleanup（容器删除归 delete）。"""
@@ -328,10 +356,13 @@ class TestStopInstances:
         rec.install(monkeypatch)
         cleanups, released = [], []
         _patch_orch(monkeypatch, cleanups, released, [])
+        projected: list[str] = []
+        _patch_projection(monkeypatch, projected)
 
         ok = await StopService().stop_instances("dep-1", timeout=0.3)
         assert ok is False
         assert cleanups == []  # StopService 永不 cleanup
+        assert projected == ["dep-1"]  # 停止未确认也要投影：端点不得残留 healthy
 
     async def test_pull_tasks_not_cancelled(self, patched_db, monkeypatch):
         """PULL task 键按部署隔离、终态行只影响本部署——停止不取消它（在途拉取可能
