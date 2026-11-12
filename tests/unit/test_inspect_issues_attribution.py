@@ -272,10 +272,10 @@ class TestEmptyPlacementAttribution:
             _gpu(1, "c1", arch="cann", name="Ascend 310P3", drv="25.2.3", total=24.0),
             _gpu(2, "c2", arch="cann", name="Ascend 310P3", drv="25.2.3", total=24.0),
         )
-        result = await _inspect(s, topology=Topology(tp=1, pp=2, max_model_len=8192), image_tag="0.23.0")
+        result = await _inspect(s, topology=Topology(tp=1, pp=2, max_model_len=8192), image_tag="0.30.0")
         assert result["data"]["deployable"] is False
         issues = result["data"]["issues"]
-        # 引擎未声明 pp → 黄灯提醒（不进 issues）；0.23.0 的 nvidia 默认镜像
+        # 引擎未声明 pp → 黄灯提醒（不进 issues）；0.30.0 的 nvidia 默认镜像
         # driver_required 缺省，驱动未知时不门控，通用 dry-run 能解析出镜像，
         # 不再附「未找到兼容镜像」那条，只留架构分流原因
         assert issues == [

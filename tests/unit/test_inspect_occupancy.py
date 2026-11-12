@@ -300,7 +300,7 @@ class TestInspectOccupancy:
                 engine="vllm",
                 topology=Topology(tp=1, pp=2),
                 gpu_selector=GpuSelector(gpu_uuids=["c1", "c2"]),
-                image_tag="0.23.0",
+                image_tag="0.30.0",
             ),
             session,
         )
@@ -358,7 +358,7 @@ class TestInspectOccupancy:
                 engine="vllm",
                 topology=Topology(tp=1),
                 gpu_selector=GpuSelector(gpu_uuids=["c1"]),
-                image_tag="0.23.0",
+                image_tag="0.30.0",
             ),
             session,
         )
@@ -371,7 +371,7 @@ class TestInspectOccupancy:
     async def test_cann_no_image_greys_card_and_node(self, session):
         """cann 卡 + 无对应条目的 image_tag → 卡 grey=no_image + 节点 selectable=False + issue 提示。
 
-        310P3 在 0.23.0/0.26.0/0.27.1/0.30.0 均有，用确无条目的 0.20.0 验证。
+        310P3 只保留 0.30.0 条目（0.23/0.26/0.27 的镜像残留空 triton 已下线），用确无条目的 0.20.0 验证。
         """
         session.preload(
             Model(
@@ -447,7 +447,7 @@ class TestInspectOccupancy:
                 cluster_id=1,
                 engine="vllm",
                 topology=Topology(tp=1),
-                image_tag="0.23.0",
+                image_tag="0.30.0",
             ),
             session,
         )
@@ -462,7 +462,7 @@ class TestInspectOccupancy:
     async def test_bad_image_tag_reports_cann_image_missing(self, session):
         """cann 集群 + 无该 arch 版本的 image_tag（0.20.0）→ 明确报 vllm/cann 镜像缺失 + 推荐为空。
 
-        310P3 在 0.23.0/0.26.0/0.27.1/0.30.0 均有，用确无条目的版本验证缺失分支。
+        310P3 只保留 0.30.0 条目（0.23/0.26/0.27 的镜像残留空 triton 已下线），用确无条目的版本验证缺失分支。
         """
         session.preload(
             Model(
@@ -554,7 +554,7 @@ class TestInspectOccupancy:
         assert result["data"]["recommended_placement"]["gpu_uuids"] == []
 
     async def test_mixed_cann_and_nvidia_0271_recommends_nvidia(self, session):
-        """混合集群（cann 310P + nvidia 2080Ti@595.84）+ tag 0.27.1 → 两 arch 均可选，推荐 nvidia（默认 arch 优先）。"""
+        """混合集群（cann 310P + nvidia 2080Ti@595.84）+ tag 0.30.0 → 两 arch 均可选，推荐 nvidia（默认 arch 优先）。"""
         session.preload(
             Model(
                 id=1,
@@ -614,13 +614,13 @@ class TestInspectOccupancy:
                 cluster_id=1,
                 engine="vllm",
                 topology=Topology(tp=1),
-                image_tag="0.27.1",
+                image_tag="0.30.0",
             ),
             session,
         )
         gpus = {cg["uuid"]: cg for cg in result["data"]["cluster_gpus"]}
         assert gpus["g1"]["grey_reason"] is None  # nvidia 595.84 满足 >=590
-        assert gpus["c1"]["grey_reason"] is None  # 310P3 在 0.27.1 有补位条目 → 可选
+        assert gpus["c1"]["grey_reason"] is None  # 310P3 在 0.30.0 有补位条目 → 可选
         rec = result["data"]["recommended_placement"]
         assert rec["gpu_uuids"], "混合集群应推荐 nvidia 卡"
         assert rec["gpu_uuids"][0] in ("g1", "g2")
@@ -974,7 +974,7 @@ class TestInspectMixedArchPlacement:
                 model_id=1,
                 cluster_id=1,
                 engine="vllm",
-                image_tag="0.23.0",
+                image_tag="0.30.0",
                 topology=Topology(tp=1, replicas=3, max_model_len=8192),
             ),
             session,
@@ -994,7 +994,7 @@ class TestInspectMixedArchPlacement:
                 model_id=1,
                 cluster_id=1,
                 engine="vllm",
-                image_tag="0.23.0",
+                image_tag="0.30.0",
                 topology=Topology(tp=1, replicas=2, max_model_len=8192),
             ),
             session,
@@ -1011,7 +1011,7 @@ class TestInspectMixedArchPlacement:
                 model_id=1,
                 cluster_id=1,
                 engine="vllm",
-                image_tag="0.23.0",
+                image_tag="0.30.0",
                 topology=Topology(tp=1, replicas=4, max_model_len=8192),
             ),
             session,
@@ -1051,7 +1051,7 @@ class TestInspectMixedArchPlacement:
                 model_id=1,
                 cluster_id=1,
                 engine="vllm",
-                image_tag="0.23.0",
+                image_tag="0.30.0",
                 topology=Topology(tp=1, replicas=2, max_model_len=8192),
             ),
             session,

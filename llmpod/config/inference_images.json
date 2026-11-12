@@ -892,7 +892,7 @@
       "notes": "驱动 525-549"
     },
     {
-      "id": "vllm-ascend-310p-0230",
+      "id": "vllm-ascend-310p-0300",
       "engine": "vllm",
       "arch": "cann",
       "gpu_model": [
@@ -900,8 +900,8 @@
         "*300I*"
       ],
       "driver": ">=25.2",
-      "engine_version": "0.23.0",
-      "image": "quay.io/ascend/vllm-ascend:v0.23.0.post1-310p-openeuler",
+      "engine_version": "0.30.0",
+      "image": "quay.io/ascend/vllm-ascend:v0.30.0-310p-openeuler",
       "default": true,
       "params": {
         "args": [
@@ -913,76 +913,7 @@
           "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
         }
       },
-      "notes": "驱动 ≥25.2"
-    },
-    {
-      "id": "vllm-ascend-310p-0260",
-      "engine": "vllm",
-      "arch": "cann",
-      "gpu_model": [
-        "*310P*",
-        "*300I*"
-      ],
-      "driver": ">=25.2",
-      "engine_version": "0.26.0",
-      "image": "quay.io/ascend/vllm-ascend:v0.26.0rc2-310p-openeuler",
-      "params": {
-        "args": [
-          "--dtype",
-          "half",
-          "--enforce-eager"
-        ],
-        "env": {
-          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
-        }
-      },
-      "notes": "驱动 ≥25.2"
-    },
-    {
-      "id": "vllm-ascend-310p-0271",
-      "engine": "vllm",
-      "arch": "cann",
-      "gpu_model": [
-        "*310P*",
-        "*300I*"
-      ],
-      "driver": ">=25.2",
-      "engine_version": "0.27.1",
-      "image": "quay.io/ascend/vllm-ascend:v0.27.1rc1-310p-openeuler",
-      "params": {
-        "args": [
-          "--dtype",
-          "half",
-          "--enforce-eager"
-        ],
-        "env": {
-          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
-        }
-      },
-      "notes": "驱动 ≥25.2"
-    },
-    {
-      "id": "vllm-ascend-310p-0300",
-      "engine": "vllm",
-      "arch": "cann",
-      "gpu_model": [
-        "*310P*",
-        "*300I*"
-      ],
-      "driver": ">=25.2",
-      "engine_version": "0.30.0",
-      "image": "quay.io/ascend/vllm-ascend:v0.30.0-310p-openeuler",
-      "params": {
-        "args": [
-          "--dtype",
-          "half",
-          "--enforce-eager"
-        ],
-        "env": {
-          "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True"
-        }
-      },
-      "notes": "驱动 ≥25.2"
+      "notes": "驱动 ≥25.2；0.23/0.26/0.27 的 310P 镜像残留空 triton 目录，导入即崩，故只留 0.30"
     },
     {
       "id": "vllm-ascend-910b",

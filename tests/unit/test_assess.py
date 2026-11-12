@@ -136,7 +136,7 @@ class TestAssessPerGpu:
     def test_no_image_wrong_engine_version(self):
         """型号匹配但 engine_version 无对应条目（310P + vllm/cann@0.20.0）→ no_image。
 
-        310P3 在 0.23.0/0.26.0/0.27.1/0.30.0 均有条目，
+        310P3 只保留 0.30.0 条目（0.23/0.26/0.27 的镜像残留空 triton 已下线），
         用一个确无条目的版本验证 no_image 分支。
         """
         a = assess_per_gpu(
@@ -150,13 +150,13 @@ class TestAssessPerGpu:
         assert "0.20.0" in a[0].grey_detail
 
     def test_cann_matching_card_selectable(self):
-        """310P3 + 合法 engine_version（0.23.0）→ 可选（grey=None）。"""
+        """310P3 + 合法 engine_version（0.30.0）→ 可选（grey=None）。"""
         a = assess_per_gpu(
             [_Card(uuid="g0", arch="cann", name="Ascend 310P3", driver_version="25.2.3")],
             engine="vllm",
             model_size_gb=10.0,
             context_size=None,
-            engine_version="0.23.0",
+            engine_version="0.30.0",
         )
         assert a[0].grey_reason is None
         assert a[0].grey_detail is None

@@ -107,9 +107,10 @@ class TestResolve:
         assert image_catalog.pick_image(engine="llamacpp", arch="nvidia", driver_version="569.99") is None
 
     def test_cann_by_soc_model(self):
+        # 310P 只保留 0.30.0：0.23/0.26/0.27 的 310P 镜像内置空 triton 目录，导入即崩
         assert (
             image_catalog.pick_image(engine="vllm", arch="cann", gpu_model="310P3", driver_version="25.2.3")
-            == "quay.io/ascend/vllm-ascend:v0.23.0.post1-310p-openeuler"
+            == "quay.io/ascend/vllm-ascend:v0.30.0-310p-openeuler"
         )
         assert image_catalog.pick_image(
             engine="vllm", arch="cann", gpu_model="Ascend 910B", driver_version="24.1.0"
@@ -686,7 +687,6 @@ class TestResolve:
             "vllm-ascend-910b",
             "vllm-ascend-910c",
             "vllm-ascend-950dt",
-            "vllm-ascend-310p-0230",
         }
 
     def test_list_entries_versions_newest_first(self):

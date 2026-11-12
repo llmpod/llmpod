@@ -73,9 +73,10 @@ class _Card:
 def test_arch_order_drops_arch_without_image():
     """池里只有没镜像的架构 → 该架构不进回落序（留着会让副本落到跑不起来的卡上）。"""
     pool = [_Card("c1", arch="cann", name="310P3", driver_version="25.2.3")]
-    # 0.20.0 在 catalog 里没有 310P 条目
+    # 0.20.0 在 catalog 里没有 310P 条目；0.23.0 的 310P 条目已下线（空 triton 目录），
+    # 只剩 0.30.0 可用
     assert get_adapter("vllm").schedulable_archs(gpu_pool=pool, engine_version="0.20.0") == []
-    assert get_adapter("vllm").schedulable_archs(gpu_pool=pool, engine_version="0.23.0") == ["cann"]
+    assert get_adapter("vllm").schedulable_archs(gpu_pool=pool, engine_version="0.30.0") == ["cann"]
 
 
 def test_arch_order_drops_topology_incompatible_arch():
@@ -86,11 +87,11 @@ def test_arch_order_drops_topology_incompatible_arch():
     ]
     from llmpod.apps.manager.deployment.schemas import Topology
 
-    assert get_adapter("vllm").schedulable_archs(Topology(tp=1, pp=1), gpu_pool=pool, engine_version="0.23.0") == [
+    assert get_adapter("vllm").schedulable_archs(Topology(tp=1, pp=1), gpu_pool=pool, engine_version="0.30.0") == [
         "nvidia",
         "cann",
     ]
-    assert get_adapter("vllm").schedulable_archs(Topology(tp=1, pp=2), gpu_pool=pool, engine_version="0.23.0") == [
+    assert get_adapter("vllm").schedulable_archs(Topology(tp=1, pp=2), gpu_pool=pool, engine_version="0.30.0") == [
         "nvidia"
     ]
     # cann-only + pp>1 → 一个候选都不剩（上层据此在创建期拒，而不是回落默认架构）
@@ -98,7 +99,7 @@ def test_arch_order_drops_topology_incompatible_arch():
         get_adapter("vllm").schedulable_archs(
             Topology(tp=1, pp=2),
             gpu_pool=[_Card("c1", arch="cann", name="310P3", driver_version="25.2.3")],
-            engine_version="0.23.0",
+            engine_version="0.30.0",
         )
         == []
     )
@@ -129,7 +130,7 @@ def test_pinned_image_keeps_existing_deployment_arch():
 def test_pinned_image_ignores_must_include_without_image():
     """没固定镜像时 must_include 不参与——回落序仍由「池里确有匹配镜像的卡」决定。"""
     pool = [_Card("g1", arch="nvidia"), _Card("c1", arch="cann", name="310P3", driver_version="25.2.3")]
-    order = get_adapter("vllm").schedulable_archs(gpu_pool=pool, engine_version="0.23.0", must_include="cann")
+    order = get_adapter("vllm").schedulable_archs(gpu_pool=pool, engine_version="0.30.0", must_include="cann")
     assert order == ["nvidia", "cann"]
 
 
