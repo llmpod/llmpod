@@ -69,7 +69,6 @@ from llmpod.config.constants import (
     TaskType,
 )
 from llmpod.core.exceptions import LLMPodError, LLMPodValidationError, NotFound
-from llmpod.config.settings import settings
 from llmpod.db import get_db_context
 from llmpod.models.deployment_gpu_assignment import DeploymentGpuAssignment
 from llmpod.models.instance import Instance
@@ -256,7 +255,7 @@ async def _probe_image_present(node_id: str, image: str) -> bool | None:
 
 
 async def probe_pull_images(
-    node_image: dict[str, str], prev_latest: dict[str, Task]
+    node_image: dict[str, str], prev_latest: dict[str, Task], deployment_id: str
 ) -> dict[tuple[str, str], bool | None]:
     """拉取前复核/探测一批「节点 → 镜像」，返回 ``(node_id, image) → 三态``。
 
@@ -265,11 +264,12 @@ async def probe_pull_images(
     全程占着池连接 idle-in-transaction——gather 并发后最坏耗时 = 单节点超时。
 
     只探需要判定的对：最新行 SUCCESS（复核是否已被 rmi/prune）与无行/FAILED/
-    CANCELLED（探测是否本地缓存命中）；PENDING/RUNNING 在途的不探。
+    CANCELLED（探测是否本地缓存命中）；PENDING/RUNNING 在途的不探。``deployment_id``
+    仅用于拼拉取键（键按部署隔离）。
     """
     need: list[tuple[str, str]] = []
     for node_id, image in node_image.items():
-        prev = prev_latest.get(pull_resource_key(node_id, image))
+        prev = prev_latest.get(pull_resource_key(deployment_id, node_id, image))
         if prev is None or prev.status in (TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED):
             need.append((node_id, image))
     if not need:
@@ -278,13 +278,46 @@ async def probe_pull_images(
     return dict(zip(need, results))
 
 
+async def clear_pull_failure_history(
+    db,
+    *,
+    deployment_id: str,
+    pull_keys: set[str],
+    trigger: str,
+) -> None:
+    """删除本部署拉取键上的终态失败行（人工动作介入时调用）。
+
+    手动启动、重新扩容都是重开预算的入口（大概率已排障：网络/磁盘/registry）——
+    各自重开满额拉取预算，不被「连续失败超限」打回。只删 FAILED/CANCELLED：
+    镜像确认在位的 SUCCESS 行留着（拉取前探测命中的「跳过拉取」短路不受影响），
+    PENDING/RUNNING 在途行不动。逐行记 deploy_log 时间线（运维能区分重拉与首拉）。
+    ``pull_keys`` 全部由 ``pull_resource_key`` 产出（单一键族），无需再按任务类型过滤。
+    """
+    for t in (
+        await db.execute(select(Task).where(Task.resource_key.in_(pull_keys)))
+    ).scalars():
+        if t.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+            continue
+        await db.delete(t)
+        await deploy_log_service.append_log(
+            db,
+            deployment_id=deployment_id,
+            node_id=t.node_id,
+            step=DeployStep.PULL_IMAGE,
+            level=LogLevel.INFO,
+            status=LogStatus.RUNNING,
+            message=f"清除镜像拉取失败记录（{(t.payload or {}).get('image', '')}），重新开始拉取",
+            extra={"trigger": trigger, "action": "reset_pull_failures"},
+        )
+
+
 async def ensure_pull_tasks(
     db,
     node_image: dict[str, str],
     prev_latest: dict[str, Task],
     probes: dict[tuple[str, str], bool | None],
     *,
-    deployment_id: str | None = None,
+    deployment_id: str,
     image_sizes: dict[str, float | None] | None = None,
 ) -> tuple[list[Task], tuple[str, str] | None]:
     """对一组「节点 → 镜像」ensure PULL_IMAGE task（幂等）。返回 (待下发, 耗尽的 (node, image))。
@@ -296,18 +329,18 @@ async def ensure_pull_tasks(
     - 最新行 SUCCESS → 探测确认镜像真在节点本地才短路：镜像可能已被 rmi/prune，
       也可能存在历史假成功行（拉取流内错误被吞的年代），盲信会让后续部署永远
       「跳过拉取 → 启动 No such image」死循环；通道不可用（None）保守信任
-      （节点抖动不值得引发重拉风暴），复核未过时按 ``deployment_id`` 记一笔时间
-      线日志（运维能把「重新拉取」与首次冷拉区分开）；
+      （节点抖动不值得引发重拉风暴），复核未过时记一笔时间线日志（运维能把
+      「重新拉取」与首次冷拉区分开）；
     - 无行 / FAILED / CANCELLED → 探测确认已在节点本地则直接记 SUCCESS 行
       （离线/无 registry 也能复用本地缓存）；通道不可用保守按不在位，交给 pull 流程暴露真因；
     - 其余（PENDING/RUNNING）交 ``ensure_task_row`` 接管；
-    - 失败重建按末尾连续失败数判（不看单调 attempt——拉取键按节点+镜像**跨部署共享**，
-      历史成功也会抬高编号，用 max(attempt) 判耗尽会误伤）。超限返回该 (node, image)，
-      收敛动作（fail_deployment / 抛错回滚）由调用方决定。
+    - 拉取键按**部署**隔离（``image:{deployment_id}:{node}:{hash}``）——本部署的
+      连续失败只耗尽本部署的预算（超限返回该 (node, image)，收敛动作由调用方
+      决定），别的部署同节点同镜像互不可见；重启/重建不会看到部署外的历史。
     """
     to_dispatch: list[Task] = []
     for node_id, image in node_image.items():
-        rk = pull_resource_key(node_id, image)
+        rk = pull_resource_key(deployment_id, node_id, image)
         prev = prev_latest.get(rk)
         if prev is not None and prev.status == TaskStatus.SUCCESS:
             # 复核通过才短路；不在位落到下方 ensure_task_row 重建 attempt 重拉
@@ -320,17 +353,16 @@ async def ensure_pull_tasks(
             if present:
                 continue
             log.info("ensure_pull %s: SUCCESS 复核镜像不在位，重建拉取", rk)
-            if deployment_id is not None:
-                await deploy_log_service.append_log(
-                    db,
-                    deployment_id=deployment_id,
-                    step=DeployStep.PULL_IMAGE,
-                    level=LogLevel.WARN,
-                    status=LogStatus.RUNNING,
-                    message=f"镜像复核不在位（已被清理或历史记录失真），重新拉取: {image}",
-                    node_id=node_id,
-                    extra={"trigger": "reconciler"},
-                )
+            await deploy_log_service.append_log(
+                db,
+                deployment_id=deployment_id,
+                step=DeployStep.PULL_IMAGE,
+                level=LogLevel.WARN,
+                status=LogStatus.RUNNING,
+                message=f"镜像复核不在位（已被清理或历史记录失真），重新拉取: {image}",
+                node_id=node_id,
+                extra={"trigger": "reconciler"},
+            )
         if prev is None or prev.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
             present = probes.get((node_id, image))
             if present:  # 只有确认在位才短路；None（通道不可用）交给 pull 流程暴露真因
@@ -354,15 +386,13 @@ async def ensure_pull_tasks(
             node_id=node_id,
             task_type=TaskType.PULL_IMAGE,
             payload=PullImagePayload(image=image).model_dump(),
-            # 看门狗按体积分桶（未标注回落保守默认）；键跨部署共享，历史失败传染
-            # 由冷却衰减（默认 1h 后重开一轮）
+            # 看门狗按体积分桶（未标注回落保守默认）
             timeout_sec=task_ops.pull_hang_timeout((image_sizes or {}).get(image)),
-            exhaust_cooldown_s=settings.pull_exhaust_cooldown_s,
         )
         if task is None:
             if denial == "concurrent":
-                # 并发已建（别的部署同轮对同 (节点,镜像) 发起拉取，撞 active 唯一索引）：
-                # 不是失败——键跨部署共享，本轮视为已在途，下一轮扫描看到 SUCCESS/FAILED 再收敛
+                # 并发已建（同部署的上一轮扫描刚建行，撞 active 唯一索引）：不是
+                # 失败——本轮视为已在途，下一轮扫描看到 SUCCESS/FAILED 再收敛
                 continue
             return to_dispatch, (node_id, image)
         if need_dispatch:
@@ -408,10 +438,10 @@ async def _step_pull_image(deployment_id: str) -> None:
         await _goto_phase(deployment_id, DeploymentPhase.START_HEAD)
         return
 
-    keys = [pull_resource_key(n, node_image[n]) for n in node_ids]
+    keys = [pull_resource_key(deployment_id, n, node_image[n]) for n in node_ids]
     existing = _latest_by_key(await _task_rows_by_keys(keys))
     # 探测在事务外并发（见 probe_pull_images docstring）
-    probes = await probe_pull_images(node_image, existing)
+    probes = await probe_pull_images(node_image, existing, deployment_id)
     image_sizes = {node_image[n]: node_image_size.get(n) for n in node_ids}
     async with get_db_context() as db:
         to_dispatch, exhausted = await ensure_pull_tasks(
@@ -421,7 +451,7 @@ async def _step_pull_image(deployment_id: str) -> None:
 
     if exhausted is not None:
         node_id, image = exhausted
-        prev = existing.get(pull_resource_key(node_id, image))
+        prev = existing.get(pull_resource_key(deployment_id, node_id, image))
         over_cap_error = (prev.last_error if prev is not None else None) or (
             f"镜像拉取失败（超自动重试上限 {MAX_AUTO_ATTEMPTS}）: {image}"
         )

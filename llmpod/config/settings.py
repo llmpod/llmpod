@@ -283,7 +283,6 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("LLMPOD_MODEL_HOST_STORE_DIR", "LLMPOD_MODEL_HOST_DIR"),
     )
     download_min_free_gb: float = 10.0  # Node 下载前磁盘剩余空间下限（GB，不足即 INSUFFICIENT_DISK）
-    pull_exhaust_cooldown_s: int = 3600  # PULL 连续失败超上限后的冷却（秒），过后自动重开一轮重试
 
     # ===== 模型分发 V1.1（local 源：Manager 文件服务下发）=====
     # TTL 取 24h：令牌在每次 attempt 下发时重铸，任务执行受 12h 看门狗上限约束，

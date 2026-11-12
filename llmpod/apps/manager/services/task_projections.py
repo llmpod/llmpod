@@ -31,6 +31,7 @@ from llmpod.apps.manager.deployment.constants import (
     LogStatus,
     NodeModelState,
 )
+from llmpod.apps.manager.deployment.task_ops import parse_pull_deployment_id
 from llmpod.config.constants import (
     TASK_TERMINAL_STATUSES,
     EnsureModelStage,
@@ -262,32 +263,34 @@ async def project_deploy_log_progress(db: AsyncSession, task: Task, evt: TaskEve
 async def _resolve_deployments(db: AsyncSession, task: Task) -> list[str]:
     """进度点归属的部署：找「正卡在对应编排阶段」的 active 部署。
 
-    resource_key 前缀定阶段——``image:{nid}:{hash}`` → PULL_IMAGE；``model:{mid}:{nid}``
-    → STAGING_MODEL（且 model 匹配）。模型分发/镜像拉取任务按 resource_key 去重、跨
-    部署共享，进度同时落给所有正等待它的部署；找不到（非部署触发的分发）就跳过。
+    resource_key 前缀定阶段——``image:{dep}:{nid}:{hash}`` → PULL_IMAGE；
+    ``model:{mid}:{nid}`` → STAGING_MODEL（且 model 匹配）。镜像拉取键按部署
+    隔离，直接从键里取归属部署（不再按节点广播给所有等待中的部署）；模型分发
+    键仍跨部署共享（同模型同节点只有一个物理下载），进度落给所有正等待它的部署；
+    找不到（非部署触发的分发）就跳过。
     """
     rk = task.resource_key or ""
-    want_model: int | None = None
     if rk.startswith("image:"):
-        phase = DeploymentPhase.PULL_IMAGE
-    elif rk.startswith("model:"):
-        phase = DeploymentPhase.STAGING_MODEL
+        only_dep = parse_pull_deployment_id(rk)
+        if only_dep is None:
+            return []  # 旧格式（image:{nid}:{hash}）行：无部署归属，无处落
+        dep = await db.get(ModelDeployment, only_dep)
+        if dep is None or dep.status != DeploymentStatus.CREATING or dep.phase != DeploymentPhase.PULL_IMAGE:
+            return []
+        return [dep.deployment_id]
+    if rk.startswith("model:"):
         mid, _ = _parse_resource_key(rk)
-        want_model = mid
-    else:
-        return []
-    if want_model is None and phase == DeploymentPhase.STAGING_MODEL:
-        return []  # resource_key 解析失败
-
-    insts = list((await db.execute(select(Instance).where(Instance.assigned_node == task.node_id))).scalars())
-    dep_ids = sorted({i.deployment_id for i in insts})
-    if not dep_ids:
-        return []
-    deps = list((await db.execute(select(ModelDeployment).where(ModelDeployment.deployment_id.in_(dep_ids)))).scalars())
-    return [
-        d.deployment_id
-        for d in deps
-        if d.status == DeploymentStatus.CREATING
-        and d.phase == phase
-        and (want_model is None or d.model_id == want_model)
-    ]
+        if mid is None:
+            return []  # resource_key 解析失败
+        phase = DeploymentPhase.STAGING_MODEL
+        insts = list((await db.execute(select(Instance).where(Instance.assigned_node == task.node_id))).scalars())
+        dep_ids = sorted({i.deployment_id for i in insts})
+        if not dep_ids:
+            return []
+        deps = list((await db.execute(select(ModelDeployment).where(ModelDeployment.deployment_id.in_(dep_ids)))).scalars())
+        return [
+            d.deployment_id
+            for d in deps
+            if d.status == DeploymentStatus.CREATING and d.phase == phase and d.model_id == mid
+        ]
+    return []

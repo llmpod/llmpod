@@ -166,7 +166,7 @@ class TestPullImageExistsPreCheck:
         assert len(ctx.session.added) == 2
         assert ctx.session.added[0].status == "SUCCESS"
         assert ctx.session.added[0].type == "PULL_IMAGE"
-        assert ctx.session.added[0].resource_key.startswith("image:node-a:")  # 按 node+镜像 hash 键控
+        assert ctx.session.added[0].resource_key.startswith("image:dep-test-1234:node-a:")  # 按部署+节点+镜像 hash 键控
         assert isinstance(ctx.session.added[1], DeployLog)
         assert ctx.session.added[1].message == "镜像已存在，跳过拉取: img:1"
         assert ctx.session.added[1].node_id == "node-a"
@@ -234,11 +234,11 @@ class _AddCtx:
 
 
 def _stale_success_task() -> Task:
-    """历史假成功/已被 prune 的 SUCCESS 行（resource_key 与 node-a/img:1 对齐）。"""
+    """历史假成功/已被 prune 的 SUCCESS 行（resource_key 与部署键 node-a/img:1 对齐）。"""
     return Task(
         id="t-old",
         resource_type="IMAGE_PULL",
-        resource_key=pull_resource_key("node-a", "img:1"),
+        resource_key=pull_resource_key("dep-test-1234", "node-a", "img:1"),
         node_id="node-a",
         type="PULL_IMAGE",
         status="SUCCESS",

@@ -1,6 +1,7 @@
 """DeploymentOrchestrator.restart 单测：原卡重新预留 VRAM + 冲突检测/force + 状态重置。
 
-FakeSession（支持 select.where ==/in_ + 逐行 delete）+ 真实 ResourceLedger + 种子
+FakeSession（select.where 支持 ==/in_/AND 组合 + 逐行 delete，条件摊平复用
+tests/unit/_fakes._where_conditions）+ 真实 ResourceLedger + 种子
 Gpu/Model/ModelDeployment/Instance。覆盖：成功重预留+重置、原卡被占→Conflict(occupied)、
 force 抢占、非 stopped/failed 拒绝、原卡离线拒绝。
 """
@@ -22,6 +23,7 @@ from llmpod.models.model import Model
 from llmpod.models.model_deployment import ModelDeployment
 from llmpod.models.node_model import NodeModel
 from llmpod.models.node import Node
+from tests.unit._fakes import _where_conditions
 
 
 class FakeSession:
@@ -97,14 +99,8 @@ class FakeSession:
 
         entity = stmt.column_descriptions[0]["entity"] if stmt.column_descriptions else None
         objs = list(self._store.get(entity, {}).values())
-        wc = stmt.whereclause
-        if wc is not None and hasattr(wc, "left") and hasattr(wc.left, "key"):
-            right = wc.right
-            val = getattr(right, "effective_value", None) or getattr(right, "value", right)
-            if isinstance(val, (list, tuple, set)):
-                objs = [o for o in objs if getattr(o, wc.left.key, None) in val]
-            else:
-                objs = [o for o in objs if getattr(o, wc.left.key, None) == val]
+        for cond in _where_conditions(stmt.whereclause):
+            objs = [o for o in objs if cond(o)]
         return _Result(objs)
 
     async def delete(self, obj):
@@ -478,14 +474,19 @@ class TestRestart:
         按新 cycle 重建并真实拉起容器。
         """
         from llmpod.models.task import Task
+        from llmpod.models.model_deployment_replica import ModelDeploymentReplica
 
         session = patched_db
         _seed(session)
+        # 新结构种子：有副本行 → _backfill_legacy_topology_rows 早退、不再重生成引擎实例
+        # ID，键稳定可预测。键源 = 引擎实例 ID（列 model_deployment_instance_id →
+        # spec.engine_instance_id → instance_id 兜底）；种子实例两者皆空 → 键为 instance:i-0:0
+        session.preload(ModelDeploymentReplica(replica_id="r-0", deployment_id="dep-1", seq=0, status="PROVISIONING"))
         session.preload(
             Task(
                 id="task-1",
                 resource_type="INSTANCE",
-                resource_key="instance:dep-1:0",
+                resource_key="instance:i-0:0",
                 node_id="n1",
                 type="START_INSTANCE",
                 status="SUCCESS",
@@ -494,7 +495,7 @@ class TestRestart:
         )
         await orch.restart("dep-1")
 
-        assert not [t for t in session.all(Task) if t.resource_key == "instance:dep-1:0"]
+        assert not [t for t in session.all(Task) if t.resource_key == "instance:i-0:0"]
 
     async def test_restart_deletes_stale_stop_task(self, orch, patched_db):
         """restart 清掉上一轮的 STOP_INSTANCE task，attempt 归零重计。
@@ -504,16 +505,18 @@ class TestRestart:
         也不计失败链），前者让 STOP task 的 attempt 每轮 restart 归零、语义清晰。
         """
         from llmpod.models.task import Task
+        from llmpod.models.model_deployment_replica import ModelDeploymentReplica
 
         session = patched_db
         _seed(session)
-        # 三次 stop 累积的 STOP task（attempt 1..3，均 SUCCESS）
+        # 副本行使键稳定（同上）；三次 stop 累积的 STOP task（attempt 1..3，均 SUCCESS）
+        session.preload(ModelDeploymentReplica(replica_id="r-0", deployment_id="dep-1", seq=0, status="PROVISIONING"))
         for i in range(1, 4):
             session.preload(
                 Task(
                     id=f"stop-{i}",
                     resource_type="INSTANCE",
-                    resource_key="instance:dep-1:0:stop",
+                    resource_key="instance:i-0:0:stop",
                     node_id="n1",
                     type="STOP_INSTANCE",
                     status="SUCCESS",
@@ -522,7 +525,7 @@ class TestRestart:
             )
         await orch.restart("dep-1")
 
-        assert not [t for t in session.all(Task) if t.resource_key == "instance:dep-1:0:stop"]
+        assert not [t for t in session.all(Task) if t.resource_key == "instance:i-0:0:stop"]
 
 
 class TestRestartConvergeRace:

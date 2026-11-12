@@ -45,7 +45,7 @@ def _next_attempt(rows: list[Task]) -> int:
 
 
 def trailing_fail_count(rows: list[Task]) -> int:
-    """末尾连续 FAILED 数（重试预算/退避判定共用；SUCCESS/CANCELLED 打断失败链）。
+    """末尾连续 FAILED 数（重试预算判定；SUCCESS/CANCELLED 打断失败链）。
 
     attempt 因唯一索引必须单调递增，故「是否超自动重试上限」不能看 ``max(attempt)``——
     否则每次成功操作都抬高 attempt，用户手动 stop/start 数次后误触上限（正常操作被拒）。
@@ -59,15 +59,6 @@ def trailing_fail_count(rows: list[Task]) -> int:
         else:
             break
     return n
-
-
-def _last_failed_age_s(rows: list[Task]) -> float:
-    """末条 FAILED 行距现在的秒数（超限冷却判定；无 FAILED/无时间戳返回 0）。"""
-    failed = [t for t in rows if t.status == TaskStatus.FAILED and t.finished_at is not None]
-    if not failed:
-        return 0.0
-    latest = max(t.finished_at for t in failed)
-    return max(0.0, (datetime.now(timezone.utc) - latest).total_seconds())
 
 
 def image_ref_hash(image: str) -> str:
@@ -114,8 +105,25 @@ def pull_hang_timeout(size_gb: float | None) -> int:
     )
 
 
-def pull_resource_key(node_id: str, image: str) -> str:
-    return f"image:{node_id}:{image_ref_hash(image)}"
+def pull_resource_key(deployment_id: str, node_id: str, image: str) -> str:
+    """PULL task 键：按部署隔离（与 START 的 ``instance:{...}`` 键同粒度）。
+
+    失败预算随键走——一个部署的拉取三连败只终结它自己，别的部署同节点同镜像
+    各有各的键与预算，结构上不可能被牵连。代价是失去跨部署的并发拉取去重：
+    并行部署短暂重复拉同一镜像由 docker daemon 的层共享兜底，且拉取前的在位
+    探测 / node 侧 image_exists 短路都会让后到者秒过。
+    """
+    return f"image:{deployment_id}:{node_id}:{image_ref_hash(image)}"
+
+
+def parse_pull_deployment_id(resource_key: str) -> str | None:
+    """从 PULL 键反解归属部署 id（进度投影用）；解析不出返回 None。
+
+    键格式见 :func:`pull_resource_key`。旧格式 ``image:{node}:{hash}``（部署隔离
+    改造前的存量行）只有 3 段，读不出部署——调用方按「无归属」处理。
+    """
+    parts = resource_key.split(":")
+    return parts[1] if len(parts) >= 4 else None
 
 
 def start_resource_key(engine_instance_id: str, node_rank: int) -> str:
@@ -187,7 +195,6 @@ async def ensure_task_row(
     payload: dict,
     timeout_sec: int | None = None,
     max_attempts: int = MAX_AUTO_ATTEMPTS,
-    exhaust_cooldown_s: float | None = None,
 ) -> tuple[Task | None, bool, str | None]:
     """声明式确保某 resource_key 有 active task（事务内决策；不在此处下发）。
 
@@ -200,10 +207,6 @@ async def ensure_task_row(
       调用方应按「已在途」等下一轮，误判耗尽会回滚/失败掉健康任务）。历史上
       两者共用一个 ``(None, False)`` 返回值，调用方无从区分——扩成三元组。
 
-    ``exhaust_cooldown_s``：超限冷却——末条 FAILED 距今已超该值时视为可重试
-    （重开一轮 attempt），供失败会跨部署传染的键（PULL 的 (node,image) 跨部署
-    共享）衰减历史失败；None = 维持「超限即终态」语义。
-
     调用方在事务提交后对 ``need_dispatch`` 行 best-effort 下发（``dispatch.ensure_task``）。
     """
     rows = list((await db.execute(select(Task).where(Task.resource_key == resource_key))).scalars())
@@ -214,20 +217,13 @@ async def ensure_task_row(
         # 成功操作也会抬高它——手动 stop/start 数次后会误触上限（正常操作被拒）。
         trailing = trailing_fail_count(rows)
         if trailing >= max_attempts:
-            cooled = exhaust_cooldown_s is not None and _last_failed_age_s(rows) > exhaust_cooldown_s
-            if not cooled:
-                log.warning(
-                    "task_ops %s: 连续失败 %d 次超上限（%d），不再自动创建",
-                    resource_key,
-                    trailing,
-                    max_attempts,
-                )
-                return None, False, "exhausted"
-            log.info(
-                "task_ops %s: 超限冷却已过（%.0fs），重开一轮重试",
+            log.warning(
+                "task_ops %s: 连续失败 %d 次超上限（%d），不再自动创建",
                 resource_key,
-                exhaust_cooldown_s,
+                trailing,
+                max_attempts,
             )
+            return None, False, "exhausted"
         attempt = _next_attempt(rows)
         task = Task(
             id=generate_uuid(),

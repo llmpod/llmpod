@@ -14,7 +14,8 @@
    stop 后报 STOPPED；轮询全部 STOPPED（或 stop task SUCCESS，双门）至超时；
 4. 返回是否全部停止。
 
-PULL_IMAGE 为跨部署共享任务（同 node 同镜像一个），停止**不**取消它。
+PULL task 按部署隔离键控（同部署同 node 同镜像一个），停止**不**取消它——终态
+行不影响别的部署（各自的键与预算），本部署重启时由 restart 清失败历史。
 VRAM/assignment 释放与行级联删除由调用方负责（stop/delete/reconcile 各自语义不同）。
 """
 

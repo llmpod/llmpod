@@ -17,7 +17,6 @@ from llmpod.apps.manager.deployment.placement import (
     _next_attempt,
 )
 from llmpod.apps.manager.deployment.task_ops import trailing_fail_count
-from llmpod.apps.manager.deployment.constants import NodeModelState
 from llmpod.config.constants import TaskResourceType
 from llmpod.models.model import Model
 from llmpod.models.node_model import NodeModel
@@ -135,7 +134,12 @@ class TestEnsurePresentReverify:
         assert len(session.all(Task)) == 1
         assert len(dispatched) == 1  # PENDING → redrive 重发
 
-    async def test_consecutive_failures_over_cap_refuses(self):
+    async def test_consecutive_failures_history_does_not_lock(self):
+        """共享键上的历史失败（别的部署/上一轮留下）不锁新会话：照常建下一 attempt。
+
+        失败预算由调用方 ModelStagingGate 按 staging 会话观察计，ensure_present
+        本身不再按历史失败拒绝。
+        """
         session, nm = self._setup(
             "absent",
             [
@@ -149,6 +153,7 @@ class TestEnsurePresentReverify:
 
         tid = await self._ensure(session, dispatched)
 
-        assert tid is None
-        assert nm.status == NodeModelState.FAILED
-        assert not dispatched
+        assert tid is not None  # 历史三连败不拒绝
+        new = [t for t in session.all(Task) if t.id == tid][0]
+        assert new.attempt == 5  # 编号单调续编
+        assert len(dispatched) == 1

@@ -30,7 +30,7 @@ def _evt(**kw):
     return TaskEventPayload(**defaults)
 
 
-def _pull_task(session, resource_key="image:n1:abc123", node_id="n1"):
+def _pull_task(session, resource_key="image:dep1:n1:abc123", node_id="n1"):
     return session.preload(
         Task(
             id="t1",
@@ -379,7 +379,8 @@ class TestNodeModelProjection:
 class TestResolveDeployments:
     async def test_only_matching_phase_and_status(self):
         session = FakeSession()
-        _pull_task(session)
+        # 拉取键按部署隔离（image:{dep}:{nid}:{hash}），归属部署直接取键内 dep-pulling
+        _pull_task(session, resource_key="image:dep-pulling:n1:abc123")
         _deployment(session, deployment_id="dep-pulling", status="creating", phase="PULL_IMAGE")
         _deployment(session, deployment_id="dep-running", status="running", phase="RUNNING")
         _deployment(session, deployment_id="dep-staging", status="creating", phase="STAGING_MODEL")
@@ -401,8 +402,24 @@ class TestResolveDeployments:
         task = session.all(Task)[0]
         assert await tp._resolve_deployments(session, task) == ["dep-a"]
 
-    async def test_no_instances_no_deployments(self):
+    async def test_key_deployment_missing_or_wrong_phase(self):
         session = FakeSession()
-        _pull_task(session)
+        _deployment(session, deployment_id="dep-running", status="running", phase="RUNNING")
+        _deployment(session, deployment_id="dep-staging", status="creating", phase="STAGING_MODEL")
 
-        assert await tp._resolve_deployments(session, session.all(Task)[0]) == []
+        # 键内部署不存在 → 无处落
+        task = _pull_task(session, resource_key="image:dep-gone:n1:abc123")
+        assert await tp._resolve_deployments(session, task) == []
+        # 键内部署存在但非 creating 态 / 非卡在 PULL_IMAGE 阶段 → 不落
+        task = _pull_task(session, resource_key="image:dep-running:n1:abc123")
+        assert await tp._resolve_deployments(session, task) == []
+        task = _pull_task(session, resource_key="image:dep-staging:n1:abc123")
+        assert await tp._resolve_deployments(session, task) == []
+
+    async def test_old_format_key_has_no_owner(self):
+        """升级前的旧行（image:{nid}:{hash} 三段键）：键里读不出部署归属，进度无处落。"""
+        session = FakeSession()
+        _deployment(session)  # dep1 正卡 PULL_IMAGE——旧格式键指名不了它，照样不落
+
+        task = _pull_task(session, resource_key="image:n1:abc123")
+        assert await tp._resolve_deployments(session, task) == []

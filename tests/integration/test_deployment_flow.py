@@ -40,7 +40,7 @@ from llmpod.tunnel.schemas import (
     RemoveResult,
     StopResult,
 )
-from _fakes import stub_model_verify
+from _fakes import _flatten_conds, stub_model_verify
 
 
 # ---- FakeSession：按 PK 索引的内存 async session ----
@@ -106,16 +106,16 @@ class FakeSession:
             return self._execute_delete(stmt)
         entity = stmt.column_descriptions[0]["entity"] if stmt.column_descriptions else None
         objs = list(self._store.get(entity, {}).values())
-        wc = stmt.whereclause
-        if wc is not None and hasattr(wc, "left") and hasattr(wc.left, "key"):
-            right = wc.right
+        for cond in _flatten_conds(stmt.whereclause):
+            left = cond.left
+            right = cond.right
             val = getattr(right, "effective_value", None)
             if val is None:
                 val = getattr(right, "value", right)
             if isinstance(val, (list, tuple, set)):
-                objs = [o for o in objs if getattr(o, wc.left.key, None) in val]  # IN
+                objs = [o for o in objs if getattr(o, left.key, None) in val]  # IN
             else:
-                objs = [o for o in objs if getattr(o, wc.left.key, None) == val]  # 等值
+                objs = [o for o in objs if getattr(o, left.key, None) == val]  # 等值
         # 单列投影 select(Entity.col)（expr 是列而非实体）→ 标量流（判空 in_ 集合等）
         descs = stmt.column_descriptions or []
         if len(descs) == 1 and descs[0].get("expr") is not entity:
@@ -616,6 +616,20 @@ def deployed_stack_hybrid(monkeypatch):
     return session, dep, fake_hub
 
 
+def _patch_dispatch(monkeypatch, ensures, cancels):
+    """patch 编排侧共用的 task 下发门面（TestReconcilerAdvance 等类的同名方法同款）。"""
+    from llmpod.apps.manager.deployment import task_ops
+
+    async def _dispatch(task):
+        ensures.append(task)
+
+    async def _cancel(node_id, task_id):
+        cancels.append((node_id, task_id))
+
+    monkeypatch.setattr(task_ops, "dispatch_task", _dispatch)
+    monkeypatch.setattr(task_ops, "dispatch_cancel_task", _cancel)
+
+
 class TestDeployCpuLane:
     """纯 CPU 部署：无卡时选节点 + RAM 预留 + 启动参数（不下发任何 GPU 语义参数）。"""
 
@@ -1005,20 +1019,42 @@ class TestDeployHandoff:
         assert head.spec["master_addr"] == ip_of[head.assigned_node]
         assert worker.spec["master_addr"] == head.spec["master_addr"]
 
-    async def test_deploy_fail_when_model_placement_over_cap(self, deployed_stack, monkeypatch):
-        """node_model=failed 且 ensure_present 返回 None（超 attempt 上限）→ staging 抛
-        LLMPodError → status=failed（模型不在不再立即失败，重试耗尽才终态）。"""
+    async def test_deploy_fail_when_model_download_exhausted(self, deployed_stack, monkeypatch):
+        """staging 会话内模型下载 3 连败 → 抛 LLMPodError → status=failed。
+
+        预算按 staging 会话计（观察到的失败数），与共享键上的历史失败无关——
+        历史失败行不锁新部署/重启（对应 ModelStagingGate 会话预算语义）。
+        """
+        from llmpod.apps.manager.deployment.constants import MAX_AUTO_ATTEMPTS
         from llmpod.apps.manager.deployment.placement import PlacementService
 
         session, dep, hub = deployed_stack
         nm = next(iter(session._store.get(NodeModel, {}).values()))
         nm.status = "failed"
-        nm.last_error = "超过自动重试上限 (3)，等待人工处理"
+        nm.last_error = "源不可达"
 
-        async def _over_cap(self, model_id, node_id):
-            return None
+        # ensure_present 依次返回预置 FAILED 任务：每轮观察一个失败，第 3 个后判死
+        failed_ids = [f"t-f{i}" for i in range(1, MAX_AUTO_ATTEMPTS + 1)]
+        for i, tid in enumerate(failed_ids, start=1):
+            session.preload(
+                Task(
+                    id=tid,
+                    resource_type="MODEL_PLACEMENT",
+                    resource_key=f"model:{dep.model_id}:n1",
+                    node_id="n1",
+                    type="ENSURE_MODEL",
+                    status="FAILED",
+                    attempt=i,
+                    payload={},
+                )
+            )
+        it = iter(failed_ids)
 
-        monkeypatch.setattr(PlacementService, "ensure_present", _over_cap)
+        async def _failing(self, model_id, node_id):
+            return next(it, None)
+
+        monkeypatch.setattr(PlacementService, "ensure_present", _failing)
+        monkeypatch.setattr(orch_mod, "STAGING_POLL_INTERVAL", 0.01)
 
         orch = get_orchestrator()
         await orch.deploy(dep.deployment_id)
@@ -1118,6 +1154,72 @@ class TestDeployHandoff:
         assert len(replicas) == 1 and len(engines) == 1  # restart 路径同样补建两层行
         irows = [r for r in session._store.get(Instance, {}).values() if r.deployment_id == dep.deployment_id]
         assert irows and all(r.model_deployment_instance_id == engines[0].instance_id for r in irows)
+
+    async def test_restart_clears_pull_failure_history(self, deployed_stack, monkeypatch):
+        """拉取连续失败超限后手动启动：清掉本部署镜像的 PULL 失败行，重启一轮满额重试。
+
+        覆盖「已经有人介入了」的语义——不被连续失败超限原地打回 failed，下一轮扫描
+        立即重新建 PULL task 拉取。别的部署的失败行（键按部署隔离）不受牵连。
+        """
+        from llmpod.apps.manager.deployment.engine import get_adapter
+        from llmpod.apps.manager.deployment.reconciler import resolve_image
+        from llmpod.apps.manager.deployment.schemas import DeploymentConfig, InstanceSpec
+        from llmpod.apps.manager.deployment.task_ops import pull_resource_key
+
+        session, dep, _hub = deployed_stack
+        orch = get_orchestrator()
+        await orch.deploy(dep.deployment_id)
+
+        # 与 restart/PULL 阶段同口径解析镜像 → 拉取任务的 resource_key
+        irow = next(r for r in session._store[Instance].values() if r.deployment_id == dep.deployment_id)
+        inst = InstanceSpec.model_validate(irow.spec)
+        image = resolve_image(dep.engine, get_adapter(dep.engine), DeploymentConfig.model_validate(dep.spec), inst)
+        rk = pull_resource_key(dep.deployment_id, "n1", image)
+        other_rk = pull_resource_key("dep-bbbb2222-3333", "n1", image)  # 别的部署同节点同镜像：键独立
+        # 三连败（超自动重试上限）+ 一条别的部署的失败行（不得被牵连删除）
+        for i in (1, 2, 3):
+            session.preload(
+                Task(
+                    id=f"pull-f{i}",
+                    resource_type="IMAGE_PULL",
+                    resource_key=rk,
+                    node_id="n1",
+                    type=TaskType.PULL_IMAGE,
+                    status="FAILED",
+                    attempt=i,
+                    payload={"image": image},
+                )
+            )
+        session.preload(
+            Task(
+                id="pull-other",
+                resource_type="IMAGE_PULL",
+                resource_key=other_rk,
+                node_id="n1",
+                type=TaskType.PULL_IMAGE,
+                status="FAILED",
+                attempt=1,
+                payload={"image": image},
+            )
+        )
+
+        d = await session.get(ModelDeployment, dep.deployment_id)
+        d.status = "failed"
+        await orch.restart(dep.deployment_id)
+
+        tasks = list(session._store.get(Task, {}).values())
+        assert not any(t.resource_key == rk for t in tasks)  # 本部署失败链已清
+        assert any(t.resource_key == other_rk and t.status == "FAILED" for t in tasks)  # 别的部署不动
+
+        # 控制器下一轮：不再判超限，直接建新 PULL task 下发（满额重试）
+        ensures, cancels = [], []
+        _patch_dispatch(monkeypatch, ensures, cancels)
+
+        await advance_deployment(dep.deployment_id)
+
+        d = await session.get(ModelDeployment, dep.deployment_id)
+        assert d.status != "failed"  # 不再原地打回
+        assert any(t.type == TaskType.PULL_IMAGE for t in ensures)  # 立即重新拉取
 
     async def test_deploy_with_manual_gpu_selection(self, deployed_stack):
         """手动选卡：spec.gpu_selector.gpu_uuids 指定 g0 → 精确预留 g0（非自动 spread）。"""
@@ -1266,15 +1368,14 @@ class TestReconcilerAdvance:
         )
 
     def _pull_task(self, session, dep, status, attempt=1):
-        import hashlib
+        from llmpod.apps.manager.deployment.task_ops import pull_resource_key
 
         image = "vllm/vllm-openai:v0.27.1"
-        h = hashlib.sha256(image.encode()).hexdigest()[:16]
         return session.preload(
             Task(
                 id=f"pull-{attempt}",
                 resource_type="IMAGE_PULL",
-                resource_key=f"image:n1:{h}",
+                resource_key=pull_resource_key(dep.deployment_id, "n1", image),
                 node_id="n1",
                 type=TaskType.PULL_IMAGE,
                 status=status,
@@ -1303,30 +1404,18 @@ class TestReconcilerAdvance:
         d.phase = phase
         return d
 
-    def _patch_dispatch(self, monkeypatch, ensures, cancels):
-        from llmpod.apps.manager.deployment import task_ops
-
-        async def _dispatch(task):
-            ensures.append(task)
-
-        async def _cancel(node_id, task_id):
-            cancels.append((node_id, task_id))
-
-        monkeypatch.setattr(task_ops, "dispatch_task", _dispatch)
-        monkeypatch.setattr(task_ops, "dispatch_cancel_task", _cancel)
-
     async def test_pull_image_creates_task_and_waits(self, deployed_stack, monkeypatch):
         session, dep, hub = deployed_stack
         self._instance(session, dep)
         self._set_phase(session, dep, "PULL_IMAGE")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
         assert ensures and ensures[0].type == TaskType.PULL_IMAGE
         assert ensures[0].payload == {"image": "vllm/vllm-openai:v0.27.1"}
-        assert ensures[0].resource_key.startswith("image:n1:")
+        assert ensures[0].resource_key.startswith(f"image:{dep.deployment_id}:n1:")  # 键含部署：失败预算按部署隔离
         d = await session.get(ModelDeployment, dep.deployment_id)
         assert d.phase == "PULL_IMAGE"  # task 未完成，不推进
 
@@ -1344,7 +1433,7 @@ class TestReconcilerAdvance:
         )
         self._set_phase(session, dep, "PULL_IMAGE")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1358,7 +1447,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "PULL_IMAGE")
         self._pull_task(session, dep, "SUCCESS")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1373,7 +1462,7 @@ class TestReconcilerAdvance:
         for i in (1, 2, 3):
             self._pull_task(session, dep, "FAILED", attempt=i)
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1382,6 +1471,45 @@ class TestReconcilerAdvance:
         # 失败收敛只派发 STOP（清理残留容器），不派发 START
         assert not any(t.type == "START_INSTANCE" for t in ensures)
 
+    async def test_pull_budget_isolated_per_deployment(self, deployed_stack, monkeypatch):
+        """部署 A 拉取三连败超限后，同节点同镜像的部署 B 预算不受牵连——B 首轮即建新
+        PULL task 正常拉取（拉取键含 deployment_id，失败历史按部署隔离）。"""
+        session, dep, hub = deployed_stack
+        self._instance(session, dep)
+        self._set_phase(session, dep, "PULL_IMAGE")
+        for i in (1, 2, 3):
+            self._pull_task(session, dep, "FAILED", attempt=i)
+        ensures, cancels = [], []
+        _patch_dispatch(monkeypatch, ensures, cancels)
+
+        await advance_deployment(dep.deployment_id)  # 部署 A：三连败 → failed
+        assert (await session.get(ModelDeployment, dep.deployment_id)).status == "failed"
+
+        # 部署 B：同节点 n1、同镜像、全新 deployment_id → 同样的 instance/phase 预置
+        dep_b = session.preload(
+            ModelDeployment(
+                deployment_id="dep-bbbb2222-3333",
+                cluster_id=1,
+                name="d2",
+                model_id=dep.model_id,
+                engine="vllm",
+                status="creating",
+                phase="PENDING",
+                spec=dict(dep.spec),
+            )
+        )
+        self._instance(session, dep_b)
+        self._set_phase(session, dep_b, "PULL_IMAGE")
+        ensures.clear()
+
+        await advance_deployment(dep_b.deployment_id)
+
+        d_b = await session.get(ModelDeployment, dep_b.deployment_id)
+        assert d_b.status != "failed"  # 不被 A 的失败历史打回
+        pull_tasks = [t for t in ensures if t.type == TaskType.PULL_IMAGE]
+        assert pull_tasks and pull_tasks[0].attempt == 1  # B 自己的第一轮，满额预算
+        assert pull_tasks[0].resource_key.startswith(f"image:{dep_b.deployment_id}:")
+
     async def test_start_head_creates_start_task(self, deployed_stack, monkeypatch):
         """START_HEAD 下发 head START task，并等容器 RUNNING 才切健康检查（时间线顺序）。"""
         session, dep, hub = deployed_stack
@@ -1389,7 +1517,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "START_HEAD")
         self._pull_task(session, dep, "SUCCESS")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1416,7 +1544,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "WAIT_HEAD_READY")
         self._start_task(session, dep, "SUCCESS")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1430,7 +1558,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "WAIT_HEAD_READY")
         self._start_task(session, dep, "SUCCESS")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1443,7 +1571,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "WAIT_HEAD_READY")
         self._start_task(session, dep, "FAILED", attempt=1, last_error="readiness 超时")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1460,7 +1588,7 @@ class TestReconcilerAdvance:
         for n in (1, 2, 3):
             self._start_task(session, dep, "FAILED", attempt=n, last_error="readiness 超时" if n == 3 else None)
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1475,7 +1603,7 @@ class TestReconcilerAdvance:
         self._instance(session, dep, status="READY")
         self._set_phase(session, dep, "FINALIZING")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1500,7 +1628,7 @@ class TestReconcilerAdvance:
         self._instance(session, dep, status="READY")
         self._set_phase(session, dep, "FINALIZING")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
         # 模拟崩溃后 phase 仍是 FINALIZING 重入
@@ -1519,7 +1647,7 @@ class TestReconcilerAdvance:
         self._instance(session, dep, status="READY")
         self._set_phase(session, dep, "FINALIZING")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1540,7 +1668,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "FINALIZING")
         dep.spec["publish"] = {"auto_publish": False}
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1559,7 +1687,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "FINALIZING")
         dep.spec["publish"] = {"name": "my-alias", "input_price_per_mtok": 1.5, "tags": ["思考"]}
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1577,7 +1705,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "FINALIZING")
         session.preload(Route(id=1, name="Qwen2.5-0.5B", status="unpublished", origin="auto"))
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1596,7 +1724,7 @@ class TestReconcilerAdvance:
         instance = self._instance(session, dep, status="READY", spec_extra={"assigned_gpu_uuids": ["g0"]})
         dep.spec["publish"] = {"auto_publish": auto_publish}
         self._set_phase(session, dep, "FINALIZING")
-        self._patch_dispatch(monkeypatch, [], [])
+        _patch_dispatch(monkeypatch, [], [])
         monkeypatch.setattr(
             "llmpod.apps.manager.deployment.controller.get_controller", lambda: SimpleNamespace(wake=lambda: None)
         )
@@ -1664,7 +1792,7 @@ class TestReconcilerAdvance:
         d = self._set_phase(session, dep, "WAIT_HEAD_READY")
         d.status = "stopped"
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1680,7 +1808,7 @@ class TestReconcilerAdvance:
         self._set_phase(session, dep, "WAIT_HEAD_READY")
         self._start_task(session, dep, "RUNNING", attempt=3)
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await fail_deployment(dep.deployment_id, error="直接失败（测试）")
 
@@ -1772,18 +1900,6 @@ class TestReconcilerMultinode:
         d.phase = phase
         return d
 
-    def _patch_dispatch(self, monkeypatch, ensures, cancels):
-        from llmpod.apps.manager.deployment import task_ops
-
-        async def _dispatch(task):
-            ensures.append(task)
-
-        async def _cancel(node_id, task_id):
-            cancels.append((node_id, task_id))
-
-        monkeypatch.setattr(task_ops, "dispatch_task", _dispatch)
-        monkeypatch.setattr(task_ops, "dispatch_cancel_task", _cancel)
-
     def _start_task(self, session, dep, rank, status, attempt=1, last_error=None):
         return session.preload(
             Task(
@@ -1804,7 +1920,7 @@ class TestReconcilerMultinode:
         session, dep, head, worker = deployed_stack_multinode_rec
         self._set_phase(session, dep, "START_HEAD")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1850,7 +1966,7 @@ class TestReconcilerMultinode:
         )
         self._set_phase(session, dep, "START_HEAD")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1866,7 +1982,7 @@ class TestReconcilerMultinode:
         head.status = "STARTING"
         self._set_phase(session, dep, "START_WORKERS")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1890,7 +2006,7 @@ class TestReconcilerMultinode:
         await session.delete(worker)
         self._set_phase(session, dep, "START_WORKERS")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1905,7 +2021,7 @@ class TestReconcilerMultinode:
         self._set_phase(session, dep, "WAIT_WORKERS_READY")
         self._start_task(session, dep, 1, "SUCCESS")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1919,7 +2035,7 @@ class TestReconcilerMultinode:
         self._set_phase(session, dep, "WAIT_WORKERS_READY")
         self._start_task(session, dep, 1, "FAILED", attempt=1, last_error="worker 崩了")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1936,7 +2052,7 @@ class TestReconcilerMultinode:
         for n in (1, 2, 3):
             self._start_task(session, dep, 1, "FAILED", attempt=n, last_error="worker 崩了" if n == 3 else None)
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1951,7 +2067,7 @@ class TestReconcilerMultinode:
         self._set_phase(session, dep, "WAIT_HEAD_READY")
         self._start_task(session, dep, 0, "SUCCESS")
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -1965,7 +2081,7 @@ class TestReconcilerMultinode:
         self._set_phase(session, dep, "START_HEAD")
         self._start_task(session, dep, 1, "SUCCESS")  # worker 已启动成功
         ensures, cancels = [], []
-        self._patch_dispatch(monkeypatch, ensures, cancels)
+        _patch_dispatch(monkeypatch, ensures, cancels)
 
         await advance_deployment(dep.deployment_id)
 
@@ -2014,7 +2130,8 @@ class TestDeployConcurrency:
         """node_model 仍是上次的 present、本次复核任务未 SUCCESS → 不放行。
 
         复核任务发现配套文件缺失（如 mmproj 被删）时 node_model 会短暂仍是 present，
-        据此放行会让缺权重的容器上线——staging 只认复核任务终态。
+        据此放行会让缺权重的容器上线——staging 只认复核任务终态。预算耗尽前
+        node_model 停在非终态缓存上不放行、也不判死（等下一轮 attempt 或 cancel）。
         """
         import asyncio as _aio
 
@@ -2022,6 +2139,12 @@ class TestDeployConcurrency:
         task = next(iter(session._store.get(Task, {}).values()))
         task.status = "FAILED"  # 本次复核失败；node_model 保持陈旧的 present
 
+        from llmpod.apps.manager.deployment.placement import PlacementService
+
+        async def _fail(self, mid, nid):
+            return "verify-task-id"
+
+        monkeypatch.setattr(PlacementService, "ensure_present", _fail)
         monkeypatch.setattr(orch_mod, "STAGING_POLL_INTERVAL", 0.0)
 
         orch = get_orchestrator()
@@ -2029,7 +2152,8 @@ class TestDeployConcurrency:
         await _aio.sleep(0.05)
 
         d = await session.get(ModelDeployment, dep.deployment_id)
-        assert d.phase == "STAGING_MODEL"  # 未交接容器阶段
+        assert d.phase == "STAGING_MODEL"  # 未交接容器阶段（不判死也不放行）
+        assert task.status == "FAILED"
 
         await orch.request_cancel(dep.deployment_id)
         await orch.await_deploy(dep.deployment_id, timeout=5.0)
@@ -2065,7 +2189,11 @@ class TestDeployConcurrency:
         assert not session._store.get(DeploymentGpuAssignment, {})  # assignments 清
 
     async def test_failed_deploy_deletes_assignments(self, deployed_stack, monkeypatch):
-        """部署失败后 DeploymentGpuAssignment 行应被删（VRAM 账实不泄露）。"""
+        """部署失败后 DeploymentGpuAssignment 行应被删（VRAM 账实不泄露）。
+
+        staging 会话内下载 3 连败判死（ensure_present 依次返回预置 FAILED 任务）。
+        """
+        from llmpod.apps.manager.deployment.constants import MAX_AUTO_ATTEMPTS
         from llmpod.apps.manager.deployment.placement import PlacementService
 
         session, dep, hub = deployed_stack
@@ -2080,12 +2208,29 @@ class TestDeployConcurrency:
         )
         nm = next(iter(session._store.get(NodeModel, {}).values()))
         nm.status = "failed"
-        nm.last_error = "超过自动重试上限 (3)"
+        nm.last_error = "源不可达"
 
-        async def _over_cap(self, model_id, node_id):
-            return None
+        failed_ids = [f"t-f{i}" for i in range(1, MAX_AUTO_ATTEMPTS + 1)]
+        for i, tid in enumerate(failed_ids, start=1):
+            session.preload(
+                Task(
+                    id=tid,
+                    resource_type="MODEL_PLACEMENT",
+                    resource_key=f"model:{dep.model_id}:n1",
+                    node_id="n1",
+                    type="ENSURE_MODEL",
+                    status="FAILED",
+                    attempt=i,
+                    payload={},
+                )
+            )
+        it = iter(failed_ids)
 
-        monkeypatch.setattr(PlacementService, "ensure_present", _over_cap)
+        async def _failing(self, model_id, node_id):
+            return next(it, None)
+
+        monkeypatch.setattr(PlacementService, "ensure_present", _failing)
+        monkeypatch.setattr(orch_mod, "STAGING_POLL_INTERVAL", 0.01)
 
         orch = get_orchestrator()
         await orch.deploy(dep.deployment_id)

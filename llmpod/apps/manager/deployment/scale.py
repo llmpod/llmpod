@@ -52,12 +52,13 @@ from llmpod.apps.manager.deployment.scheduler.gpu import GpuScheduler, group_eng
 from llmpod.apps.manager.deployment.scheduler.pipeline import default_filters, run_filters
 from llmpod.apps.manager.deployment.scheduler.rank import RankResolver
 from llmpod.apps.manager.deployment.scheduler.topology import expand_standard
-from llmpod.apps.manager.deployment.placement import ModelStagingGate, mmproj_path_for
+from llmpod.apps.manager.deployment.placement import ENSURE_MODEL_WATCHDOG_S, ModelStagingGate, mmproj_path_for
 from llmpod.apps.manager.deployment.reconciler import (
     _backfill_ready,
     _ensure_start_tasks,
     _latest_by_key,
     _task_rows_by_keys,
+    clear_pull_failure_history,
     ensure_pull_tasks,
     probe_pull_images,
     resolve_image,
@@ -94,10 +95,10 @@ _DRIVE_TIMEOUT_MARGIN = 2.0
 # （冷编译/图捕获）可能超过健康检查预算的两倍，扩容不该比新副本自己更早放弃。
 # 本预算只防离线节点把 SCALING 永久挂死，不是启动限时。
 _DRIVE_TIMEOUT_FLOOR_S = 3600
-# 扩容 staging 总预算：对齐 ENSURE_MODEL 看门狗（placement 建任务处同值）——staging
-# 等的就是该任务，预算比它短会先于内层任务错误中止；此预算只兜「任务滞留无人置
-# 终态把 SCALING 永久锁死（只能重启 manager 解锁）」，不是下载限时
-_STAGE_BUDGET_S = 12 * 3600
+# 扩容 staging 总预算 = ENSURE_MODEL 看门狗（placement.ENSURE_MODEL_WATCHDOG_S，
+# staging 等的就是该任务，预算比它短会先于内层任务错误中止）；此预算只兜「任务滞留
+# 无人置终态把 SCALING 永久锁死（只能重启 manager 解锁）」，不是下载限时
+_STAGE_BUDGET_S = ENSURE_MODEL_WATCHDOG_S
 # 缩容续摘的连续失败上限：意图保留续摘是为了熬过「节点短暂离线」，永久离线不该
 # 无限重试（每轮 5s 一条失败日志 + 用户被 SCALING 锁住改不了份数）。超限放弃意图，
 # 部署回到 RUNNING（已摘份数保留），用户可改目标份数重试或换节点
@@ -612,7 +613,7 @@ async def _scale_up(deployment_id: str, target: int, trigger: str) -> None:
     await _stage_new_replicas(deployment_id)
 
     # 7. 容器阶段：PULL → START → 等 READY（逐轮推进，双门判定）
-    await _drive_new_replicas(deployment_id)
+    await _drive_new_replicas(deployment_id, trigger)
 
     # 8. 全部新份 serving → 份数回写 + finalize 补端点（幂等；存量端点不动）
     async with get_db_context() as db:
@@ -651,7 +652,7 @@ async def _scale_up(deployment_id: str, target: int, trigger: str) -> None:
 async def _stage_new_replicas(deployment_id: str) -> None:
     """新份目标节点声明式模型分发（幂等；已在盘秒过）。
 
-    终态失败即抛（下载超自动重试上限且无新任务可建——与部署期 staging 同判定），
+    staging 会话内下载 3 连败即抛（预算按会话观察计——与部署期 staging 同判定），
     不无限等：永久失败把 SCALING 挂死没有意义，交由上层回滚新份。
     """
     # 复核任务跨轮保留：同一 node 只派发一次（每轮重派会不断新建任务、永远等不到
@@ -684,9 +685,11 @@ async def _stage_new_replicas(deployment_id: str) -> None:
 
         if gate is None:
             gate = ModelStagingGate(model.id)
-        over_cap = await gate.dispatch(pending_nodes)
+        # 1. 未派发节点：声明式触发/续接下载（idempotent）；预算耗尽的节点不再建任务
+        await gate.dispatch(pending_nodes)
+        # 2. 读共享复核任务最新行 + node_model 推进（判死/放行判据见 advance docstring）
         async with get_db_context() as db:
-            confirmed, by_node = await gate.advance(db, pending_nodes, over_cap)
+            confirmed, by_node = await gate.advance(db, pending_nodes)
             if pending_nodes <= confirmed:
                 # 模型路径写回新份容器 spec（同事务内重取行，避免 detached 后写不落库）。
                 # 与初建路径同口径：只认**节点回报**的权威路径（None 不覆盖预估，否则会写出
@@ -706,8 +709,8 @@ async def _stage_new_replicas(deployment_id: str) -> None:
         await asyncio.sleep(_SCALE_POLL_INTERVAL_S)
 
 
-async def _drive_new_replicas(deployment_id: str) -> None:
-    """新份容器阶段推进（PULL 共享池 → START 全分片 → 双门等 READY → 投影）。
+async def _drive_new_replicas(deployment_id: str, trigger: str) -> None:
+    """新份容器阶段推进（拉取 → START 全分片 → 双门等 READY → 投影）。
 
     与 reconciler 的差异：只驱动新份（spec 分界），部署 phase 不动（SCALING 由
     _run_scale 维护）；attempt 超限或总预算超时抛错（scale 失败 → 回滚新份）。
@@ -751,8 +754,15 @@ async def _drive_new_replicas(deployment_id: str) -> None:
             inst = InstanceSpec.model_validate(r.spec or {})
             node_image[r.assigned_node] = resolve_image(dep.engine, adapter, config, inst)
             node_image_size[r.assigned_node] = resolve_image_size_gb(dep.engine, adapter, config, inst)
+        keys = [pull_resource_key(deployment_id, n, img) for n, img in node_image.items()]
+        if keys:
+            # 扩容入口清本部署镜像的拉取失败历史，重开满额预算——RUNNING 部署没有
+            # restart 入口，不清会把「上一次扩容的拉取三连败」变成本次扩容的立即失败
+            # （与手动启动清历史同一入口语义；边界见 helper docstring）
+            await clear_pull_failure_history(
+                db, deployment_id=deployment_id, pull_keys=set(keys), trigger=trigger,
+            )
     if node_image:
-        keys = [pull_resource_key(n, img) for n, img in node_image.items()]
         image_sizes = {node_image[n]: node_image_size.get(n) for n in node_image}
         while True:
             _check_deadline()
@@ -762,7 +772,7 @@ async def _drive_new_replicas(deployment_id: str) -> None:
             # 探测命中直接记 SUCCESS、失败行按末尾连续失败数决定重建、PENDING/RUNNING
             # 不打扰；全 SUCCESS 即完成。探测在事务外并发（见 probe_pull_images docstring）
             prev_latest = _latest_by_key(await _task_rows_by_keys(keys))
-            probes = await probe_pull_images(node_image, prev_latest)
+            probes = await probe_pull_images(node_image, prev_latest, deployment_id)
             async with get_db_context() as db:
                 to_dispatch, exhausted = await ensure_pull_tasks(
                     db, node_image, prev_latest, probes, deployment_id=deployment_id, image_sizes=image_sizes

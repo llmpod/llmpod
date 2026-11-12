@@ -25,6 +25,7 @@ from llmpod.apps.manager.deployment.command import (
 )
 from llmpod.apps.manager.deployment.engine import get_adapter
 from llmpod.apps.manager.deployment.placement import (
+    ENSURE_MODEL_WATCHDOG_S,
     ModelStagingGate,
     canonical_local_dir,
     mmproj_path_for,
@@ -95,6 +96,11 @@ log = logging.getLogger("llmpod.apps.manager.deployment.orchestrator")
 # STAGING 轮询间隔：deploy 任务等待 node_model 就绪时的 node_model.status 查询节奏。
 # attempt 上限（MAX_AUTO_ATTEMPTS）兜底真失败；node 离线则等用户 cancel（_check_cancel）。
 STAGING_POLL_INTERVAL = 5.0
+# 部署 staging 总预算 = ENSURE_MODEL 看门狗（placement.ENSURE_MODEL_WATCHDOG_S，
+# staging 等的就是该任务，预算比它短会先于内层任务错误中止）。只兜「轮询永远等
+# 不到结论」（如共享下载键被别的会话反复 cancel）把部署永久挂在 STAGING_MODEL、
+# 占住 controller 活动位，不是下载限时
+STAGING_BUDGET_S = ENSURE_MODEL_WATCHDOG_S
 
 
 async def _all_models_present(db, model_id: int, node_ids: set[str]) -> bool:
@@ -387,8 +393,9 @@ class DeploymentOrchestrator:
         在原卡上重新预留 VRAM（stop/failed 收敛已释放）。原卡被别的部署占用时：非 force →
         raise Conflict（``details`` 携带 occupied 明细供前端提示）；force → 强制预留（ledger 超额，
         用户承担）仍按原卡重启。模型已在盘、镜像已缓存，故 phase 直设 PULL_IMAGE（staging/pull
-        秒过）。旧容器（停止态/崩溃态）由 deploy 开头的 ``cleanup_deployment_containers``（label
-        扫除）/``_create_or_replace`` 409-replace 自然替换。
+        秒过）。启动是人工介入信号：本部署的拉取失败历史一并清除，下一轮扫描立即重开满额
+        自动重试。旧容器（停止态/崩溃态）由 deploy 开头的 ``cleanup_deployment_containers``
+        （label 扫除）/``_create_or_replace`` 409-replace 自然替换。
 
         状态迁移分两步（先短事务置 CREATING 并 commit，再做重预留）：stopped/failed 属于
         controller 的 converge 扫描集合，若在整个 restart 事务窗口内仍是终态，converge 的
@@ -497,6 +504,7 @@ class DeploymentOrchestrator:
             from llmpod.apps.manager.deployment.task_ops import (
                 instance_start_key,
                 instance_stop_key,
+                pull_resource_key,
             )
 
             start_keys = [instance_start_key(r) for r in irows]
@@ -513,9 +521,33 @@ class DeploymentOrchestrator:
                 )
             ).scalars():
                 await db.delete(t)
+
+            # 本部署 PULL 失败历史一并清除：启动是人工介入信号（大概率已排障，修了
+            # 网络/磁盘/registry），保留「连续失败超限」会把刚启动的部署立刻打回
+            # failed。拉取键按部署隔离，删的只可能是本部署自己的行（边界与日志见
+            # clear_pull_failure_history）。
+            # resolve_image/clear_pull_failure_history 定义在 reconciler，其顶层又导入
+            # 本模块——函数内延迟导入避免循环
+            from llmpod.apps.manager.deployment.reconciler import clear_pull_failure_history, resolve_image
+
+            pull_keys: set[str] = set()
+            for inst in instances:
+                if not inst.assigned_node:
+                    continue
+                try:
+                    ref = resolve_image(dep.engine, adapter, config, inst)
+                except LLMPodValidationError:
+                    # catalog miss（驱动/型号/版本对不上）是永久错误，重试无意义——
+                    # 无对应拉取会发生，交给 PULL 阶段原样报解析失败
+                    continue
+                pull_keys.add(pull_resource_key(deployment_id, inst.assigned_node, ref))
+            await clear_pull_failure_history(
+                db, deployment_id=deployment_id, pull_keys=pull_keys, trigger=trigger,
+            )
             await db.flush()
             # phase 判定：模型未全部在盘（staging 失败重启）→ 回 STAGING_MODEL 让 controller 重新分发，
-            # 否则直设 PULL_IMAGE（模型已在盘，跳过 staging）。防「下载超限失败 → 重启永远不下载」死循环。
+            # 否则直设 PULL_IMAGE（模型已在盘，跳过 staging）。staging 重试预算按会话计（ModelStagingGate
+            # 每次部署/重启新起一轮），不存在「下载超限失败 → 重启永远不下载」的历史锁。
             node_ids = {i.assigned_node for i in instances if i.assigned_node}
             all_present = await _all_models_present(db, model.id, node_ids)
             await deployment_service.set_phase(
@@ -1048,13 +1080,20 @@ class DeploymentOrchestrator:
         # 同一任务的终态，与 node_model 缓存来回打架）；终态失败才清出，由
         # ensure_present 建下一 attempt。
         gate = ModelStagingGate(model.id)
+        staging_deadline = asyncio.get_running_loop().time() + STAGING_BUDGET_S
         while pending:
             self._check_cancel(deployment_id)
-            # 1. 未派发节点：声明式触发/续接下载（idempotent）。返回 None 的 not-present node → 超 attempt 上限。
-            over_cap = await gate.dispatch(pending)
-            # 2. 读复核任务终态 + node_model 推进（select.where + Python 过滤，FakeSession 兼容）
+            # 总预算兜底：预算耗尽且 node_model 停在非终态时轮询没有自然终点（gate 不再
+            # 建任务、也观察不到终态），不设限会把部署永久挂在 STAGING_MODEL 占住活动位
+            if asyncio.get_running_loop().time() > staging_deadline:
+                raise LLMPodError(
+                    f"模型 staging 超预算（{STAGING_BUDGET_S // 60} 分钟，疑似节点离线/下载卡死），中止部署"
+                )
+            # 1. 未派发节点：声明式触发/续接下载（idempotent）；预算耗尽的节点不再建任务
+            await gate.dispatch(pending)
+            # 2. 读共享复核任务最新行 + node_model 推进（判死/放行判据见 advance docstring）
             async with get_db_context() as db:
-                confirmed, nm_by_node = await gate.advance(db, pending, over_cap)
+                confirmed, nm_by_node = await gate.advance(db, pending)
             for node_id in sorted(confirmed):
                 nm = nm_by_node[node_id]
                 node_insts = nodes_to_insts[node_id]
@@ -1064,7 +1103,6 @@ class DeploymentOrchestrator:
                         # 投影器路径按节点回报的目录重算（权威值；_plan 阶段是预估值）
                         inst.mmproj_path = mmproj_path_for(model, nm.local_dir)
                 pending.discard(node_id)
-                gate.release(node_id)
                 log.info(
                     "staging %s: model=%s present on %s → %s",
                     deployment_id[:8],

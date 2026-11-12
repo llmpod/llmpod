@@ -334,7 +334,8 @@ class TestStopInstances:
         assert cleanups == []  # StopService 永不 cleanup
 
     async def test_pull_tasks_not_cancelled(self, patched_db, monkeypatch):
-        """PULL_IMAGE 为跨部署共享任务——停止不取消它。"""
+        """PULL task 键按部署隔离、终态行只影响本部署——停止不取消它（在途拉取可能
+        被下一轮 restart 续用，取消反而引入无人认领的上报）。"""
         session = patched_db
         _deployment(session)
         _instance(session, status="READY")
@@ -343,7 +344,7 @@ class TestStopInstances:
             Task(
                 id="pull-1",
                 resource_type="IMAGE_PULL",
-                resource_key=pull_resource_key("n1", image),
+                resource_key=pull_resource_key("dep-1", "n1", image),
                 node_id="n1",
                 type="PULL_IMAGE",
                 status="RUNNING",

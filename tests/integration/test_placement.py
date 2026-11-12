@@ -80,6 +80,17 @@ def _terminal_task(session, attempt, status="FAILED", tid=None):
     )
 
 
+async def _drive_budget_exhausted(gate, session) -> None:
+    """驱动 dispatch 轮询直到会话失败预算耗尽（每轮把在派任务置 FAILED 模拟失败上报）。"""
+    for _ in range(10):
+        for tid in list(gate._tasks.values()):
+            session._store[Task][tid].status = "FAILED"
+        await gate.dispatch({"n1"})
+        if gate._failed_seen.get("n1", 0) >= MAX_AUTO_ATTEMPTS:
+            return
+    raise AssertionError("预算未耗尽（10 轮内未观察到 3 次失败）")
+
+
 # ---- resource_key ----
 
 
@@ -93,7 +104,7 @@ def test_resource_key_format():
 
 class TestModelStagingGate:
     async def test_only_success_and_present_counts(self, monkeypatch):
-        """复核任务 SUCCESS 且 node_model present 才放行；FAILED 任务不放行。"""
+        """共享键最新行 SUCCESS 且 node_model present 才放行；最新 FAILED 不放行。"""
         session = FakeSession()
         _patch_db(monkeypatch, session)
         session.preload(NodeModel(model_id=1, node_id="n1", status="present", local_dir="/m"))
@@ -118,44 +129,103 @@ class TestModelStagingGate:
 
         monkeypatch.setattr(PlacementService, "ensure_present", _ensure)
         gate = ModelStagingGate(1)
-        over_cap = await gate.dispatch({"n1", "n2"})
-        assert over_cap == set()
-        confirmed, by_node = await gate.advance(session, {"n1", "n2"}, over_cap)
+        await gate.dispatch({"n1", "n2"})
+        confirmed, by_node = await gate.advance(session, {"n1", "n2"})
         assert confirmed == {"n1"}
         assert set(by_node) == {"n1", "n2"}
 
     async def test_over_cap_failed_raises(self, monkeypatch):
-        """超 attempt 上限（ensure_present 返回 None）且 node_model 终态 failed → 判死。"""
+        """会话内观察到 3 次下载失败（node_model 终态 failed）→ 判死抛错。
+
+        预算按 staging 会话计（自己观察到的失败数），与共享键上的历史失败无关。
+        """
         session = FakeSession()
         _patch_db(monkeypatch, session)
         session.preload(NodeModel(model_id=1, node_id="n1", status="failed", local_dir="/m", last_error="boom"))
+        seq = iter(("t1", "t2", "t3"))
+        for i, tid in enumerate(("t1", "t2", "t3"), start=1):
+            _terminal_task(session, i, status="PENDING", tid=tid)
 
         async def _ensure(self, mid, nid):
-            return None
+            return next(seq, None)
 
         monkeypatch.setattr(PlacementService, "ensure_present", _ensure)
         gate = ModelStagingGate(1)
-        over_cap = await gate.dispatch({"n1"})
-        assert over_cap == {"n1"}
+        await _drive_budget_exhausted(gate, session)
+        assert gate._failed_seen["n1"] == MAX_AUTO_ATTEMPTS  # 第 3 次观察失败后预算耗尽
+        assert next(seq, None) is None  # t1/t2/t3 恰好用完，无第 4 个任务
         with pytest.raises(LLMPodError):
-            await gate.advance(session, {"n1"}, over_cap)
+            await gate.advance(session, {"n1"})
+
+    async def test_over_cap_present_confirmed_via_shared_success(self, monkeypatch):
+        """预算耗尽但共享键最新任务 SUCCESS（别的会话下成）+ node_model present → 放行。
+
+        不放行则本会话已不建任务、观察不到那行终态，staging 轮询永远等不到结论。
+        同款陈旧缓存（present + 最新 FAILED）不放行——见下一条。
+        """
+        session = FakeSession()
+        _patch_db(monkeypatch, session)
+        session.preload(NodeModel(model_id=1, node_id="n1", status="present", local_dir="/m", model_path="/m/q"))
+        # 本会话观察失败的 t1..t3 之后，别的会话建的第 4 个 attempt 下成了
+        for i in range(1, MAX_AUTO_ATTEMPTS + 1):
+            _terminal_task(session, i, status="FAILED")
+        _terminal_task(session, 4, status="SUCCESS", tid="t-ok")
+
+        async def _ensure(self, mid, nid):
+            return "t3"  # 只派发到第 3 个，预算耗尽后不再调
+
+        monkeypatch.setattr(PlacementService, "ensure_present", _ensure)
+        gate = ModelStagingGate(1)
+        await _drive_budget_exhausted(gate, session)
+
+        confirmed, by_node = await gate.advance(session, {"n1"})
+        assert confirmed == {"n1"}  # 共享键最新 SUCCESS + present → 放行
+        assert by_node["n1"].model_path == "/m/q"
+
+    async def test_over_cap_stale_present_latest_failed_not_confirmed(self, monkeypatch):
+        """预算耗尽、node_model 停在陈旧 present、共享键最新行 FAILED → 不放行。
+
+        present 缓存可能是上一轮残影（复核发现配套文件缺失），据此放行会让缺权重的
+        容器上线；判死条件（node_model FAILED）也未达 → 悬在等待由调用方总预算兜底。
+        """
+        session = FakeSession()
+        _patch_db(monkeypatch, session)
+        session.preload(NodeModel(model_id=1, node_id="n1", status="present", local_dir="/m"))
+        for i in range(1, MAX_AUTO_ATTEMPTS + 1):
+            _terminal_task(session, i, status="FAILED")
+
+        async def _ensure(self, mid, nid):
+            return "t3"
+
+        monkeypatch.setattr(PlacementService, "ensure_present", _ensure)
+        gate = ModelStagingGate(1)
+        await _drive_budget_exhausted(gate, session)
+
+        confirmed, _ = await gate.advance(session, {"n1"})
+        assert confirmed == set()  # 不判死（node_model 非 failed）也不放行
+
+    async def test_history_failures_do_not_lock_new_session(self, monkeypatch):
+        """别的部署留下的 3 条 FAILED 历史 + 全新 gate：会话预算从零计，照常建任务。"""
+        session = FakeSession()
+        _patch_db(monkeypatch, session)
+        for i in range(1, MAX_AUTO_ATTEMPTS + 1):
+            _terminal_task(session, i, status="FAILED", tid=f"t-old-{i}")
+
+        async def _ensure(self, mid, nid):
+            return "t-new"
+
+        monkeypatch.setattr(PlacementService, "ensure_present", _ensure)
+        gate = ModelStagingGate(1)  # 新部署/手动启动 → 新会话
+        await gate.dispatch({"n1"})
+
+        assert gate._failed_seen.get("n1", 0) == 0  # 历史失败不计入本会话预算
+        assert gate._tasks["n1"] == "t-new"  # 照常派发新任务
 
     async def test_pending_record_is_redispatched(self, monkeypatch):
         """已记录节点任务仍 PENDING（首发 RPC 瞬时失败）→ 下一轮 dispatch 补发（幂等）。"""
         session = FakeSession()
         _patch_db(monkeypatch, session)
-        session.preload(
-            Task(
-                id="t1",
-                resource_type="MODEL_PLACEMENT",
-                resource_key="model:1:n1",
-                node_id="n1",
-                type="ENSURE_MODEL",
-                status="PENDING",
-                attempt=1,
-                payload={},
-            )
-        )
+        _terminal_task(session, 1, status="PENDING", tid="t1")
         calls: list[str] = []
 
         async def _ensure(self, mid, nid):
@@ -172,18 +242,7 @@ class TestModelStagingGate:
         """已记录节点任务 RUNNING（node 在跑）→ 不打扰，不重派。"""
         session = FakeSession()
         _patch_db(monkeypatch, session)
-        session.preload(
-            Task(
-                id="t1",
-                resource_type="MODEL_PLACEMENT",
-                resource_key="model:1:n1",
-                node_id="n1",
-                type="ENSURE_MODEL",
-                status="RUNNING",
-                attempt=1,
-                payload={},
-            )
-        )
+        _terminal_task(session, 1, status="RUNNING", tid="t1")
 
         async def _ensure(self, mid, nid):
             raise AssertionError("RUNNING 态不应重派")
@@ -323,8 +382,9 @@ class TestEnsurePresent:
             await PlacementService().ensure_present(1, "n1")
         assert session.all(Task) == []  # 未建任务
 
-    async def test_attempt_cap_blocks_creation(self, monkeypatch):
-        """超过 MAX_AUTO_ATTEMPTS 不再自动建，标 node_model.failed。"""
+    async def test_history_failures_do_not_block_creation(self, monkeypatch):
+        """共享键上的历史失败不锁新会话：别的部署/上一轮留下的 FAILED 行不影响本会话
+        建下一 attempt（失败预算由 ModelStagingGate 按 staging 会话计，不在这里判）。"""
         session = FakeSession()
         _model(session)
         for i in range(1, MAX_AUTO_ATTEMPTS + 1):
@@ -335,11 +395,11 @@ class TestEnsurePresent:
 
         ret = await PlacementService().ensure_present(1, "n1")
 
-        assert ret is None
-        assert len(session.all(Task)) == MAX_AUTO_ATTEMPTS  # 没新建
-        nm = session.all(NodeModel)[0]
-        assert nm.status == "failed" and nm.desired_state == "present"
-        assert ensures == []
+        assert ret is not None  # 历史超限不拒绝：新 attempt 正常建出
+        tasks = session.all(Task)
+        assert len(tasks) == MAX_AUTO_ATTEMPTS + 1
+        assert tasks[-1].attempt == MAX_AUTO_ATTEMPTS + 1 and tasks[-1].status == "PENDING"
+        assert len(ensures) == 1  # 正常下发
 
 
 # ---- recompute_demand ----

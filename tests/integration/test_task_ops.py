@@ -213,54 +213,12 @@ class TestPullHangTimeoutBuckets:
         assert pull_hang_timeout(5) == 1800 + 5 * 900
 
 
-class TestExhaustCooldown:
-    """超限冷却：末条 FAILED 距今超冷却窗 → 重开一轮（键跨部署共享的失败传染衰减）。"""
+class TestExhaustTerminal:
+    """超限即终态（无时间衰减）：末尾连续失败达上限后拒绝创建，由人工介入
+    （手动启动清失败历史 / 新部署新键）重开——失败预算不再跨部署传染，故无冷却机制。"""
 
-    async def test_cooldown_elapsed_reopens(self, monkeypatch):
-        from datetime import datetime, timedelta, timezone
-
-        old = datetime.now(timezone.utc) - timedelta(hours=2)
-        session = FakeSession()
-        for i in range(1, MAX_AUTO_ATTEMPTS + 1):
-            t = Task(
-                id=f"t{i}",
-                resource_type="IMAGE_PULL",
-                resource_key="image:n1:abc",
-                node_id="n1",
-                type="PULL_IMAGE",
-                status="FAILED",
-                attempt=i,
-                payload={"image": "img:v1"},
-                finished_at=old,
-            )
-            session.preload(t)
-        task, _, denial = await _ensure(session, exhaust_cooldown_s=3600)
-        assert denial is None and task is not None
-        assert task.attempt == MAX_AUTO_ATTEMPTS + 1  # 重开一轮
-
-    async def test_within_cooldown_still_exhausted(self):
-        from datetime import datetime, timedelta, timezone
-
-        session = FakeSession()
-        recent = datetime.now(timezone.utc) - timedelta(minutes=5)
-        for i in range(1, MAX_AUTO_ATTEMPTS + 1):
-            session.preload(
-                Task(
-                    id=f"t{i}",
-                    resource_type="IMAGE_PULL",
-                    resource_key="image:n1:abc",
-                    node_id="n1",
-                    type="PULL_IMAGE",
-                    status="FAILED",
-                    attempt=i,
-                    payload={"image": "img:v1"},
-                    finished_at=recent,
-                )
-            )
-        task, _, denial = await _ensure(session, exhaust_cooldown_s=3600)
-        assert denial == "exhausted" and task is None
-
-    async def test_no_cooldown_param_keeps_terminal_semantics(self):
+    async def test_old_failures_still_exhausted(self):
+        """历史失败无论多久之前（30 天前）都维持终态：超限不随时间自动放开。"""
         from datetime import datetime, timedelta, timezone
 
         session = FakeSession()
@@ -279,6 +237,25 @@ class TestExhaustCooldown:
                     finished_at=old,
                 )
             )
-        # 不传 exhaust_cooldown_s（START/STOP 语义）：超限即终态，不因时间衰减
         task, _, denial = await _ensure(session)
         assert denial == "exhausted" and task is None
+
+    async def test_different_key_budgets_independent(self):
+        """不同 resource_key 各有各的预算：一键超限不挡另一键（键隔离的兜底回归）。"""
+        session = FakeSession()
+        for i in range(1, MAX_AUTO_ATTEMPTS + 1):
+            session.preload(
+                Task(
+                    id=f"t{i}",
+                    resource_type="IMAGE_PULL",
+                    resource_key="image:dep-a:n1:abc",
+                    node_id="n1",
+                    type="PULL_IMAGE",
+                    status="FAILED",
+                    attempt=i,
+                    payload={"image": "img:v1"},
+                )
+            )
+        # 部署 B 的同节点同镜像键：满额预算，正常建 attempt 1
+        task, need_dispatch, denial = await _ensure(session, resource_key="image:dep-b:n1:abc")
+        assert denial is None and task is not None and task.attempt == 1 and need_dispatch

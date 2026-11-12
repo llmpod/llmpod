@@ -28,7 +28,6 @@ from sqlalchemy.exc import IntegrityError
 from llmpod.apps.manager.deployment.task_ops import (
     _next_attempt,
     task_to_payload,
-    trailing_fail_count,
 )
 from llmpod.apps.manager.deployment.constants import (
     DEPLOYMENT_ACTIVE_STATUSES,
@@ -57,6 +56,11 @@ from llmpod.tunnel.schemas import EnsureModelPayload, TaskPayload
 from llmpod.utils.crypto import generate_uuid
 
 log = logging.getLogger("llmpod.apps.manager.deployment.placement")
+
+# ENSURE_MODEL 看门狗（任务级）：大模型下载（node 内部 3 次重试 + 断点续传）合法耗时
+# 以小时计，取值只兜「await 永不返回」的挂死，不误杀慢下载。staging 轮询方的总预算
+# 由此派生（orchestrator 部署期 / scale 扩容期），保证轮询方不先于内层任务中止
+ENSURE_MODEL_WATCHDOG_S = 12 * 3600
 
 # 部署状态视为「仍需模型」——停止/删除后不再计入需求
 _DEMANDING_STATUSES = DEPLOYMENT_ACTIVE_STATUSES
@@ -224,6 +228,12 @@ class ModelStagingGate:
     复核任务跨轮保留（同一 node 只派发一次）——每轮重派会不断新建任务、永远等不到
     同一任务的终态，与 node_model 缓存来回打架；
     终态失败才清出，下一轮由 ``ensure_present`` 建下一 attempt。
+
+    重试预算按**本 staging 会话**计（观察到几次任务失败就算几次）：模型下载任务是
+    跨部署共享的（同 (model,node) 一个物理下载，同一节点同一模型同时只允许一个下载
+    在跑，并发写同一目录会损坏文件），但别的部署/上一轮部署留下的失败历史不再锁住
+    本部署——新部署、手动启动、扩容各自新起一个 gate（自带满额预算），与拉取键按
+    部署隔离是同一语义。
     """
 
     def __init__(self, model_id: int) -> None:
@@ -231,12 +241,13 @@ class ModelStagingGate:
         self._placement = PlacementService()
         self._tasks: dict[str, str] = {}  # node_id → 复核任务 id（跨轮保留）
         self._statuses: dict[str, str] = {}  # task_id → 上一轮读到的 status
+        self._failed_seen: dict[str, int] = {}  # node_id → 本会话观察到的失败任务数
 
-    async def dispatch(self, pending: set[str]) -> set[str]:
-        """为尚未派发的节点触发/续接复核任务；返回超 attempt 上限的节点集合。
+    async def dispatch(self, pending: set[str]) -> None:
+        """为尚未派发的节点触发/续接复核任务（幂等驱动，无返回值）。
 
-        超上限的节点由 ``ensure_present`` 标 ``node_model.FAILED`` 并返回 None，是否判死
-        交给 :meth:`advance`（要等 node 终态上报，避免上报时序误杀）。
+        预算按会话内观察到的任务失败数计（达 ``MAX_AUTO_ATTEMPTS`` 不再建新任务——
+        预算耗尽只停「建任务」，不停「观察」，终态收敛交给 :meth:`advance`）。
 
         已记录节点不重复派发（防与在途执行打架），但**PENDING 态补发**：首发 RPC
         瞬时失败（node 在线、通道抖动）时任务留 PENDING，若无人重发会一直挂到
@@ -249,10 +260,19 @@ class ModelStagingGate:
         async with get_db_context() as db:
             self._statuses = await task_status_map(db, self._tasks)
         for node_id, task_id in list(self._tasks.items()):
-            if self._statuses.get(task_id) in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+            status = self._statuses.get(task_id)
+            if status == TaskStatus.FAILED:
+                # 失败计入本会话预算（判死只认自己观察到的失败，共享键上的历史
+                # 失败不锁本部署），清出派发记录让下一轮建新 attempt
+                self._failed_seen[node_id] = self._failed_seen.get(node_id, 0) + 1
                 self._tasks.pop(node_id, None)
-        over_cap: set[str] = set()
+            elif status == TaskStatus.CANCELLED:
+                self._tasks.pop(node_id, None)
         for node_id in sorted(pending):
+            if self._failed_seen.get(node_id, 0) >= MAX_AUTO_ATTEMPTS:
+                # 本会话预算耗尽：不再建新任务（否则 staging 轮询无限重铸），收敛交 advance
+                self._tasks.pop(node_id, None)
+                continue
             recorded = self._tasks.get(node_id)
             if recorded is not None:
                 status = self._statuses.get(recorded)
@@ -261,21 +281,35 @@ class ModelStagingGate:
                 # PENDING / 未知（首读尚未发生）：补发一次（幂等）
             task_id = await self._placement.ensure_present(self._model_id, node_id)
             if task_id is None:
-                over_cap.add(node_id)
-                self._tasks.pop(node_id, None)
-            else:
-                self._tasks[node_id] = task_id
-        return over_cap
+                # 并发建任务撞 active 唯一索引（别的执行者刚建了同键在途行）：
+                # 不是失败——下一轮现态重读会看到它，无需动作
+                continue
+            self._tasks[node_id] = task_id
 
-    async def advance(self, db, pending: set[str], over_cap: set[str]) -> tuple[set[str], dict[str, NodeModel]]:
-        """读复核任务终态 + ``node_model``，返回（已确认就位的 node, node → node_model 行）。
+    async def advance(self, db, pending: set[str]) -> tuple[set[str], dict[str, NodeModel]]:
+        """读共享复核任务最新行 + ``node_model``，返回（已确认就位的 node, node → node_model 行）。
 
-        超 attempt 上限且 ``node_model`` 终态 FAILED → 抛 ``LLMPodError``：下载永久失败，
-        继续等没有意义（未超上限时 ``ensure_present`` 已建下一 attempt，照常继续轮询）。
+        放行判据统一为「共享键最新任务行 SUCCESS + node_model PRESENT」：下载任务跨部署
+        共享（同 (model,node) 一个物理下载），最新行无论哪个会话建的下成都算——本会话
+        预算耗尽后不再建任务，别的会话下成也要能放行（否则轮询永远等不到结论）。
+        PRESENT 缓存单独不足为凭：陈旧缓存 + 最新 FAILED 不放行（缺权重容器上线比多等
+        一轮更糟）。
+        本会话失败预算耗尽（``_failed_seen`` 达 ``MAX_AUTO_ATTEMPTS``）且 ``node_model``
+        终态 FAILED → 抛 ``LLMPodError``：下载永久失败，继续等没有意义。预算未尽时
+        ``dispatch`` 已建下一 attempt，照常继续轮询；既放不了行也判不了死的（如预算
+        耗尽、缓存停在 PRESENT、最新行 FAILED）由调用方总预算兜底。
         """
         rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == self._model_id))).scalars())
         by_node = {r.node_id: r for r in rows if r.node_id in pending}
-        self._statuses = await task_status_map(db, self._tasks)
+        # 共享键最新行（attempt 最大者）一次批量取回：确认与判死都只认它
+        latest_by_node: dict[str, Task] = {}
+        keys = [model_resource_key(self._model_id, nid) for nid in pending]
+        if keys:
+            for t in (await db.execute(select(Task).where(Task.resource_key.in_(keys)))).scalars():
+                cur = latest_by_node.get(t.node_id)
+                if cur is None or t.attempt > cur.attempt:
+                    latest_by_node[t.node_id] = t
+        over_cap = {nid for nid in pending if self._failed_seen.get(nid, 0) >= MAX_AUTO_ATTEMPTS}
         dead = sorted(
             nid for nid in over_cap if by_node.get(nid) is not None and by_node[nid].status == NodeModelState.FAILED
         )
@@ -287,15 +321,12 @@ class ModelStagingGate:
         confirmed = {
             nid
             for nid in pending
-            if self._statuses.get(self._tasks.get(nid)) == TaskStatus.SUCCESS
-            and by_node.get(nid) is not None
+            if by_node.get(nid) is not None
             and by_node[nid].status == NodeModelState.PRESENT
+            and latest_by_node.get(nid) is not None
+            and latest_by_node[nid].status == TaskStatus.SUCCESS
         }
         return confirmed, by_node
-
-    def release(self, node_id: str) -> None:
-        """节点已确认就位 → 清出派发记录。"""
-        self._tasks.pop(node_id, None)
 
 
 class PlacementService:
@@ -304,10 +335,12 @@ class PlacementService:
     async def ensure_present(self, model_id: int, node_id: str) -> str | None:
         """声明需要 model 在 node 上 present。
 
-        返回 task_id（新建的，或同 resource_key 已存在的 active task）。``None`` = 没有可用
-        任务：连续失败超 attempt 上限（已标 ``node_model.FAILED``，等人工）或并发建任务撞唯一
-        索引。**不因 ``node_model.status=present`` 短路**——那只是节点上次上报的缓存，每次
-        部署都要一个复核任务去实际校验权重集（见方法内注释）。
+        返回 task_id（新建的，或同 resource_key 已存在的 active task）。``None`` = 并发建
+        任务撞 active 唯一索引（下一轮现态重读接管）。**不因 ``node_model.status=present``
+        短路**——那只是节点上次上报的缓存，每次部署都要一个复核任务去实际校验权重集
+        （见方法内注释）。失败重试预算不在本方法判：模型下载任务跨部署共享（同 (model,node)
+        一个物理下载），预算由调用方 :class:`ModelStagingGate` 按 staging 会话计——别的
+        部署/上一轮留下的失败历史不锁新会话。
         """
         resource_key = model_resource_key(model_id, node_id)
         # 事务内完成全部 DB 决策；事务外 best-effort 下发（失败不回滚 task，等 redrive 重发）
@@ -334,11 +367,8 @@ class PlacementService:
                 # 新建任务前校验 local 源路径（存在 active 任务时不重跑——轮询热路径省
                 # 一次 stat/resolve，且在飞任务的目录本就不该再变）
                 validate_manager_source(model.source, model.source_url)
-                if trailing_fail_count(rows) >= MAX_AUTO_ATTEMPTS:
-                    nm.status = NodeModelState.FAILED
-                    nm.last_error = f"超过自动重试上限 ({MAX_AUTO_ATTEMPTS})，等待人工处理"
-                    log.warning("placement %s: 连续失败 %d 次超上限，不再自动创建", resource_key, MAX_AUTO_ATTEMPTS)
-                    return None
+                # 失败预算不在共享键的历史里判（别的部署/上一轮的失败不锁新会话），
+                # 由调用方 ModelStagingGate 按会话观察计——这里只建任务
                 attempt = _next_attempt(rows)
                 # canonical 随建新任务刷新（不做首写冻结）：模型行更新（改源路径/换 revision）
                 # 后，新任务落到新目录；在飞任务不受影响——节点回报 local_dir 时投影写回权威值
@@ -358,7 +388,7 @@ class PlacementService:
                     type=TaskType.ENSURE_MODEL,
                     status=TaskStatus.PENDING,
                     payload=payload.model_dump(mode="json"),
-                    timeout_sec=12 * 3600,
+                    timeout_sec=ENSURE_MODEL_WATCHDOG_S,
                     attempt=attempt,
                 )
                 db.add(task)

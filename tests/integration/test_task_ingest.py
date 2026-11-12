@@ -297,7 +297,7 @@ class TestReportTaskEvent:
             Task(
                 id="t2",
                 resource_type="IMAGE_PULL",
-                resource_key="image:n1:abc123",
+                resource_key="image:dep1:n1:abc123",
                 node_id="n1",
                 type="PULL_IMAGE",
                 status="RUNNING",

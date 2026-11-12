@@ -516,7 +516,7 @@ class TestScaleUpRollbackOnFailure:
 
         # 让容器阶段立即失败（staging 通过——模型已 present 缺省 False 时会等待，
         # 直接令 _drive_new_replicas 抛错最省）
-        async def _drive_boom(deployment_id):
+        async def _drive_boom(deployment_id, trigger):
             raise RuntimeError("boom")
 
         monkeypatch.setattr(scale_mod, "_drive_new_replicas", _drive_boom)
@@ -606,7 +606,7 @@ class TestScaleUpIdempotency:
         )
         drive_calls = {"n": 0}
 
-        async def _drive(deployment_id):
+        async def _drive(deployment_id, trigger):
             drive_calls["n"] += 1  # 只收尾，不再展开
 
         monkeypatch.setattr(scale_mod, "_drive_new_replicas", _drive)
@@ -630,7 +630,7 @@ class TestScaleUpStagingWriteback:
     def _drive_ok_factory(session):
         """容器阶段直接判新份 serving（本类只验 staging 的写回，不跑容器阶段）。"""
 
-        async def _drive_ok(deployment_id):
+        async def _drive_ok(deployment_id, trigger):
             for r in session._store[ModelDeploymentReplica].values():
                 if r.seq >= 2:
                     r.status = "serving"

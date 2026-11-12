@@ -118,7 +118,7 @@ class TaskResourceType(StrEnum):
     """task.resource_type：任务作用的资源类别（同 resource 去重/复用的分组键）。"""
 
     MODEL_PLACEMENT = "MODEL_PLACEMENT"  # (model, node) 模型分发（标识符沿用 PLACEMENT）
-    IMAGE_PULL = "IMAGE_PULL"  # (node, image) 镜像拉取（跨部署共享）
+    IMAGE_PULL = "IMAGE_PULL"  # (deployment, node, image) 镜像拉取（拉取键按部署隔离）
     INSTANCE = "INSTANCE"  # (deployment, rank) 实例容器生命周期
 
 
