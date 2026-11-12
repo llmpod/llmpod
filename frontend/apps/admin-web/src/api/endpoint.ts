@@ -47,24 +47,42 @@ export interface EndpointData {
   updated_at: string
 }
 
-/** 创建端点请求体（对应后端 CreateEndpointRequest；protocol/api_base/served_model/name 必填） */
-export interface CreateEndpointPayload {
+/** 登记来源端点的单个模型项（对应后端 CreateEndpointItem） */
+export interface CreateEndpointItem {
+  /** 上游模型名（如 gpt-4o） */
+  served_model: string
+  /** 端点展示名；缺省=served_model。注意不要传空串（min_length=1，会整批 422） */
+  name?: string
+  /** 支持的操作（可空） */
+  operations?: string[] | null
+}
+
+/** 创建端点请求体（对应后端 CreateEndpointRequest；models 收数组，单条即长度 1） */
+export interface CreateEndpointsPayload {
   /** 协议：openai | anthropic */
   protocol: EndpointProtocol
   /** 转发基址（需带版本根 /v1，如 https://api.openai.com/v1） */
   api_base: string
-  /** 上游模型名（如 gpt-4o） */
-  served_model: string
-  /** 端点展示名 */
-  name: string
   /** 外部 API Key（本地端点可空） */
   api_key?: string | null
   /** 供应商名（前端分组） */
   provider_name?: string | null
   /** 协议端点子路径（不含版本根 /v1，如 chat/completions；可空，缺省按协议约定） */
   path?: string | null
-  /** 支持的操作（可空） */
-  operations?: string[] | null
+  /** 待登记模型（1..100，响应按请求序返回） */
+  models: CreateEndpointItem[]
+  /** 跳过上游探测（默认 false）；上游无 /models 时手动录入多模型用 */
+  skip_probe?: boolean
+}
+
+/** 拉取上游模型清单请求体（清单地址固定 {normalize(api_base)}/models，不收 path） */
+export interface FetchUpstreamModelsPayload {
+  /** 协议：openai | anthropic */
+  protocol: EndpointProtocol
+  /** 转发基址（需带版本根 /v1，如 https://api.openai.com/v1） */
+  api_base: string
+  /** 外部 API Key（上游要求鉴权时必填） */
+  api_key?: string | null
 }
 
 /** 调整端点请求体（对应后端 UpdateEndpointRequest；全部可空，不传=不改） */
@@ -92,9 +110,22 @@ export function listEndpoints(signal?: AbortSignal): Promise<EndpointData[]> {
   return request({ url: '/admin/endpoints', method: 'GET', signal })
 }
 
-/** 登记外部端点（POST /api/v1/admin/endpoints；返回创建结果） */
-export function createEndpoint(data: CreateEndpointPayload): Promise<unknown> {
+/** 登记来源端点（POST /api/v1/admin/endpoints；收模型数组，按请求序返回） */
+export function createEndpoints(data: CreateEndpointsPayload): Promise<EndpointData[]> {
   return request({ url: '/admin/endpoints', method: 'POST', data })
+}
+
+/**
+ * 拉取上游模型清单（POST /api/v1/admin/endpoints/models；登记前发现，不落库；返回去重排序的模型 id）。
+ * 失败静默：不弹全局 message，由调用方在下拉空态里说明并回退手动输入。
+ */
+export function fetchUpstreamModels(data: FetchUpstreamModelsPayload): Promise<string[]> {
+  return request({
+    url: '/admin/endpoints/models',
+    method: 'POST',
+    data,
+    meta: { silentError: true },
+  })
 }
 
 /** 调整端点（POST /api/v1/admin/endpoints/{endpoint_id}/update，不传的字段不改） */

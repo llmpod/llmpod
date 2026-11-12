@@ -184,6 +184,16 @@ describe('StepConfirm 高级参数折叠面板存在(args/env 增删逻辑由 st
     expect(document.body.textContent).toContain('高级参数')
     wrapper.unmount()
   })
+
+  it('与「发布配置」「算力明细」同级大标题分区(默认整体收起)', async () => {
+    const wrapper = mount(StepConfirm, { attachTo: document.body })
+    await nextTick()
+    const sectionTitles = [...document.querySelectorAll('span')]
+      .filter((item) => item.className.includes('text-strong') && item.className.includes('font-semibold'))
+      .map((item) => item.textContent?.trim())
+    expect(sectionTitles).toEqual(['发布配置', '算力明细', '高级参数'])
+    wrapper.unmount()
+  })
 })
 
 // 折叠面板在 happy-dom 里无法展开(测量限制),用 stub 摊平后验证新增的命令框/参数区结构。
@@ -230,6 +240,49 @@ describe('StepConfirm 启动命令与逐行参数区', () => {
     await nextTick()
     const text = document.body.textContent ?? ''
     expect(text).toContain('请直接在命令里改')
+    wrapper.unmount()
+  })
+
+  it('命令校验告警与底部预检告警同文案时去重,只留命令特有项', async () => {
+    // 后端命令校验复用部署预检的 issues 通道:同一条文案会同时落进两处,渲染时按文案去重
+    store.inspect.value = makeInspect({ issues: ['显存余量不足 10%'] })
+    store.commandIssues.value = ['显存余量不足 10%', '命令缺少 {port} 占位符']
+    const wrapper = mount(StepConfirm, {
+      attachTo: document.body,
+      global: { stubs: collapseStubs },
+    })
+    await nextTick()
+    const text = document.body.textContent ?? ''
+    expect((text.match(/显存余量不足 10%/g) ?? [])).toHaveLength(1)
+    expect(text).toContain('命令缺少 {port} 占位符')
+    wrapper.unmount()
+  })
+})
+
+describe('StepConfirm 高级参数 镜像地址(自 Step1 迁入)', () => {
+  it('手填完整地址即覆盖 spec.image,清空回到「镜像版本」解析', async () => {
+    const wrapper = mount(StepConfirm, {
+      attachTo: document.body,
+      global: { stubs: collapseStubs },
+    })
+    await nextTick()
+    const input = [...document.querySelectorAll('input')].find((item) =>
+      item.placeholder.includes('vllm-ascend'),
+    )
+    expect(input, '镜像地址输入框').toBeTruthy()
+
+    input!.value = 'xxx.io/xxa/vllm-ascend:0.313'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(store.form.image).toBe('xxx.io/xxa/vllm-ascend:0.313')
+    // 非自动预填值 → 作为 spec.image 提交
+    expect(store.imageOverride.value).toBe('xxx.io/xxa/vllm-ascend:0.313')
+
+    // 清空 = 不改镜像,回到第一步所选「镜像版本」的 catalog 解析
+    input!.value = ''
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    expect(store.imageOverride.value).toBe('')
     wrapper.unmount()
   })
 })

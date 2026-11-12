@@ -9,7 +9,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/api/endpoint', () => ({
   listEndpoints: vi.fn(),
-  createEndpoint: vi.fn(),
+  createEndpoints: vi.fn(),
+  fetchUpstreamModels: vi.fn(),
   updateEndpoint: vi.fn(),
   deleteEndpoint: vi.fn(),
 }))
@@ -32,13 +33,18 @@ vi.mock('@repo/hooks', async (importOriginal) => {
 
 import {
   listEndpoints,
-  createEndpoint,
+  createEndpoints,
+  fetchUpstreamModels,
   updateEndpoint,
   deleteEndpoint,
   type EndpointData,
 } from '@/api/endpoint'
 import { useConfirm, useDialog, message } from '@repo/hooks'
-import { useStore, type EndpointFormValues } from '@/views/model-release/components/endpoint/useStore'
+import {
+  useStore,
+  normalizeModelIds,
+  type EndpointFormValues,
+} from '@/views/model-release/components/endpoint/useStore'
 import { useController } from '@/views/model-release/components/endpoint/useController'
 
 function makeEndpoint(overrides: Partial<EndpointData> = {}): EndpointData {
@@ -96,33 +102,68 @@ describe('endpoint useStore', () => {
     expect(all.total).toBe(2)
   })
 
-  it('create: 参数拼装(空值转 null) + notify', async () => {
+  it('create: 模型归并进 models 数组(去空白/去重),name 不下发 + notify', async () => {
     const listener = vi.fn()
     const unsubscribe = store.subscribe(listener)
-    vi.mocked(createEndpoint).mockResolvedValue({})
+    vi.mocked(createEndpoints).mockResolvedValue([
+      makeEndpoint({ id: 1, name: 'gpt-4o' }),
+      makeEndpoint({ id: 2, name: 'gpt-4o-mini' }),
+    ])
 
     const model: EndpointFormValues = {
       protocol: 'openai',
       api_base: 'https://api.openai.com/v1',
-      served_model: 'gpt-4o',
-      name: '新端点',
+      served_models: [' gpt-4o ', 'gpt-4o-mini', 'gpt-4o'],
+      served_model: '',
+      name: '',
       api_key: '',
       provider_name: '',
       path: '',
       operations: [],
     }
-    await store.create(model)
-    expect(createEndpoint).toHaveBeenCalledWith({
+    const created = await store.create(model)
+    expect(createEndpoints).toHaveBeenCalledWith({
       protocol: 'openai',
       api_base: 'https://api.openai.com/v1',
-      served_model: 'gpt-4o',
-      name: '新端点',
       api_key: null,
       provider_name: null,
       path: null,
-      operations: null,
+      models: [{ served_model: 'gpt-4o' }, { served_model: 'gpt-4o-mini' }],
     })
+    // name 缺省取 served_model 由后端负责,前端不传该键(空串会整批 422)
+    expect(Object.keys(createEndpoints.mock.calls[0][0].models[0])).toEqual(['served_model'])
+    expect(created.map((item) => item.name)).toEqual(['gpt-4o', 'gpt-4o-mini'])
     expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
+  it('normalizeModelIds: 去首尾空白、去重保序,不按逗号拆分,空输入返回空数组', () => {
+    expect(normalizeModelIds([' a ', 'b', 'a'])).toEqual(['a', 'b'])
+    // tag 模式回车即一项:含逗号的输入整体保留,不拆
+    expect(normalizeModelIds(['a,b'])).toEqual(['a,b'])
+    expect(normalizeModelIds([])).toEqual([])
+    expect(normalizeModelIds(undefined)).toEqual([])
+    expect(normalizeModelIds(['  '])).toEqual([])
+  })
+
+  it('fetchUpstreamModels: 透传入参并返回上游清单(不落库、不 notify)', async () => {
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe(listener)
+    vi.mocked(fetchUpstreamModels).mockResolvedValue(['gpt-4o', 'o1'])
+
+    const ids = await store.fetchUpstreamModels({
+      protocol: 'anthropic',
+      api_base: 'https://api.anthropic.com/v1',
+      api_key: null,
+    })
+
+    expect(fetchUpstreamModels).toHaveBeenCalledWith({
+      protocol: 'anthropic',
+      api_base: 'https://api.anthropic.com/v1',
+      api_key: null,
+    })
+    expect(ids).toEqual(['gpt-4o', 'o1'])
+    expect(listener).not.toHaveBeenCalled()
     unsubscribe()
   })
 
@@ -131,12 +172,12 @@ describe('endpoint useStore', () => {
     const unsubscribe = store.subscribe(listener)
     vi.mocked(updateEndpoint).mockResolvedValue(makeEndpoint({ id: 1 }))
 
-    await store.update({ id: 1, protocol: 'openai', api_base: 'https://x/v1', served_model: 'm', name: '改名', api_key: '', provider_name: '', path: '', operations: [] })
+    await store.update({ id: 1, protocol: 'openai', api_base: 'https://x/v1', served_models: [], served_model: 'm', name: '改名', api_key: '', provider_name: '', path: '', operations: [] })
     expect(updateEndpoint).toHaveBeenCalledWith(1, expect.objectContaining({ name: '改名' }))
     expect(listener).toHaveBeenCalledTimes(1)
 
     await expect(
-      store.update({ id: undefined as unknown as number, protocol: 'openai', api_base: '', served_model: '', name: '', api_key: '', provider_name: '', path: '', operations: [] }),
+      store.update({ id: undefined as unknown as number, protocol: 'openai', api_base: '', served_models: [], served_model: '', name: '', api_key: '', provider_name: '', path: '', operations: [] }),
     ).rejects.toThrow('缺少端点 ID')
     unsubscribe()
   })

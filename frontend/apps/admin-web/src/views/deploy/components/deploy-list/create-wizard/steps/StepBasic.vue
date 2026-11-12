@@ -32,15 +32,6 @@ const formApi = useForm<WizardFormValues>({
         placeholder: effectiveFormEngine.value ? '留空按后端默认版本' : '请先选择模型与引擎',
       },
     }),
-    // 镜像地址:任意镜像完整地址(escape-hatch)。预填预检解析出的镜像仅作展示,
-    // 只有用户改动过才作为 spec.image 提交;留空/未改仍走「镜像版本」下拉的 catalog 解析。
-    FormInput('镜像地址', 'image', {
-      attrs: {
-        clearable: true,
-        class: 'font-mono',
-        placeholder: '可选:如 xxx.io/xxa/vllm-ascend:0.313;留空按「镜像版本」解析',
-      },
-    }),
     FormSelect('目标集群', 'clusterId', store.clusterOptions.value, {
       // number 值需显式 type:'number',否则 required 按 string 校验恒失败
       rules: [
@@ -52,19 +43,9 @@ const formApi = useForm<WizardFormValues>({
         placeholder: '选择要部署到的集群',
       },
     }),
-    // 集群概要:跟随所选集群联动,展示真实派生统计
+    // 集群概要:跟随所选集群联动,展示真实派生统计(镜像不再在此展示,见 Step3「高级参数」)
     FormCustom(({ model }) => {
       const cluster = store.clusterOptions.value.find((item) => item.value === model.clusterId)?.raw
-      // 镜像:手填地址优先(用户改动过);否则选了版本取该版本默认变体,未选回退 inspect 推荐镜像
-      const manual = model.image.trim() && model.image !== store.autoImage.value ? model.image.trim() : ''
-      const image =
-        manual ||
-        (model.imageTag
-          ? (store.imageEntries.value.find(
-              (entry) => entry.engine_version === model.imageTag && entry.default,
-            ) ?? store.imageEntries.value.find((entry) => entry.engine_version === model.imageTag))
-              ?.image
-          : store.inspect.value?.recommendation?.image)
       return h('div', { class: 'deploy-cluster-summary' }, [
         h('div', { class: 'deploy-cluster-summary__row' }, [
           h('span', { class: 'deploy-cluster-summary__label' }, '集群规模:'),
@@ -75,10 +56,6 @@ const formApi = useForm<WizardFormValues>({
         h('div', { class: 'deploy-cluster-summary__row' }, [
           h('span', { class: 'deploy-cluster-summary__label' }, '副本规模:'),
           '副本数与每副本卡数在下一步「选择算力」中确定',
-        ]),
-        h('div', { class: 'deploy-cluster-summary__row' }, [
-          h('span', { class: 'deploy-cluster-summary__label' }, '将使用镜像:'),
-          image || '选择模型后按推荐解析',
         ]),
       ])
     }),
@@ -121,7 +98,8 @@ const resolvedImage = computed(
   () => store.inspect.value?.resolved?.image ?? store.inspect.value?.recommendation?.image ?? '',
 )
 
-// 自动预填镜像地址:字段为空或仍是上次自动值时覆盖,保留用户手改;仅改动过才作为 spec.image 提交
+// 自动预填镜像地址:字段为空或仍是上次自动值时覆盖,保留用户手改;仅改动过才作为 spec.image 提交。
+// 输入框已移到 Step3「高级参数」,此处只负责把预检解析结果写进表单值(store.autoImage 记自动值基线)。
 watch(
   resolvedImage,
   (image) => {

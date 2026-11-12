@@ -185,7 +185,7 @@ describe('node-list useController 表格列', () => {
     }
   })
 
-  it('版本列:未上报显示 —,同版显示版本号,落后附可升级标签', () => {
+  it('版本列:未上报显示 —,同版显示版本号,落后附可点击的 primary 升级标签', async () => {
     mountController()
     const version = tableOptions().columns.find(
       (col) => (col as unknown as Record<string, unknown>).key === 'version',
@@ -201,6 +201,29 @@ describe('node-list useController 表格列', () => {
     const children = outdated.children as VNode[]
     expect(children).toHaveLength(2)
     expect(children[0].children).toBe('26.9.2')
+
+    // 可升级标签:primary 高亮 + 可点击(点击即走升级逻辑:二次确认 → 下发)
+    const tag = children[1]
+    const tagProps = tag.props as { type: string; class: string, onClick?: () => void }
+    expect(tagProps.type).toBe('primary')
+    expect(tagProps.class).toContain('cursor-pointer')
+
+    vi.mocked(upgradeNode).mockResolvedValue({ id: 'n1', dispatched: true, reason: null })
+    tagProps.onClick!()
+    await vi.waitFor(() => expect(upgradeNode).toHaveBeenCalledWith('n1'))
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('版本列:超前/未上报标签保持映射色且不可点', () => {
+    mountController()
+    const version = tableOptions().columns.find(
+      (col) => (col as unknown as Record<string, unknown>).key === 'version',
+    ) as unknown as { render: (row: ComputeNode) => VNode }
+
+    const newer = version.render({ id: 'n1', version: '26.9.9', version_status: 'newer' } as ComputeNode)
+    const tagProps = (newer.children as VNode[])[1].props as { type: string, onClick?: () => void }
+    expect(tagProps.type).toBe('info')
+    expect(tagProps.onClick).toBeUndefined()
   })
 
   it('openGpuDrawer 仍暴露给卡片模式(切换抽屉显隐)', () => {

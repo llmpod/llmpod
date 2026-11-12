@@ -209,11 +209,29 @@ export function useController() {
             return h('span', { class: 'tabular-nums' }, row.version)
           }
           const conf = nodeVersionStatusMap[row.version_status] ?? nodeVersionStatusMap.unknown
+          // 落后节点:标签本身即升级入口(primary 高亮 + 可点),点击等同行操作「升级」;
+          // 升级下发中降级为禁用态,避免同一节点重复确认
+          const outdated = row.version_status === 'outdated'
+          const upgrading = outdated && upgradingId.value === row.id
           return h('div', { class: 'flex items-center gap-[.4rem]' }, [
             h('span', { class: 'tabular-nums' }, row.version),
             h(
               NTag,
-              { type: conf.type, size: 'small', bordered: false },
+              {
+                type: outdated ? 'primary' : conf.type,
+                size: 'small',
+                bordered: false,
+                class: outdated ? (upgrading ? 'cursor-not-allowed' : 'cursor-pointer') : undefined,
+                title: outdated ? '点击升级到与管理端一致的版本' : undefined,
+                role: outdated ? 'button' : undefined,
+                'aria-label': outdated ? `升级节点 ${row.hostname}` : undefined,
+                onClick: outdated
+                  ? () => {
+                      if (upgradingId.value !== null) return
+                      void onUpgrade(row)
+                    }
+                  : undefined,
+              },
               { default: () => conf.label },
             ),
           ])

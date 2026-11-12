@@ -146,6 +146,15 @@ const canResetCommand = computed(
   () => Boolean(platformCommand.value) && editCommand.value !== platformCommand.value,
 )
 
+/**
+ * 命令框下要展示的告警:后端命令校验复用部署预检的 issues 通道,同一条文案往往也在
+ * 页面底部的预检告警里,这里按文案剔掉底部已展示的项,避免同一问题两处重复。
+ */
+const commandUniqueIssues = computed(() => {
+  const preflight = new Set(store.inspect.value?.issues ?? [])
+  return commandIssues.value.filter((issue) => !preflight.has(issue))
+})
+
 /** 命令框失焦:回传校验(只取 issues 展示,不用返回的 resolved.command 覆盖用户文本) */
 async function onCommandBlur() {
   await store.validateCommand()
@@ -174,7 +183,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="flex flex-col gap-[1.6rem] w-full max-w-[56rem] mx-auto">
+  <div class="flex flex-col gap-[1.6rem] w-full max-w-[70rem] mx-auto">
     <n-descriptions label-placement="left" bordered :column="2" size="small">
       <n-descriptions-item label="部署名称">
         {{ store.form.name }}
@@ -289,7 +298,7 @@ defineExpose({
       </div>
     </div>
 
-    <!-- 算力明细 + 高级参数:同一边框容器,横向分割线隔开;高级参数默认收起,展开限高内部滚动 -->
+    <!-- 算力明细:已选 GPU/CPU 逐份落点;含异构份对照 -->
     <div class="flex flex-col gap-[.8rem]">
       <span class="text-strong font-semibold">算力明细</span>
       <div class="rounded-[1.2rem] border border-line bg-fill-1 px-[1.6rem] py-[1.2rem]">
@@ -351,17 +360,35 @@ defineExpose({
             </div>
           </div>
         </template>
+      </div>
+    </div>
 
-        <!-- 横向分割线 -->
-        <div class="border-t border-line my-[1.2rem]" />
-
+    <!-- 高级参数:镜像地址/启动参数/启动命令/环境变量;与「发布配置」「算力明细」同级大标题分区,默认整体收起 -->
+    <div class="flex flex-col gap-[.8rem]">
+      <span class="text-strong font-semibold">高级参数</span>
+      <div class="rounded-[1.2rem] border border-line bg-fill-1 px-[1.6rem] py-[1.2rem]">
         <n-collapse>
-          <n-collapse-item title="高级参数" name="advanced">
+          <n-collapse-item title="镜像与启动参数" name="advanced">
             <!-- 展开限高:仅高视口(≥40rem,媒体查询 rem 按初始字号 16px 计)限高内部滚动;小屏不限制,避免内外双滚动条 -->
             <!-- 加入启动命令 textarea 与参数区后内容变高,限高相应放宽到 52rem -->
             <div
               class="flex flex-col gap-[1.6rem] pt-[.4rem] [@media(max-height:100rem)]:max-h-[52rem] [@media(max-height:100rem)]:overflow-y-auto"
             >
+              <!-- 镜像地址:任意镜像完整地址(escape-hatch)。预填预检解析出的镜像仅作展示,
+                   只有用户改动过才作为 spec.image 提交;留空/未改仍走第一步「镜像版本」的 catalog 解析 -->
+              <div class="flex flex-col gap-[.8rem]">
+                <span class="text-small text-secondary">镜像地址(可选,任意镜像完整地址)</span>
+                <n-input
+                  v-model:value="store.form.image"
+                  clearable
+                  class="font-mono"
+                  placeholder="可选:如 xxx.io/xxa/vllm-ascend:0.313;留空按「镜像版本」解析"
+                />
+                <div class="text-base text-secondary">
+                  手填后以该地址为准(提交为 spec.image,不再按「镜像版本」解析)
+                </div>
+              </div>
+
               <!-- 启动参数:resolved.args 按配对口径成行回显(flag 与值合并一行) -->
               <!-- 命中 preview_topology 引擎 protected_flags 前缀的行为系统必控项:只读且不可删;AutoComplete 聚焦出引擎 param_suggestions 推荐选项 -->
               <!-- 单向写入:改行 → 按 flag 名写进下方启动命令;改命令不回写行(命令文本是唯一权威) -->
@@ -420,38 +447,6 @@ defineExpose({
                 </div>
               </div>
 
-              <!-- 启动命令:用户手改/逐行参数写入的唯一权威文本;留空 = 回退平台自动生成 -->
-              <div class="flex flex-col gap-[.8rem]">
-                <div class="flex items-center justify-between gap-[.8rem]">
-                  <span class="text-small text-secondary">启动命令(command)</span>
-                  <div class="flex items-center gap-[.6rem]">
-                    <n-tag v-if="commandDirty" size="small" type="warning" :bordered="false">
-                      已手改
-                    </n-tag>
-                    <n-button
-                      size="tiny"
-                      quaternary
-                      :disabled="!canResetCommand"
-                      @click="store.resetCommand()"
-                    >
-                      重置为平台生成
-                    </n-button>
-                  </div>
-                </div>
-                <n-input
-                  v-model:value="editCommand"
-                  type="textarea"
-                  :rows="4"
-                  class="font-mono"
-                  placeholder="留空 = 平台自动生成;也可直接粘贴一条完整命令"
-                  @update:value="store.markCommandDirty()"
-                  @blur="onCommandBlur"
-                />
-                <LmAlert v-if="commandIssues.length" type="warning">
-                  <div v-for="issue in commandIssues" :key="issue">{{ issue }}</div>
-                </LmAlert>
-              </div>
-
               <!-- 环境变量:resolved.env 按 key-value 回显,提交时作为 engine_params.env(独立于命令) -->
               <div class="flex flex-col gap-[.8rem]">
                 <span class="text-small text-secondary">环境变量(env)</span>
@@ -495,6 +490,38 @@ defineExpose({
                     添加变量
                   </n-button>
                 </div>
+              </div>
+
+              <!-- 启动命令:用户手改/逐行参数写入的唯一权威文本;留空 = 回退平台自动生成 -->
+              <div class="flex flex-col gap-[.8rem]">
+                <div class="flex items-center justify-between gap-[.8rem]">
+                  <span class="text-small text-secondary">启动命令(command)</span>
+                  <div class="flex items-center gap-[.6rem]">
+                    <n-tag v-if="commandDirty" size="small" type="warning" :bordered="false">
+                      已手改
+                    </n-tag>
+                    <n-button
+                      size="tiny"
+                      quaternary
+                      :disabled="!canResetCommand"
+                      @click="store.resetCommand()"
+                    >
+                      重置为平台生成
+                    </n-button>
+                  </div>
+                </div>
+                <n-input
+                  v-model:value="editCommand"
+                  type="textarea"
+                  :rows="4"
+                  class="font-mono"
+                  placeholder="留空 = 平台自动生成;也可直接粘贴一条完整命令"
+                  @update:value="store.markCommandDirty()"
+                  @blur="onCommandBlur"
+                />
+                <LmAlert v-if="commandUniqueIssues.length" type="warning">
+                  <div v-for="issue in commandUniqueIssues" :key="issue">{{ issue }}</div>
+                </LmAlert>
               </div>
             </div>
           </n-collapse-item>
