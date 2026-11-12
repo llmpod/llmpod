@@ -56,6 +56,37 @@ class TestEnforceNodeSourceSpec:
         assert spec.gpu_selector is not None
         assert spec.gpu_selector.node_ids == ["n1", "n1"]
 
+    @pytest.mark.parametrize(
+        "selector",
+        [
+            {"gpu_uuids": []},
+            {"node_ids": []},
+            {},
+            {"node_id": ""},
+        ],
+    )
+    async def test_empty_selectors_pinned_to_bound_node(self, selector):
+        """空选择器不是「已指定」——必须钉到绑定节点（真机漏洞的复现点）。"""
+        session = FakeSession()
+        session.preload(_copy())
+        spec = DeploymentConfig(topology={"tp": 1}, gpu_selector=selector)
+
+        injected = await deployment_service.enforce_node_source_spec(session, _node_model(), spec)
+
+        assert injected is True
+        assert spec.gpu_selector is not None
+        assert spec.gpu_selector.node_id == "n1"
+
+    async def test_explicit_bound_node_kept(self):
+        session = FakeSession()
+        session.preload(_copy())
+        spec = DeploymentConfig(topology={"tp": 1}, gpu_selector={"node_id": "n1"})
+
+        injected = await deployment_service.enforce_node_source_spec(session, _node_model(), spec)
+
+        assert injected is False
+        assert spec.gpu_selector.node_id == "n1"
+
     async def test_explicit_other_node_rejected(self):
         session = FakeSession()
         session.preload(_copy())

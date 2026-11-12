@@ -996,6 +996,22 @@ class TestDeployHandoff:
         # VRAM 已预留（交接不释放）
         assert orch.ledger.get_reserved_for_deployment(dep.deployment_id)
 
+    async def test_deploy_node_source_empty_selector_pins_bound_node(self, deployed_stack_multinode):
+        """空选择器不算「已指定」：节点目录模型必须钉到绑定节点，否则权重不在、staging 必失败。"""
+        session, dep, _hub = deployed_stack_multinode
+        model = await session.get(Model, dep.model_id)
+        model.source, model.node_id = "node", "n2"
+        dep_obj = await session.get(ModelDeployment, dep.deployment_id)
+        dep_obj.spec = {**dep_obj.spec, "gpu_selector": {"gpu_uuids": []}, "topology": {"tp": 1, "replicas": 1}}
+
+        await get_orchestrator().deploy(dep.deployment_id)
+
+        dep_obj = await session.get(ModelDeployment, dep.deployment_id)
+        assert dep_obj.phase == "PULL_IMAGE"
+        assert dep_obj.spec["gpu_selector"]["node_id"] == "n2"
+        instances = [v for v in session._store.get(Instance, {}).values()]
+        assert instances and all(i.assigned_node == "n2" for i in instances)
+
     async def test_deploy_multinode_stages_all_nodes(self, deployed_stack_multinode):
         """多机：head+worker 跨 2 节点调度；两节点模型 present → model_path 写回全部实例。"""
         session, dep, hub = deployed_stack_multinode

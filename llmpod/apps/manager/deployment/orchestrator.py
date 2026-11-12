@@ -437,26 +437,36 @@ class DeploymentOrchestrator:
         async with get_db_context() as db:
             dep, model = await deployment_service.load_deployment(db, deployment_id)
             config = DeploymentConfig.model_validate(dep.spec or {})
+            # 节点目录模型：持久化 spec 里可能仍是空选择器（recovery/直调绕过创建路由）。
+            # 返回 False = 非节点目录模型或已显式指定，无需写回。
+            bound = deployment_service.bound_node_of_model(model)
+            if await deployment_service.enforce_node_source_spec(db, model, config):
+                dep.spec = config.model_dump()
             irows = list((await db.execute(select(Instance).where(Instance.deployment_id == deployment_id))).scalars())
-            if not irows:
+            # 重启复用原实例、不重新调度：实例落在绑定节点之外时只会沿错节点重跑 staging
+            # （权重不在，必失败），与「规划从未落盘」走同一套清规划重排。
+            if not irows or (bound is not None and any(r.assigned_node != bound for r in irows)):
                 # 规划期失败的部署没有实例行（``_plan`` 在持久化前抛错）——不是「不可启动」，
                 # 而是规划从未落盘：清空规划状态后交控制器重跑 _plan（spec 里的 force 原样带过去）。
                 # 先释放账本旧预留：重规划会重新记账（累加），残留会让新预留凭空多出一份。
                 await self.ledger.release(deployment_id)
                 await deployment_service.clear_planning_slate(db, deployment_id)
+                if bound is not None:
+                    # phase 回 PENDING（STAGING_PHASES 之一），否则停 STOPPING 子态的部署不会被驱动
+                    await deployment_service.set_phase(db, deployment_id, DeploymentPhase.PENDING, trigger=trigger)
                 await deploy_log_service.append_log(
                     db,
                     deployment_id=deployment_id,
                     step=DeployStep.START,
                     level=LogLevel.WARN,
                     status=LogStatus.RUNNING,
-                    message="重新规划部署（上一轮未产出实例）",
+                    message="重新规划部署（上一轮未产出实例或实例不在绑定节点）",
                     extra={"trigger": trigger, "force": force, "action": "replan"},
                 )
                 await db.flush()
                 self._cancel.pop(deployment_id, None)
                 get_controller().wake()
-                log.info("deployment %s restart: no instances → re-planning (force=%s)", deployment_id[:8], force)
+                log.info("deployment %s restart: re-planning (force=%s)", deployment_id[:8], force)
                 return
             irows.sort(key=lambda r: r.rank)
             instances = [InstanceSpec.model_validate(r.spec or {}) for r in irows]
@@ -737,6 +747,11 @@ class DeploymentOrchestrator:
         adapter = get_adapter(dep.engine)
         # 防御性校验（路由已 422；此处覆盖 controller/直调等绕过路由的路径）
         adapter.validate_category(model.model_type)
+        # 节点目录模型：创建路由已钉定过，但 recovery/控制器重驱动/直调绕过路由，持久化 spec 里
+        # 可能是空选择器——不钉定会落到绑定节点之外（权重不在，staging 必失败）。写回避免下轮退回去。
+        # 与创建路由同序（先于结构校验），使注入的选择器同样参与后续校验。
+        if await deployment_service.enforce_node_source_spec(db, model, config):
+            dep.spec = config.model_dump()
         # 并行能力校验（路由已 422；force 部署跳过——引擎最终裁决）
         if not config.force:
             adapter.validate_parallel(config.topology, architecture=model.architecture, model_type=model.model_type)

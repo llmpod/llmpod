@@ -3,7 +3,7 @@
 FakeSession（select.where 支持 ==/in_/AND 组合 + 逐行 delete，条件摊平复用
 tests/unit/_fakes._where_conditions）+ 真实 ResourceLedger + 种子
 Gpu/Model/ModelDeployment/Instance。覆盖：成功重预留+重置、原卡被占→Conflict(occupied)、
-force 抢占、非 stopped/failed 拒绝、原卡离线拒绝。
+force 抢占、非 stopped/failed 拒绝、原卡离线拒绝、节点目录模型实例落点不在绑定节点时清规划重排。
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 from llmpod.apps.manager.deployment.engine import get_adapter
 from llmpod.apps.manager.deployment.orchestrator import DeploymentOrchestrator
 from llmpod.apps.manager.deployment.schemas import InstanceSpec
-from llmpod.core.exceptions import Conflict
+from llmpod.core.exceptions import Conflict, LLMPodValidationError
 from llmpod.models.deployment_gpu_assignment import DeploymentGpuAssignment
 from llmpod.models.gpu import Gpu
 from llmpod.models.instance import Instance
@@ -222,6 +222,59 @@ def session():
 def _expected_vram() -> float:
     # 整卡预留：无显式占比 → 引擎默认 0.9 × total（与 _card_reserve 同口径，非模型需求）
     return get_adapter("vllm").default_gpu_memory_utilization * 22.0
+
+
+class TestRestartNodeSource:
+    """节点目录模型（source=node）：绑定节点优先于原实例落点。
+
+    重启默认复用原实例、不重新调度，所以先前落到别的节点（空选择器绕过钉定的历史数据）只会
+    沿错节点重跑 staging 并失败——必须清规划重排。
+    """
+
+    def _seed_node_source(self, session, *, inst_node: str = "n1", spec_selector=None):
+        """在既有 _seed 之上把模型改造成节点目录来源（绑 n1），其余预置复用。"""
+        _seed(session)
+        model = session._store[Model][1]
+        model.source, model.node_id = "node", "n1"
+        dep = session._store[ModelDeployment]["dep-1"]
+        dep.spec = {**dep.spec, "gpu_selector": spec_selector}
+        if inst_node != "n1":
+            inst = session._store[Instance]["i-0"]
+            inst.assigned_node = inst_node
+            inst.spec = {**inst.spec, "assigned_node": inst_node}
+
+    async def test_instance_off_bound_node_replans(self, orch, patched_db):
+        session = patched_db
+        self._seed_node_source(session, inst_node="n2", spec_selector={"gpu_uuids": []})
+
+        await orch.restart("dep-1", trigger="user:1")
+
+        dep = await session.get(ModelDeployment, "dep-1")
+        assert dep.status == "creating"
+        assert dep.phase == "PENDING"  # 控制器只驱动 STAGING_PHASES
+        assert dep.spec["gpu_selector"]["node_id"] == "n1"  # 钉定写回
+        assert session.all(Instance) == []  # 四层规划产物清空，交 _plan 重排
+        assert orch.ledger.get_reserved_for_deployment("dep-1") == {}
+
+    async def test_instance_on_bound_node_keeps_plan(self, orch, patched_db):
+        session = patched_db
+        self._seed_node_source(session, inst_node="n1", spec_selector={"gpu_uuids": []})
+
+        await orch.restart("dep-1", trigger="user:1")
+
+        dep = await session.get(ModelDeployment, "dep-1")
+        assert dep.phase == "PULL_IMAGE"  # 实例落点正确 → 沿用原卡重预留
+        assert dep.spec["gpu_selector"]["node_id"] == "n1"
+        inst = await session.get(Instance, "i-0")
+        assert inst.assigned_node == "n1" and inst.status == "PENDING"
+
+    async def test_dirty_selector_to_other_node_rejected(self, orch, patched_db):
+        session = patched_db
+        self._seed_node_source(session, inst_node="n1", spec_selector={"node_id": "n2"})
+
+        with pytest.raises(LLMPodValidationError, match="绑定节点"):
+            await orch.restart("dep-1")
+        assert (await session.get(ModelDeployment, "dep-1")).status == "stopped"
 
 
 class TestRestart:

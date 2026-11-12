@@ -25,6 +25,7 @@ from llmpod.apps.manager.deployment.schemas import (
     GpuAssignment,
     GpuCandidate,
     GpuOccupancy,
+    GpuSelector,
     InstanceSpec,
     NodeCandidate,
     OccupiedBy,
@@ -198,26 +199,35 @@ async def node_source_scope_errors(db: AsyncSession, model: Model, topology, sel
     return errors
 
 
-async def enforce_node_source_spec(db: AsyncSession, model: Model, spec: DeploymentConfig) -> None:
-    """节点目录模型的部署硬限制（预检与创建共用同一份判据）。
+def _selector_is_empty(selector: GpuSelector | None) -> bool:
+    """GPU 选择器实质为空（node_id / gpu_uuids / node_ids 三字段全 falsy）。
+
+    下游按真值判「是否指定了节点/卡」，空 ``GpuSelector()`` 等效于自动调度——只判
+    ``is not None`` 会让空选择器绕过节点目录模型的钉定。
+    """
+    return selector is None or not (selector.node_id or selector.gpu_uuids or selector.node_ids)
+
+
+async def enforce_node_source_spec(db: AsyncSession, model: Model, spec: DeploymentConfig) -> bool:
+    """节点目录模型的部署硬限制（预检、创建、重规划、重启共用同一份判据）。
 
     - 只允许绑定节点持有副本，且副本必须 present；
     - 只允许单机部署；
     - 显式指定节点/卡时逐一校验；
-    - 未指定时把选择器钉到绑定节点，防止自动调度落到别的机器（含 CPU 逐份钉定）。
+    - 未指定（含空选择器）时把选择器钉到绑定节点，防止自动调度落到别的机器（含 CPU 逐份钉定）。
+
+    返回是否注入了钉定选择器——重规划/重启路径据此决定要不要写回持久化 spec。
     """
     bound = bound_node_of_model(model)
     if bound is None:
-        return
+        return False
     errors = await node_source_scope_errors(db, model, spec.topology, spec.gpu_selector)
     if errors:
         code, message = errors[0]
         # 「节点上没有副本」是状态冲突（409），其余是请求越界（422）
         raise Conflict(message) if code == "no_copy" else LLMPodValidationError(message)
-    if spec.gpu_selector is not None:
-        return
-
-    from llmpod.apps.manager.deployment.schemas import GpuSelector
+    if not _selector_is_empty(spec.gpu_selector):
+        return False
 
     if spec.offload_preference == "cpu_only":
         replicas = max(1, spec.topology.replicas or 1)
@@ -226,6 +236,7 @@ async def enforce_node_source_spec(db: AsyncSession, model: Model, spec: Deploym
         # 单节点钉定：GPU 调度只会选该节点；allow_cpu 回退到 CPU 档时
         # ``_resolve_lane`` / ``_assign_cpu_lane`` 同样只在该节点求解
         spec.gpu_selector = GpuSelector(node_id=bound)
+    return True
 
 
 async def nodes_with_model(db: AsyncSession, model_id: int) -> set[str]:
