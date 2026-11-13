@@ -271,7 +271,6 @@ class Settings(BaseSettings):
     # 所有 Node 必须配同一 model_store_dir（多机 TP 同路径不变量）；模型目录规则唯一定义处
     # 见 deployment/placement.py（local 源 = source_url，远程源 = {store}/{name-slug}）。
     # 必须是**绝对路径**：该路径由 manager 算好下发 node，且 docker 卷挂载要求绝对（相对会 invalid mount path 崩）。
-    # 必须是**绝对路径**：该路径由 manager 算好下发 node，且 docker 卷挂载要求绝对（相对会 invalid mount path 崩）。
     model_store_dir: str = "/data/models"
     # 模型宿主侧真实目录（Node 侧卷改写用）。默认空 = 与 model_store_dir 同路径
     # （引导脚本同路径 bind，恒等改写）。仅当宿主大盘挂在别处、引导参数 model_host_dir

@@ -28,7 +28,7 @@ from typing import Awaitable, Callable
 
 from llmpod.apps.node.executors.base import Executor, ReconcileResult, ReportFn, parse_payload
 from llmpod.apps.node.models import LocalTask
-from llmpod.tunnel.schemas import EnsureModelPayload
+from llmpod.tunnel.schemas import MANIFEST_FILE_NAME, EnsureModelPayload
 from llmpod.config.settings import settings
 from llmpod.config.constants import EnsureModelStage, TaskStatus
 from llmpod.config.enums import ModelSource
@@ -304,7 +304,9 @@ _VERIFY_WEIGHT_EXTS = (".safetensors", ".gguf", ".bin", ".pt", ".pth", ".ckpt", 
 # 逐文件下载（hf_hub_download / manager 文件服务）在**文件之间**可能被中断/取消，而权重名
 # 形如 ``layers-0.safetensors``（无 ``-of-N``）时命名启发式无法推断期望分片总数；清单把
 # 「下载器实际枚举到的全部文件」显式落盘，verify 逐项比对即可防半下载被误判 present。
-_MANIFEST_NAME = ".llmpod-manifest.json"
+# 文件名取自 wire 层常量：Manager 生成下载清单时按同名排除它（共用一份 store 时标记会
+# 出现在源目录里，算进清单会让 content_hash 每次不同），两侧必须同一个字面量。
+_MANIFEST_NAME = MANIFEST_FILE_NAME
 
 # 分片命名的两个捕获组别搞混：``model-00001-of-00003.gguf`` 里 group(2)=00003 是
 # **总数**（_SHARD_OF 用于期望完整性），group(1)=00001 才是**序号**（_SHARD_SEQ

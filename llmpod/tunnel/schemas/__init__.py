@@ -19,7 +19,7 @@ from llmpod.tunnel.schemas.container import (
     StopResult,
 )
 from llmpod.tunnel.schemas.deploy import DeploySpec, docker_run_command
-from llmpod.tunnel.schemas.model_store import Manifest, ManifestFile
+from llmpod.tunnel.schemas.model_store import MANIFEST_FILE_NAME, Manifest, ManifestFile
 from llmpod.tunnel.schemas.node import ShellResult
 from llmpod.tunnel.schemas.system import GpuInfo, NodeReport, SystemInfo
 from llmpod.tunnel.schemas.task import (
@@ -46,6 +46,7 @@ __all__ = [
     "ContainerSummary",
     "ContainerState",
     # model_store（distribution HTTP manifest 契约）
+    "MANIFEST_FILE_NAME",
     "ManifestFile",
     "Manifest",
     # node

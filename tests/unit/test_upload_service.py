@@ -625,11 +625,11 @@ class TestAbort:
 
 class TestSweep:
     async def test_missing_root_returns_zero(self, rds, tmp_path):
-        assert await upl.sweep_expired_sessions(rds) == 0
+        assert await upl.sweep_expired_sessions(rds, referenced=set()) == 0
 
     async def test_live_session_kept(self, rds, tmp_path):
         resp = await _declared(rds)
-        assert await upl.sweep_expired_sessions(rds) == 0
+        assert await upl.sweep_expired_sessions(rds, referenced=set()) == 0
         assert Path(resp.staged_path).exists()
 
     async def test_tmp_residue_cleaned_on_sweep(self, rds, tmp_path):
@@ -638,7 +638,7 @@ class TestSweep:
         residue.write_bytes(b"x")
         merging = Path(resp.staged_path) / "f0.merging"
         merging.write_bytes(b"x")
-        await upl.sweep_expired_sessions(rds)
+        await upl.sweep_expired_sessions(rds, referenced=set())
         assert not residue.exists()  # 活会话保留，但崩溃残留 .tmp 被清
         assert not merging.exists()  # 合并中间态（崩溃在 rename 前）同样被清
 
@@ -651,7 +651,7 @@ class TestSweep:
 
         ancient = time.time() - settings.upload_finalize_stale_seconds - 100
         os.utime(staged, (ancient, ancient))
-        assert await upl.sweep_expired_sessions(rds) == 1
+        assert await upl.sweep_expired_sessions(rds, referenced=set()) == 1
         assert not staged.exists()
         assert not await rds.exists(f"llmpod:upload:{resp.sid}")  # 会话键清
         assert await rds.exists(f"llmpod:upload:{resp.sid}:tombstone")  # 取消标记拦截迟到的分片
@@ -661,7 +661,7 @@ class TestSweep:
         resp = await _declared(rds)
         staged = _staged(resp, tmp_path)
         await rds.hset(f"llmpod:upload:{resp.sid}", "status", "finalizing")
-        assert await upl.sweep_expired_sessions(rds) == 0
+        assert await upl.sweep_expired_sessions(rds, referenced=set()) == 0
         assert staged.exists()
 
     async def test_expired_with_redis_alive_purged(self, rds, tmp_path):
@@ -671,7 +671,7 @@ class TestSweep:
         mirror = json.loads((staged / ".session.json").read_text(encoding="utf-8"))
         mirror["expires_at"] = 1  # 已过期
         (staged / ".session.json").write_text(json.dumps(mirror), encoding="utf-8")
-        assert await upl.sweep_expired_sessions(rds) == 1
+        assert await upl.sweep_expired_sessions(rds, referenced=set()) == 1
         assert not staged.exists()
         assert not await rds.exists(sess_key)  # Redis 键一并清
 
@@ -679,7 +679,7 @@ class TestSweep:
         resp = await _declared(rds)
         staged = _staged(resp, tmp_path)
         await rds.delete(*sorted(rds._all()))  # Redis 全丢（镜像仍在盘上）
-        assert await upl.sweep_expired_sessions(rds) == 1
+        assert await upl.sweep_expired_sessions(rds, referenced=set()) == 1
         assert not staged.exists()
 
     async def test_fresh_orphan_kept_stale_orphan_removed(self, rds, tmp_path):
@@ -694,7 +694,7 @@ class TestSweep:
 
         ancient = time.time() - settings.upload_session_ttl_seconds - 100
         os.utime(stale, (ancient, ancient))
-        cleaned = await upl.sweep_expired_sessions(rds)
+        cleaned = await upl.sweep_expired_sessions(rds, referenced=set())
         assert cleaned == 1
         assert fresh.exists() and not stale.exists()
 
@@ -703,7 +703,7 @@ class TestSweep:
         bad = upload_root / "bad-mirror"
         bad.mkdir(parents=True)
         (bad / ".session.json").write_text("{oops", encoding="utf-8")
-        assert await upl.sweep_expired_sessions(rds) == 1
+        assert await upl.sweep_expired_sessions(rds, referenced=set()) == 1
         assert not bad.exists()
 
     async def test_per_dir_exception_does_not_abort_scan(self, rds, tmp_path, monkeypatch):
@@ -721,7 +721,7 @@ class TestSweep:
             return orig(d)
 
         monkeypatch.setattr(upl, "_inspect_dir_sync", boom)
-        assert await upl.sweep_expired_sessions(rds) == 0
+        assert await upl.sweep_expired_sessions(rds, referenced=set()) == 0
 
     async def test_referenced_dir_survives_ttl(self, rds, tmp_path):
         """被 Model.source_url 引用的目录恒跳过——local 源模型的 canonical 就是该目录，
@@ -735,6 +735,21 @@ class TestSweep:
         cleaned = await upl.sweep_expired_sessions(rds, referenced={str(staged.resolve())})
         assert cleaned == 0
         assert staged.exists()
+
+    async def test_referenced_nested_dir_protects_top_level(self, rds, tmp_path):
+        """引用目录嵌在 upload/<sid>/sub 时，清扫单位（顶层目录）是引用路径的祖先 →
+        整棵保留；只按顶层目录等值比对会把它当过期产物端掉。"""
+        resp = await _declared(rds)
+        staged = _staged(resp, tmp_path)
+        mirror = json.loads((staged / ".session.json").read_text(encoding="utf-8"))
+        mirror["expires_at"] = 1
+        (staged / ".session.json").write_text(json.dumps(mirror), encoding="utf-8")
+        nested = staged / "sub"
+        nested.mkdir()
+
+        cleaned = await upl.sweep_expired_sessions(rds, referenced={str(nested.resolve())})
+        assert cleaned == 0
+        assert staged.exists() and nested.exists()
 
     async def test_sweep_round_skipped_when_db_down(self, rds, tmp_path, monkeypatch):
         """DB 故障 → 引用集不可得 → 整轮清扫跳过（fail-closed）：过期目录本轮保留——
@@ -757,7 +772,9 @@ class TestSweep:
         assert await upl._referenced_model_dirs() is None
         await upl._sweep_once(rds)
         assert staged.exists()  # 目录保留
-        assert await rds.exists(f"llmpod:upload:{resp.sid}")  # 会话键也未被清扫清掉    async def test_referenced_model_dirs_builds_resolved_set(self, rds, tmp_path, monkeypatch):
+        assert await rds.exists(f"llmpod:upload:{resp.sid}")  # 会话键也未被清扫清掉
+
+    async def test_referenced_model_dirs_builds_resolved_set(self, rds, tmp_path, monkeypatch):
         """_referenced_model_dirs：仅 manager 源 + 解析到 upload/ 之内才入集；
         单文件源取所在目录（sweep 的遍历单位是目录，按文件比对永不命中）；
         返回 resolved 路径（与 sweep 的比对口径一致）。"""

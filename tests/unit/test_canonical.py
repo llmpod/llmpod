@@ -15,8 +15,15 @@ from __future__ import annotations
 
 import os
 
-from llmpod.apps.manager.deployment.placement import canonical_local_dir, slugify_name
+import pytest
+
+from llmpod.apps.manager.deployment.placement import (
+    canonical_local_dir,
+    slugify_name,
+    validate_manager_source,
+)
 from llmpod.config.settings import settings
+from llmpod.core.exceptions import LLMPodValidationError
 from llmpod.models.model import Model
 
 
@@ -80,6 +87,11 @@ class TestHfSourceDir:
         monkeypatch.setattr(settings, "model_store_dir", "data/models")
         assert os.path.isabs(canonical_local_dir(_model()))
 
+    def test_tilde_store_dir_expanded(self, monkeypatch):
+        """``~/models`` 写法按用户家目录展开——不展开会落出一个名为 ``~`` 的字面目录。"""
+        monkeypatch.setattr(settings, "model_store_dir", "~/llmpod-models")
+        assert canonical_local_dir(_model()) == os.path.expanduser("~/llmpod-models/qwen2-5-7b-instruct")
+
     def test_same_name_same_dir_regardless_of_id(self):
         m1 = _model()
         m2 = _model()
@@ -112,3 +124,26 @@ class TestManagerSourceDir:
         # 无 source_url：回退 store 根占位（合法路径形状，下发前会被拦截，不产生野路径）
         m = _model(source="local", source_url=None)
         assert canonical_local_dir(m) == os.path.abspath(settings.model_store_dir)
+
+
+class TestValidateManagerSource:
+    """local 源合法性校验：store 之内 + 盘上真实存在（空清单会让节点「下载成功」空目录）。"""
+
+    def test_valid_dir_passes(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "model_store_dir", str(tmp_path))
+        d = tmp_path / "qwen"
+        d.mkdir()
+        validate_manager_source("local", str(d))  # 不抛即通过
+
+    def test_missing_dir_rejected(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "model_store_dir", str(tmp_path))
+        with pytest.raises(LLMPodValidationError, match="不存在"):
+            validate_manager_source("local", str(tmp_path / "not-there"))
+
+    def test_store_root_rejected(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "model_store_dir", str(tmp_path))
+        with pytest.raises(LLMPodValidationError, match="合法目录"):
+            validate_manager_source("local", str(tmp_path))
+
+    def test_remote_source_always_passes(self):
+        validate_manager_source("huggingface", "org/does-not-exist-locally")

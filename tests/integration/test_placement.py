@@ -353,6 +353,8 @@ class TestEnsurePresent:
         monkeypatch.setattr(placement_mod.settings, "model_store_dir", str(tmp_path))
         old_dir = tmp_path / "old-model"
         new_dir = tmp_path / "new-model"
+        # 源目录必须真实存在（校验会查存在性——空清单会在节点侧「下载成功」一个空目录）
+        new_dir.mkdir()
         session = FakeSession()
         model = _model(session, source="local", source_url=str(old_dir))
         session.preload(

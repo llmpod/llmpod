@@ -132,34 +132,47 @@ def canonical_local_dir(model: Model) -> str:
       ``--local_dir`` 的落盘布局一致，用户在 store 内用官方 CLI 预置/管理的目录平台
       直接可用；重复下发由 ``hf_hub_download`` 的 etag 元数据校验跳过（不搬字节）。
     """
+    store = Path(settings.model_store_dir).expanduser()  # 允许 ``~/models`` 写法
     if ModelSource.is_manager_source(model.source):
         d = manager_source_dir(model.source_url)
         if d is None:
-            return os.path.abspath(settings.model_store_dir)  # 无源路径：占位，下发前被拦
+            return os.path.abspath(store)  # 无源路径：占位，下发前被拦
         return str(d)
-    return os.path.abspath(f"{settings.model_store_dir}/{slugify_name(model.name)}")
+    return os.path.abspath(store / slugify_name(model.name))
+
+
+def manager_source_path(source_url: str | None) -> Path | None:
+    """``source_url`` 的解析绝对路径（local/manager 源路径推导的第一步）。
+
+    空 source_url → None。单文件与目录两种形态都原样返回，由调用方决定是否取父目录。
+    """
+    raw = (source_url or "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
 
 
 def manager_source_dir(source_url: str | None) -> Path | None:
     """local/manager 源的落盘目录推导（canonical / 建模与下发校验 / 清扫在役判定 /
     删除级联共用，改路径规则只改这里）：
 
-    ``source_url`` → expanduser → 单文件取所在目录 → resolve。空 source_url → None。
+    ``source_url`` → 单文件取所在目录。空 source_url → None。
     """
-    raw = (source_url or "").strip()
-    if not raw:
+    p = manager_source_path(source_url)
+    if p is None:
         return None
-    p = Path(raw).expanduser()
     if p.is_file():
         p = p.parent
-    return p.resolve()
+    return p
 
 
 def validate_manager_source(source: str | None, source_url: str | None) -> None:
     """local 源 source_url 合法性校验（建模 create/update 与下发 ensure_present 共用）。
 
-    必须解析为 ``model_store_dir`` 之内的目录，且不是 store 根 / upload 根——坏路径
-    在入库或下发前显式报错，不静默落成「创建成功、部署才报错」的行。非 local 源恒通过。
+    必须解析为 ``model_store_dir`` 之内、盘上真实存在的目录，且不是 store 根 / upload
+    根——坏路径在入库或下发前显式报错，不静默落成「创建成功、部署才报错」的行。
+    存在性必须查：目录不在时清单为空，节点会「下载成功」一个空目录后拉起容器崩掉，
+    比直接报错难排查得多。非 local 源恒通过。
     """
     if not ModelSource.is_manager_source(source):
         return
@@ -174,6 +187,13 @@ def validate_manager_source(source: str | None, source_url: str | None) -> None:
     if not ok:
         raise LLMPodValidationError(
             f"local 源 source_url 不是 {settings.model_store_dir} 之内的合法目录: {source_url!r}（请修正模型来源路径）"
+        )
+    # 存在性查 source_url 本身而非目录口径：单文件源（直指 .gguf 等）的目录是父目录，
+    # 父目录在、文件没了同样会产出空清单
+    exact = manager_source_path(source_url)
+    if exact is None or not exact.exists():
+        raise LLMPodValidationError(
+            f"local 源 source_url 指向的路径不存在: {source_url!r}（请先上传模型文件或修正来源路径）"
         )
 
 

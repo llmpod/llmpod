@@ -596,13 +596,21 @@ async def delete_model(
         # 预置目录恒保留。共享判定经 manager_source_dir 统一解析（尾斜杠/``..``/软链
         # 别名同目录、单文件源取父目录——按字面量比会漏判误删他行在用的目录）
         src = safe_resolve(store_root, src_url)
-        if src is None or not src.is_relative_to(upload_root) or src == upload_root:
+        src_dir = manager_source_dir(src_url)
+        # 只删「upload/ 之下的产物目录」：src 越出 store、目录口径为空、指向 upload 根
+        # 本身，都按预置目录处理，保留盘上文件只删库行
+        is_upload_product = (
+            src is not None
+            and src_dir is not None
+            and src_dir.is_relative_to(upload_root)
+            and src_dir != upload_root
+        )
+        if not is_upload_product:
             log.info("delete_model %s: source_url %s 非平台 upload 产物，保留目录仅删库行", model_id, src_url)
         else:
+            # 本行已在上方 commit 删除，这里查到的只可能是其他模型行
             siblings = list((await db.execute(select(Model).where(Model.source == m.source))).scalars())
-            shared = any(
-                sib.id != model_id and manager_source_dir(sib.source_url) == src for sib in siblings
-            )
+            shared = any(manager_source_dir(sib.source_url) == src_dir for sib in siblings)
             if shared:
                 log.info(
                     "delete_model %s: source_url %s 被其他模型行共享，保留目录仅删库行",

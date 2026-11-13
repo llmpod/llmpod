@@ -303,6 +303,60 @@ class TestModelDelete:
         assert canonical.exists(), "共享目录不得因删其中一行被端掉"
         assert response.json()["data"]["purged_dirs"] == []
 
+    async def test_delete_local_single_file_source_shared_dir_preserved(
+        self, client: AsyncClient, monkeypatch, tmp_path
+    ):
+        """单文件源（source_url 直指 .gguf）：共享判定须按所在目录比——另一行在同一目录
+        里引用了别的权重文件时，直接删本行的文件会把仍在被引用的目录端掉。"""
+        from llmpod.config.settings import settings
+
+        app.dependency_overrides[get_current_user] = _admin_user
+        monkeypatch.setattr(settings, "model_store_dir", str(tmp_path))
+
+        src_dir = tmp_path / "upload" / "qwen-src"
+        src_dir.mkdir(parents=True)
+        mine = src_dir / "qwen-q4.gguf"
+        mine.write_bytes(b"x" * 10)
+        other = src_dir / "qwen-q8.gguf"
+        other.write_bytes(b"y" * 10)
+
+        m = _local_gguf_model(5, "qwen", mine)
+        sibling = _local_gguf_model(6, "qwen-q8", other)
+        session = _ModelFakeSession(m)
+        session.siblings = [sibling]
+        app.dependency_overrides[get_db] = _db_yielding_session(session)
+
+        response = await client.post("/api/v1/admin/models/5/delete")
+
+        assert response.status_code == 200, response.text
+        assert mine.exists(), "同目录其他模型文件仍被引用，本文件不得单独删除"
+        assert response.json()["data"]["purged_dirs"] == []
+
+    async def test_delete_local_single_file_source_unlinks_file_only(
+        self, client: AsyncClient, monkeypatch, tmp_path
+    ):
+        """单文件源无共享行 → 只 unlink 该文件，所在目录（可能还有别的产物）保留。"""
+        from llmpod.config.settings import settings
+
+        app.dependency_overrides[get_current_user] = _admin_user
+        monkeypatch.setattr(settings, "model_store_dir", str(tmp_path))
+
+        src_dir = tmp_path / "upload" / "qwen-src"
+        src_dir.mkdir(parents=True)
+        mine = src_dir / "qwen-q4.gguf"
+        mine.write_bytes(b"x" * 10)
+
+        m = _local_gguf_model(7, "qwen", mine)
+        session = _ModelFakeSession(m)
+        app.dependency_overrides[get_db] = _db_yielding_session(session)
+
+        response = await client.post("/api/v1/admin/models/7/delete")
+
+        assert response.status_code == 200, response.text
+        assert not mine.exists()
+        assert src_dir.exists()
+        assert response.json()["data"]["purged_dirs"] == [str(mine.resolve())]
+
     async def test_delete_local_upload_root_never_purged(self, client: AsyncClient, monkeypatch, tmp_path):
         """source_url 直指 upload 根 → 只删库行，整棵上传树保留。"""
         from llmpod.config.settings import settings

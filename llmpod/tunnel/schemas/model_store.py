@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# 下载器在目标目录留下的续传标记文件名。Node 下载完成后写它、verify 读它判定完整性；
+# Manager 生成清单/指纹时必须排除它（compose 下两端同挂一份 store，标记会出现在源目录里）。
+# 两端共用这一个字面量：一边改、一边没改会让 verify 恒失败或标记被算进清单
+MANIFEST_FILE_NAME = ".llmpod-manifest.json"
+
 
 class ManifestFile(BaseModel):
     """manifest 单文件条目。"""

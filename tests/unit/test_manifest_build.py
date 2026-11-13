@@ -31,10 +31,12 @@ def test_skips_symlink(tmp_path):
 
 
 def test_excludes_temp_artifacts(tmp_path):
-    """.part / .llmpod_complete / .merging / .tmp / .session.json 不纳入。"""
+    """.part / .llmpod_complete / .llmpod-manifest.json / .merging / .tmp / .session.json 不纳入。"""
     for name in ("a.part", "b.merging", "c.tmp", ".session.json"):
         (tmp_path / name).write_text("x")
     (tmp_path / ".llmpod_complete").write_text("done")
+    # Node 下载完成后的续传标记：manager/node 共用一份 store 时会出现在源目录里
+    (tmp_path / ".llmpod-manifest.json").write_text("{}")
     (tmp_path / "keep.safetensors").write_bytes(b"zz")
     m = build_manifest(tmp_path, model_id=1)
     assert {f.path for f in m.files} == {"keep.safetensors"}

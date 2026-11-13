@@ -771,7 +771,7 @@ async def _find_staged_on_disk(sid: str) -> Path | None:
 # ============================================================
 
 
-async def sweep_expired_sessions(r: aioredis.Redis, referenced: set[str] | None = None) -> int:
+async def sweep_expired_sessions(r: aioredis.Redis, *, referenced: set[str]) -> int:
     """扫 model_store_dir/upload/* 清过期/孤儿目录。返回清理数。
 
     挂 webserver 启动生命周期，每 upload_sweep_interval_seconds 跑一次。
@@ -779,18 +779,25 @@ async def sweep_expired_sessions(r: aioredis.Redis, referenced: set[str] | None 
     - .session.json 的 sid Redis 无对应会话且已过期 → 删目录。
     - 无 .session.json 的孤儿分片目录，mtime 超 TTL → 删。
     - 顺手删 .tmp 残留（崩溃在 rename 前的）。
-    - ``referenced``：已被 Model.source_url 引用的目录（resolved 绝对路径集）恒跳过——
-      local 源模型的 canonical 就是 source_url 目录，引擎可能正挂载读取，TTL 到点也不删。
+    - ``referenced``（必填、关键字传入）：已被 Model.source_url 引用的目录（resolved
+      绝对路径集）恒跳过——local 源模型的 canonical 就是 source_url 目录，引擎可能正挂载
+      读取，TTL 到点也不删。故意不给默认值：调用方漏传引用集时调用当场报 TypeError，
+      而不是静默按空集把在役权重目录删掉。
+      清扫单位是 upload/ 下的顶层目录，引用目录可能在它之下（手工放在 upload/<sid>/sub 里），
+      因此只要顶层目录是某个引用路径本身或它的祖先，整棵都不碰。
     """
     root = upload_root()
     if not await asyncio.to_thread(lambda: root.is_dir()):
         return 0
+    ref_paths = [Path(p) for p in referenced]
     cleaned = 0
     for d in await asyncio.to_thread(_list_dirs, root):
         # 比对双侧统一 resolve：store 路径含符号链接时字面量（/data/models/...）与
         # 真实路径（/mnt/.../models/...）不同，不 resolve 会永不命中、引用守卫失效
-        if referenced and str(d.resolve()) in referenced:
-            continue  # 在役模型权重目录（canonical=source_url），清扫不碰
+        resolved = d.resolve()
+        # is_relative_to 对相等路径也为真，引用目录本身同样被跳过
+        if any(ref.is_relative_to(resolved) for ref in ref_paths):
+            continue  # 在役模型权重目录在 d 之内，清扫不碰
         try:
             cleaned += await _sweep_one_dir(r, d)
         except Exception as e:  # 单目录异常不影响整体扫描

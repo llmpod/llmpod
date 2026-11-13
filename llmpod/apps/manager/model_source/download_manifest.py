@@ -8,7 +8,7 @@ size 校验、原子 rename。生成时刻冻结文件集合与大小，下载�
 与同包 ``manifest.py``（上传前预校验 ``validate_manifest``）方向相反：那份是「文件还
 不在盘上」的声明清单预检，这份是「盘上已就绪」的下载权威清单。收录规则一致：root 下所有
 常规文件（权重 + config + tokenizer 等），跳过符号链接与临时产物（``.part`` /
-``.llmpod_complete`` / ``.merging`` / ``.tmp`` / ``.session.json``）。
+``.llmpod_complete`` / ``.llmpod-manifest.json`` / ``.merging`` / ``.tmp`` / ``.session.json``）。
 """
 
 from __future__ import annotations
@@ -17,13 +17,15 @@ import os
 from pathlib import Path
 
 # manifest 契约模型住 wire 层（tunnel/schemas）：Manager 生成、Node 消费同源 import
-from llmpod.tunnel.schemas.model_store import Manifest, ManifestFile
+from llmpod.tunnel.schemas.model_store import MANIFEST_FILE_NAME, Manifest, ManifestFile
 
 __all__ = ["Manifest", "ManifestFile", "build_manifest"]
 
-# 不纳入清单的临时/标记文件（下载产物、上传残骸）
+# 不纳入清单的临时/标记文件（下载产物、上传残骸）。.llmpod-manifest.json 是 Node 下载完成后
+# 落在目标根目录的续传标记；manager 与 node 共用一份 store 时它会出现在源目录里，
+# 不能算进清单/指纹，否则同一份权重两次计算的 content_hash 不同
 _EXCLUDE_SUFFIXES = (".part", ".merging", ".tmp", ".session.json")
-_EXCLUDE_NAMES = {".llmpod_complete"}
+_EXCLUDE_NAMES = {".llmpod_complete", MANIFEST_FILE_NAME}
 
 
 def _keep(fname: str) -> bool:
