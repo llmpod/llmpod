@@ -6,6 +6,7 @@ import {
   deleteNode,
   upgradeNode,
   type NodeData,
+  type NodeDeleteData,
   type NodeRuntime,
   type NodeStatus,
   type NodeUpgradeItem,
@@ -15,6 +16,7 @@ import { listGpus, type GpuData, type GpuRuntime, type GpuStatus } from '@/api/g
 
 export type {
   NodeData,
+  NodeDeleteData,
   NodeRuntime,
   NodeStatus,
   NodeUpgradeItem,
@@ -177,10 +179,25 @@ export function useStore() {
     return next
   }
 
-  /** 注销节点(在线节点会被后端拒绝,需先维护/离线) */
-  const remove = async (id: string): Promise<void> => {
-    await deleteNode(id)
+  /**
+   * 注销节点(在线节点会被后端拒绝,需先维护/离线)。
+   * 返回后端回执:普通注销不级联删部署,deleted_deployments 恒为空数组。
+   */
+  const remove = async (id: string): Promise<NodeDeleteData> => {
+    const result = await deleteNode(id)
     notify()
+    return result
+  }
+
+  /**
+   * 强制移除节点(仅离线节点可用,给机器报废/长期失联用)。
+   * 跳过「存在未停止的推理实例」守卫,连带删除该节点上的部署;机器上的容器与数据卷
+   * 无法触达需人工清理,source=node 的模型记录保留但已无法部署。
+   */
+  const forceRemove = async (id: string): Promise<NodeDeleteData> => {
+    const result = await deleteNode(id, { force: true })
+    notify()
+    return result
   }
 
   /**
@@ -200,5 +217,14 @@ export function useStore() {
     }
   }
 
-  return { request, getDetail, listNodeGpus, toggleMaintenance, remove, upgrade, subscribe }
+  return {
+    request,
+    getDetail,
+    listNodeGpus,
+    toggleMaintenance,
+    remove,
+    forceRemove,
+    upgrade,
+    subscribe,
+  }
 }

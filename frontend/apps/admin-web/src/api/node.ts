@@ -112,9 +112,42 @@ export function updateNode(nodeId: string, data: UpdateNodePayload): Promise<Nod
   return request({ url: `/admin/nodes/${nodeId}/update`, method: 'POST', data })
 }
 
-/** 注销节点（POST /api/v1/admin/nodes/{node_id}/delete，在线节点会被后端拒绝） */
-export function deleteNode(nodeId: string): Promise<unknown> {
-  return request({ url: `/admin/nodes/${nodeId}/delete`, method: 'POST' })
+/**
+ * 注销回执（对应后端 NodeDeleteData）。成功返回即删除完成；
+ * force 强制移除时 notified/cleaned 恒为 false（节点已离线，既不发自清理通知也等不到确认）。
+ */
+export interface NodeDeleteData {
+  /** 节点ID */
+  id: string
+  /** 删除是否生效（成功返回即已完成） */
+  deleted: boolean
+  /** 是否向在线节点下发过自清理通知（强制移除恒为 false） */
+  notified: boolean
+  /** 节点是否确认自清理（离线节点/超时为 false） */
+  cleaned: boolean
+  /** 本次连带删除的部署ID；普通注销恒为空数组 */
+  deleted_deployments: string[]
+}
+
+/** 注销节点参数：缺省即原来的注销行为 */
+export interface DeleteNodeOptions {
+  /** 强制移除：跳过「存在未停止的推理实例」守卫，级联删除该节点上的部署；仅离线节点生效 */
+  force?: boolean
+}
+
+/**
+ * 注销节点（POST /api/v1/admin/nodes/{node_id}/delete?force=）。
+ * 普通注销：在线节点先收 $node_decommission 自清理再删，节点带未停止实例时后端 409。
+ * force=true：给机器报废/长期失联的节点用，不看实例状态直接删，并级联删除该节点上的部署；
+ * 节点仍在线时后端 409（活着就该走普通注销，让节点清掉自己的容器与数据卷）。
+ */
+export function deleteNode(nodeId: string, options?: DeleteNodeOptions): Promise<NodeDeleteData> {
+  return request({
+    url: `/admin/nodes/${nodeId}/delete`,
+    method: 'POST',
+    // force 只在强制移除时带上：不带该参数与旧行为完全一致
+    params: options?.force ? { force: true } : undefined,
+  })
 }
 
 /** 节点升级下发结果（POST /api/v1/admin/nodes/{node_id}/upgrade） */

@@ -17,7 +17,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 
-const { getDetail, toggleMaintenance, upgrade, remove } = useStore()
+const { getDetail, toggleMaintenance, upgrade, remove, forceRemove } = useStore()
 
 const innerShow = computed({
   get: () => props.show,
@@ -26,7 +26,7 @@ const innerShow = computed({
 
 const detail = ref<NodeData>()
 const loading = ref(false)
-/** 操作进行中(升级/维护模式切换/注销),防止重复点击 */
+/** 操作进行中(升级/维护模式切换/注销/强制移除),防止重复点击 */
 const operating = ref(false)
 
 watch(
@@ -134,13 +134,35 @@ async function onUpgrade() {
   }
 }
 
-/** 注销节点:二次确认(在线节点会被后端拒绝),成功后关闭抽屉并刷新列表 */
+/** 离线节点才提供强制移除(在线节点必须走普通注销,由节点自己清容器与数据卷) */
+const canForceRemove = computed(() => detail.value?.status === 'offline')
+
+/**
+ * 注销节点:唯一入口,强制移除是确认框里的勾选项而非独立按钮。
+ * 在线节点:原样注销 —— 通知节点自清理后再删,带未停止实例时后端 409。
+ * 离线节点(机器报废/长期失联):实例永远停在运行/崩溃态,不勾 force 会被「存在未停止的推理实例」
+ * 永久拦死,故确认框内置必勾的「强制移除」;勾选后请求带 force=true,连带删除该节点上有实例的
+ * 部署(含多机部署在其它节点上的分片),机器上的容器与数据卷无法触达需人工清理。
+ */
 async function onRemove() {
   if (!detail.value) return
+  const { id, hostname } = detail.value
+  const forceOption = canForceRemove.value
+  let checked: boolean | void
   try {
-    await useConfirm({
+    checked = await useConfirm({
       title: '注销节点',
-      content: `确定注销节点「${detail.value.hostname}」吗?节点记录及其 GPU 记录将被删除,不可恢复。`,
+      area: 46,
+      content: forceOption
+        ? () =>
+            h('div', { class: 'flex flex-col gap-[.4rem]' }, [
+              h('div',{class: 'mb-[1rem]'}, `该节点「${hostname}」已离线，但节点上存在模型部署，暂无法注销`),
+            ])
+        : `确定注销节点「${hostname}」吗?节点记录及其 GPU 记录将被删除,不可恢复。`,
+      // 必勾:未勾选时确认按钮禁用,点不动「注销」
+      checkbox: forceOption
+        ? { label: '强制移除，可能导致数据残留（模型权重、相关部署）', required: true }
+        : undefined,
       confirmText: '注销',
       cancelText: '取消',
     })
@@ -148,10 +170,22 @@ async function onRemove() {
   catch {
     return
   }
+  const forced = checked === true
   operating.value = true
   try {
-    await remove(detail.value.id)
-    message.success(`已注销:${detail.value.hostname}`)
+    if (forced) {
+      const result = await forceRemove(id)
+      const count = result.deleted_deployments?.length ?? 0
+      message.success(
+        count ? `已强制移除:${hostname},连带删除 ${count} 个部署` : `已强制移除:${hostname}`,
+      )
+      // 机器侧不可达:容器/数据卷与 source=node 的模型记录都要人工收尾
+      message.warning('机器上的容器与数据卷需人工清理;source=node 的模型需到模型页删除')
+    }
+    else {
+      await remove(id)
+      message.success(`已注销:${hostname}`)
+    }
     innerShow.value = false
   }
   finally {
@@ -297,6 +331,7 @@ async function onRemove() {
               >
                 {{ detail.status === 'maintenance' ? '退出维护' : '维护模式' }}
               </n-button>
+              <!-- 强制移除不是独立按钮:离线节点在注销的二次确认里勾选,普通注销路径保持不变 -->
               <n-button
                 tertiary
                 type="error"

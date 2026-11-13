@@ -190,6 +190,32 @@ describe('useConfirm 二次确认', () => {
     await expect(promise).resolves.toBe(true)
   })
 
+  it('checkbox 必勾模式:未勾选时确定禁用,勾选后可确认并返回 true', async () => {
+    const promise = useConfirm({
+      title: 't',
+      content: 'x',
+      checkbox: { label: '我已确认后果', required: true },
+    })
+    await nextTick()
+
+    const confirmBtn = buttons().find((item) => item.textContent?.includes('确定'))!
+    expect(confirmBtn.disabled).toBe(true)
+
+    // 禁用态下点不动;doConfirm 内同样拦一层(程序化触发也 settle 不了)
+    confirmBtn.click()
+    await nextTick()
+
+    const checkbox = document.body.querySelector<HTMLElement>('.n-checkbox')!
+    expect(checkbox, '未渲染 checkbox').toBeTruthy()
+    checkbox.click()
+    await nextTick()
+
+    expect(confirmBtn.disabled).toBe(false)
+    confirmBtn.click()
+    await nextTick()
+    await expect(promise).resolves.toBe(true)
+  })
+
   it('随机算式模式:未答对确定禁用,答对后可确认', async () => {
     const promise = useConfirm({ title: 't', content: '高危操作', calc: true })
     await nextTick()

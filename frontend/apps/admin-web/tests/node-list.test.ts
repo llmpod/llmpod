@@ -158,13 +158,39 @@ describe('node-list useStore', () => {
   it('remove/getDetail 透传,remove 后 notify', async () => {
     const listener = vi.fn()
     const unsubscribe = store.subscribe(listener)
-    vi.mocked(deleteNode).mockResolvedValue(undefined)
-    await store.remove('n1')
+    const receipt = {
+      id: 'n1',
+      deleted: true,
+      notified: true,
+      cleaned: true,
+      deleted_deployments: [],
+    }
+    vi.mocked(deleteNode).mockResolvedValue(receipt)
+    // 普通注销不带 force:行为与旧接口一致,不级联删部署
+    expect(await store.remove('n1')).toEqual(receipt)
     expect(deleteNode).toHaveBeenCalledWith('n1')
     expect(listener).toHaveBeenCalledTimes(1)
 
     vi.mocked(getNode).mockResolvedValue({ id: 'n1' } as Awaited<ReturnType<typeof getNode>>)
     expect(await store.getDetail('n1')).toMatchObject({ id: 'n1' })
+    unsubscribe()
+  })
+
+  it('forceRemove 带 force=true 并回传连带删除的部署,完成后 notify', async () => {
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe(listener)
+    const receipt = {
+      id: 'n2',
+      deleted: true,
+      notified: false,
+      cleaned: false,
+      deleted_deployments: ['dep-a', 'dep-b'],
+    }
+    vi.mocked(deleteNode).mockResolvedValue(receipt)
+
+    expect(await store.forceRemove('n2')).toEqual(receipt)
+    expect(deleteNode).toHaveBeenCalledWith('n2', { force: true })
+    expect(listener).toHaveBeenCalledTimes(1)
     unsubscribe()
   })
 

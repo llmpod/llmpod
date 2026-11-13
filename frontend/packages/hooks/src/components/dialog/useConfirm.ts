@@ -69,6 +69,8 @@ export function useConfirm(options: UseConfirmOptions = {}): Promise<boolean | v
     const checked = ref(
       typeof options.checkbox === 'object' ? (options.checkbox.defaultChecked ?? false) : false,
     )
+    /** 必勾模式:未勾选时确认按钮禁用,doConfirm 再拦一层(防程序化触发绕过禁用态) */
+    const checkboxRequired = typeof options.checkbox === 'object' && options.checkbox.required === true
     const calcInput = ref<number | null>(null)
     const calcProblem = options.calc ? createCalcProblem() : undefined
 
@@ -76,6 +78,7 @@ export function useConfirm(options: UseConfirmOptions = {}): Promise<boolean | v
 
     function doConfirm(): void {
       if (loading.value || settled) return
+      if (checkboxRequired && !checked.value) return
       settled = true
       resolve(options.checkbox !== undefined ? checked.value : undefined)
       removeDialog(id)
@@ -146,7 +149,9 @@ export function useConfirm(options: UseConfirmOptions = {}): Promise<boolean | v
           positiveText: options.confirmText ?? '确定',
           negativeText: options.cancelText ?? '取消',
           positiveLoading: loading.value,
-          positiveDisabled: calcProblem ? calcInput.value !== calcProblem.result : false,
+          positiveDisabled: calcProblem
+            ? calcInput.value !== calcProblem.result
+            : checkboxRequired && !checked.value,
           style: resolveArea(options.area || 40),
           // 关闭 naive Modal 初始自动聚焦(默认会聚焦 DOM 中首个可聚焦元素,即"取消"按钮,
           // 导致回车误触取消);焦点留在触发元素,Tab 仍可进入弹窗(focus trap 不变)

@@ -69,8 +69,11 @@ export interface UseConfirmOptions {
   content?: string | VNode | (() => VNode)
   /** 自定义图标(覆盖默认 warning),VNode | 渲染函数 */
   icon?: VNode | (() => VNode)
-  /** checkbox 模式:label 字符串或对象;确认时 resolve 返回勾选状态 */
-  checkbox?: string | { label: string; defaultChecked?: boolean }
+  /**
+   * checkbox 模式:label 字符串或对象;确认时 resolve 返回勾选状态。
+   * required=true 时未勾选不可确认(勾上才能继续,用于高危操作),确认按钮呈禁用态。
+   */
+  checkbox?: string | { label: string; defaultChecked?: boolean; required?: boolean }
   /** calc 模式:随机加减法,答案正确才能点确认 */
   calc?: boolean
   /** 宽高(同 useDialog) */
