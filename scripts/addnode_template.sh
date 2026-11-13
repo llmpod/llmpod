@@ -475,6 +475,18 @@ RUN_FLAGS=()
 ENV_FLAGS=()
 DEVICE_SUMMARY="CPU-only（未检测到加速设备）"
 
+# 所有节点容器一律带 --privileged，不按加速卡类型区分。
+#
+# Ascend 机器是硬性要求：驱动只把「uid 为 0 + 有效能力集全满 + cgroup 的 memory
+# 控制器不是只读挂载」三条同时成立的进程当特权容器，缺一条就会在 DCMI 初始化时
+# 把本容器登记进驱动，同机其它容器的推理引擎从此起不来（aclInit 返 500000）。
+# 逐条放权限都只满足其中一部分；实测 --cap-add=ALL 加上放开 cgroup 可写同样能过，
+# 但节点容器本来就挂着宿主 docker.sock、要在宿主上起推理容器，权限面等于宿主
+# root，拆细没有实际收益，多一种组合只是多一条要核对的路径。
+#
+# 其余机器同样给：按卡型分叉会让同一份脚本长出两条行为不一致的路径。
+RUN_FLAGS+=(--privileged)
+
 if [ "$NVIDIA_DRIVER_OK" = "1" ]; then
     echo "NVIDIA GPU:"
     nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
@@ -484,7 +496,7 @@ elif [ -n "$GPU_SKIP_REASON" ]; then
     DEVICE_SUMMARY="CPU-only（$GPU_SKIP_REASON）"
 fi
 
-# Ascend 需要设备节点、驱动目录和 npu-smi 一起挂载。
+# Ascend 需要设备节点、驱动目录和 npu-smi 一起挂载（特权标志在上方统一加）。
 DAVINCI_DEVS=( $(ls /dev/davinci[0-9]* 2>/dev/null || true) )
 if [ ${#DAVINCI_DEVS[@]} -gt 0 ]; then
     echo "检测到 Ascend NPU: ${DAVINCI_DEVS[*]}"

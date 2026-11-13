@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import os
+
 import pytest
 
 from llmpod.apps.node.collectors import gpu as gpu_mod
 from llmpod.apps.node.collectors.gpu import dcmi
+from llmpod.apps.node.collectors.gpu.ascend import _REQUIRED_CAP_EFFECTIVE
 from llmpod.apps.node.collectors.gpu.base import GpuCollectorBase
 from llmpod.tunnel.schemas.system import SystemInfo, GpuInfo
 
@@ -675,6 +679,89 @@ class TestNvidiaCollector:
         assert inits == []
 
 
+class TestAscendPrivilegeCheck:
+    """``check_admin_container``：与驱动内核模块同口径的三条判定。
+
+    判错了会把本容器登记进驱动的容器表、挡掉同机其它容器的推理引擎，所以
+    uid / 有效能力集 / cgroup 可写这三条各自的失败分支都要钉住。
+    """
+
+    def _check(
+        self,
+        monkeypatch,
+        *,
+        uid=0,
+        cap_effective=_REQUIRED_CAP_EFFECTIVE,
+        cgroup_read_only=False,
+        statvfs_error=False,
+    ):
+        from llmpod.apps.node.collectors.gpu import ascend as ascend_mod
+
+        class _Stat:
+            f_flag = os.ST_RDONLY if cgroup_read_only else 0
+
+        def statvfs(path):
+            if statvfs_error:
+                raise OSError("no such file")
+            return _Stat()
+
+        monkeypatch.setattr(ascend_mod.os, "getuid", lambda: uid)
+        monkeypatch.setattr(ascend_mod, "_cap_effective", lambda: cap_effective)
+        monkeypatch.setattr(ascend_mod.os, "statvfs", statvfs)
+        return ascend_mod.check_admin_container()
+
+    def test_all_conditions_met(self, monkeypatch):
+        assert self._check(monkeypatch) == ""
+
+    def test_not_root(self, monkeypatch):
+        assert "uid" in self._check(monkeypatch, uid=1000)
+
+    def test_capability_set_incomplete(self, monkeypatch):
+        """普通容器的 CapEff（0xa80425fb）比驱动要求的少一大截。"""
+        assert "CapEff" in self._check(monkeypatch, cap_effective=0xA80425FB)
+
+    def test_capability_set_ignores_bits_above_38(self, monkeypatch):
+        """驱动只看 bit 0..37；更高位有没有都不影响判定。"""
+        assert self._check(monkeypatch, cap_effective=0xFFFFFFFFFFFFFFFF) == ""
+
+    def test_cap_effective_unreadable(self, monkeypatch):
+        assert "CapEff" in self._check(monkeypatch, cap_effective=None)
+
+    def test_cgroup_memory_read_only(self, monkeypatch):
+        assert "/sys/fs/cgroup/memory" in self._check(monkeypatch, cgroup_read_only=True)
+
+    def test_missing_cgroup_memory_is_not_a_container(self, monkeypatch):
+        """cgroup v2 宿主没有这个控制器目录，按放行处理（驱动侧这一格尚未实测）。"""
+        assert self._check(monkeypatch, statvfs_error=True) == ""
+
+
+class TestAscendMissingPrivilegeLog:
+    """容器不够特权的告警只在原因变化时打一次，避免每 60 秒刷屏。"""
+
+    def test_same_reason_warns_once(self, monkeypatch, caplog):
+        from llmpod.apps.node.collectors.gpu import ascend as ascend_mod
+
+        monkeypatch.setattr(ascend_mod, "_last_missing_reason", None)
+        with caplog.at_level(logging.WARNING, logger=ascend_mod.log.name):
+            ascend_mod._log_missing_privilege("进程 uid 是 1000，不是 root")
+            ascend_mod._log_missing_privilege("进程 uid 是 1000，不是 root")
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "--privileged" in warnings[0].getMessage()
+
+    def test_reason_change_warns_again(self, monkeypatch, caplog):
+        from llmpod.apps.node.collectors.gpu import ascend as ascend_mod
+
+        monkeypatch.setattr(ascend_mod, "_last_missing_reason", None)
+        with caplog.at_level(logging.WARNING, logger=ascend_mod.log.name):
+            ascend_mod._log_missing_privilege("原因甲")
+            ascend_mod._log_missing_privilege("原因乙")
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 2
+
+
 class TestAscendCollector:
     """AscendCollector 基本属性、可用性探测与 DCMI 采集。"""
 
@@ -684,7 +771,7 @@ class TestAscendCollector:
         assert AscendCollector.vendor == "ascend"
 
     def test_is_available_with_driver_ready(self, monkeypatch):
-        """有 davinci 设备节点 + DCMI 初始化成功 → 可用。"""
+        """有 davinci 设备节点 + 容器特权够 + DCMI 初始化成功 → 可用。"""
         from llmpod.apps.node.collectors.gpu import ascend as ascend_mod
         from llmpod.apps.node.collectors.gpu.ascend import AscendCollector
 
@@ -695,10 +782,33 @@ class TestAscendCollector:
 
         c = AscendCollector()
         monkeypatch.setattr(ascend_mod, "device_nodes", lambda patterns: ["/dev/davinci0"])
+        monkeypatch.setattr(ascend_mod, "check_admin_container", lambda: "")
         monkeypatch.setattr(ascend_mod.dcmi, "init", record_init)
 
         assert c.is_available() is True
         assert inits == [1]
+
+    def test_unprivileged_container_never_touches_dcmi(self, monkeypatch):
+        """容器不够特权 → 不可用，且一次 DCMI 调用都不许发生。
+
+        初始化 DCMI 会把本容器按容器身份登记进驱动，挡掉同机其它容器的推理
+        引擎；所以必须在调用驱动之前就判定并退出。
+        """
+        from llmpod.apps.node.collectors.gpu import ascend as ascend_mod
+        from llmpod.apps.node.collectors.gpu.ascend import AscendCollector
+
+        def fail_dcmi(*args, **kwargs):
+            raise AssertionError("容器不够特权就不该调用 DCMI")
+
+        c = AscendCollector()
+        monkeypatch.setattr(ascend_mod, "device_nodes", lambda patterns: ["/dev/davinci0"])
+        monkeypatch.setattr(ascend_mod, "check_admin_container", lambda: "CapEff=0xa80425fb")
+        monkeypatch.setattr(ascend_mod.dcmi, "init", fail_dcmi)
+        monkeypatch.setattr(ascend_mod.dcmi, "get_driver_version", fail_dcmi)
+        monkeypatch.setattr(ascend_mod.dcmi, "get_card_list", fail_dcmi)
+
+        assert c.is_available() is False
+        assert c.collect() == []
 
     def test_is_available_without_device_nodes(self, monkeypatch):
         """驱动在但设备没直通 → 不可用（不必逐卡调用失败才发现）。"""
@@ -715,7 +825,7 @@ class TestAscendCollector:
         assert c.is_available() is False
 
     def test_is_available_when_dcmi_init_fails(self, monkeypatch):
-        """设备节点在但 DCMI 初始化失败（驱动异常）→ 不可用。"""
+        """设备节点在、容器特权够，但 DCMI 初始化失败（驱动异常）→ 不可用。"""
         from llmpod.apps.node.collectors.gpu import ascend as ascend_mod
         from llmpod.apps.node.collectors.gpu.ascend import AscendCollector
 
@@ -724,6 +834,7 @@ class TestAscendCollector:
 
         c = AscendCollector()
         monkeypatch.setattr(ascend_mod, "device_nodes", lambda patterns: ["/dev/davinci0"])
+        monkeypatch.setattr(ascend_mod, "check_admin_container", lambda: "")
         monkeypatch.setattr(ascend_mod.dcmi, "init", fail_init)
 
         assert c.is_available() is False
@@ -837,13 +948,14 @@ class TestAscendCollector:
         assert gpus[0].uuid == "BOARD-1"
 
     def test_collect_returns_empty_when_dcmi_unavailable(self, monkeypatch):
-        """DCMI 初始化就失败 → 返回空列表，不抛异常。"""
+        """容器特权够，但 DCMI 初始化失败 → 返回空列表，不抛异常。"""
         from llmpod.apps.node.collectors.gpu import ascend as ascend_mod
         from llmpod.apps.node.collectors.gpu.ascend import AscendCollector
 
         def fail_init():
             raise ascend_mod.dcmi.DcmiError(-99999, "load")
 
+        monkeypatch.setattr(ascend_mod, "check_admin_container", lambda: "")
         monkeypatch.setattr(ascend_mod.dcmi, "init", fail_init)
         assert AscendCollector().collect() == []
 
@@ -952,11 +1064,13 @@ def _stub_dcmi(monkeypatch, **plan) -> None:
 
     ``DcmiError`` / ``is_degradable`` 仍指向真实实现——降级判定逻辑要真的被测到。
     其余查询全由替身接管，替身没定义的名字会直接抛 AttributeError，不会悄悄
-    落到真驱动上。
+    落到真驱动上。特权自检也一并通过：这些用例测的是采集逻辑，不是跑测的
+    机器够不够特权。
     """
     from llmpod.apps.node.collectors.gpu import ascend as ascend_mod
 
     monkeypatch.setattr(ascend_mod, "dcmi", _StubDcmi(plan))
+    monkeypatch.setattr(ascend_mod, "check_admin_container", lambda: "")
 
 
 class TestLocalIp:

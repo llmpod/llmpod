@@ -125,10 +125,11 @@ docker-build:
 # 同时跑会争抢 node_id 被 manager 踢线。NVIDIA 机自动加 --gpus all；Ascend 本地
 # 接入走正式引导脚本（curl | bash）更省事。
 
-# 用现有镜像 docker run 起 node
+# 用现有镜像 docker run 起 node（与正式引导脚本一致，一律带 --privileged）
 node-up: .env
 	@docker rm -f llmpod-node 2>/dev/null || true
 	docker run -d --name llmpod-node --restart unless-stopped --network host --no-healthcheck \
+		--privileged \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v $$(pwd)/data:/app/data \
 		-e LLMPOD_NODE_CLUSTER_ID=$$(grep '^LLMPOD_NODE_CLUSTER_ID=' .env | cut -d= -f2-) \
