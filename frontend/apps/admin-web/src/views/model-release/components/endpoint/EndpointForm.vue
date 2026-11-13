@@ -4,16 +4,19 @@ import {
   useForm,
   FormInput,
   FormSelect,
+  FormCustom,
   useDialogClose,
   message,
 } from '@repo/hooks'
 import {
   useStore,
   protocolOptions,
-  normalizeModelIds,
+  createModelItem,
   type EndpointFormValues,
   type EndpointData,
+  type EndpointModelItem,
 } from './useStore'
+import EndpointModelRows from './EndpointModelRows.vue'
 
 const props = defineProps<{
   /** 编辑回填；新增时为 undefined */
@@ -32,13 +35,30 @@ const upstreamFailed = ref(false)
 /** 上次拉取的入参签名（协议+基址+Key）：同一组入参不重复打上游 */
 let upstreamSignature = ''
 
+/**
+ * 模型行校验：至少一行、模型 ID 必填、同批不重复
+ * （重复的 served_model 会被后端整批 422，这里提前拦下）。
+ */
+const modelsRule = {
+  required: true,
+  trigger: ['blur', 'change'],
+  validator: (_rule: unknown, value: EndpointModelItem[]) => {
+    const rows = value ?? []
+    if (!rows.length) return new Error('请至少添加一个模型')
+    if (rows.some((row) => !row.served_model.trim())) return new Error('模型 ID 不能为空')
+    const ids = rows.map((row) => row.served_model.trim())
+    if (new Set(ids).size !== ids.length) return new Error('模型 ID 不能重复')
+    return true
+  },
+}
+
 const { LmForm, submit, setValues, setInitialValues, params } = useForm<EndpointFormValues>({
   data: () => ({
     id: props.initial?.id,
     protocol: props.initial?.protocol ?? 'openai',
     api_base: props.initial?.api_base ?? '',
-    // 新建：多选上游模型名；编辑：单条 served_model（/{id}/update 契约不变）
-    served_models: props.initial ? [props.initial.served_model] : [],
+    // 新建：多行模型（左=上游模型 ID，右=显示名）；编辑：单条 served_model（/{id}/update 契约不变）
+    models: props.initial ? [] : [createModelItem()],
     served_model: props.initial?.served_model ?? '',
     name: props.initial?.name ?? '',
     api_key: '',
@@ -72,42 +92,26 @@ const { LmForm, submit, setValues, setInitialValues, params } = useForm<Endpoint
         maxlength: 255,
       },
     }),
-    // 新建：上游模型名多选（打开下拉即拉清单，也可直接输入回车逐个添加）
-    FormSelect('上游模型名', 'served_models', upstreamOptions.value, {
-      visible: !isEdit.value,
-      rules: [
-        {
-          required: true,
-          type: 'array',
-          message: '请至少填写一个上游模型名',
-          trigger: ['blur', 'change'],
-        },
-      ],
-      attrs: {
-        placeholder: '选择或输入模型名，回车添加',
-        multiple: true,
-        filterable: true,
-        tag: true,
-        maxTagCount: 'responsive',
-        loading: upstreamLoading.value,
-        // tag 模式回车即新建一项，这里统一去空白/去重（重复 served_model 会被后端整批 422）
-        'onUpdate:value': (value: string[]) =>
-          setValues({ served_models: normalizeModelIds(value) }),
-        // 打开下拉即拉取上游清单（同入参只拉一次）
-        onUpdateShow: (show: boolean) => {
-          if (show) void loadUpstreamModels()
-        },
+    // 新建：多行模型（左=上游模型 ID，右=显示名，可「添加模型」续行）
+    FormCustom(
+      (ctx) =>
+        h(EndpointModelRows, {
+          value: ctx.model.models,
+          'onUpdate:value': (rows: EndpointModelItem[]) => setValues({ models: rows }),
+          options: upstreamOptions.value,
+          loading: upstreamLoading.value,
+          failed: upstreamFailed.value,
+          // 点模型 ID 输入框时才打上游拉清单（同入参只拉一次）
+          onFetch: () => void loadUpstreamModels(),
+        }),
+      {
+        visible: !isEdit.value,
+        wrapFormItem: true,
+        label: '上游模型',
+        field: 'models',
+        rules: [modelsRule],
       },
-      controlSlots: {
-        // 清单相关反馈全部走空态文案:不弹 message,也不再设下拉底部操作区
-        empty: () =>
-          h(
-            'div',
-            { class: 'px-[1rem] py-[1.2rem] text-center' },
-            h('span', { class: 'text-small text-tertiary' }, emptyHint()),
-          ),
-      },
-    }),
+    ),
     // 编辑：仍是单个上游模型名
     FormInput('上游模型名', 'served_model', {
       visible: isEdit.value,
@@ -157,7 +161,7 @@ const { LmForm, submit, setValues, setInitialValues, params } = useForm<Endpoint
 
 /**
  * 拉取上游模型清单：api_base 必填才打上游。
- * 同入参（协议+基址+Key）只请求一次，重复开下拉不再打上游；失败同样记签名，
+ * 同入参（协议+基址+Key）只请求一次，反复点模型 ID 不再打上游；失败同样记签名，
  * 既不弹 message 也不反复重试——用户改基址/Key 后才触发下一次拉取。
  */
 async function loadUpstreamModels(): Promise<void> {
@@ -184,15 +188,9 @@ async function loadUpstreamModels(): Promise<void> {
   }
 }
 
-/** 下拉空态文案：按「未填基址 / 拉取中 / 拉取失败 / 可手动输入」给出当下该做什么 */
-function emptyHint(): string {
-  if (upstreamLoading.value) return '正在拉取上游模型清单…'
-  return '可直接输入模型名后回车添加'
-}
-
 /**
  * 转发基址 / 外部 Key 变化即作废上次清单：丢弃候选并清签名，
- * 下次打开下拉自动重新拉一次（不在键入过程中打上游）。
+ * 下次点模型 ID 输入框自动重新拉一次（不在键入过程中打上游）。
  */
 watch(
   [() => params().api_base, () => params().api_key],
@@ -209,7 +207,7 @@ if (props.initial) {
     id: props.initial.id,
     protocol: props.initial.protocol,
     api_base: props.initial.api_base,
-    served_models: [props.initial.served_model],
+    models: [],
     served_model: props.initial.served_model,
     name: props.initial.name,
     api_key: '',

@@ -221,7 +221,7 @@ onBeforeUnmount(() => {
       :key="action.key || action.title"
       text
       :type="action.danger ? 'error' : 'primary'"
-      class="text-base"
+      class="text-base lm-table-select__action"
       :loading="isLoading(action)"
       :disabled="isDisabled(action)"
       @click="runAction(action, $event)"
@@ -333,6 +333,33 @@ onBeforeUnmount(() => {
 
 .lm-table-select {
   min-width: 0;
+}
+
+/* ── 行操作按钮:loading 图标永久脱流,按钮尺寸全程锁定 ──────────────
+   问题链:onClick 返回 Promise 时 naive 给按钮塞入一枚 1.8rem 的 .n-button__icon
+   并做宽度展开动画。text 按钮的高度只由内容撑开(1.2rem 文字),图标一进来就把按钮
+   从 1.44rem 顶到 2.8rem,td 变高 → 整行被顶高,结束再缩回 = 点一次抖一下。
+   注意图标退场还带 0.2s 动画:此时 .n-button--loading 已被摘掉,若按该类写选择器,
+   图标会在退场帧里回到正常布局,文字已复现而转圈未散,行照样被撑开。
+   所以这里不按 loading 态判定,而是「只要图标元素存在就不参与布局」—— 入场、常驻、
+   退场三阶段一致,按钮与单元格的宽高逐帧不变,视觉上只在原位转圈。
+   图标由 n-button 内部渲染、不带本组件 scope 属性,需 :deep() 穿透;
+   n-button 自身已 position: relative,绝对定位以按钮为基准。 */
+.lm-table-select :deep(.lm-table-select__action > .n-button__icon) {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: 1.2em;
+  width: 1.2em;
+  max-width: 1.2em;
+  font-size: 1.2em;
+  margin: 0;
+}
+
+/* 图标在场时不露文字(含退场帧),避免转圈与字符叠在一起发糊 */
+.lm-table-select :deep(.lm-table-select__action:has(> .n-button__icon) > .n-button__content) {
+  color: transparent;
 }
 
 /* ── 进出场动画 ───────────────────────────────────────────────────

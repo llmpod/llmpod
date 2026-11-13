@@ -3,6 +3,7 @@ import {
   listEndpoints,
   createEndpoints,
   fetchUpstreamModels as fetchUpstreamModelsApi,
+  testEndpoint as testEndpointApi,
   updateEndpoint,
   deleteEndpoint,
   type EndpointData,
@@ -11,6 +12,8 @@ import {
   type CreateEndpointItem,
   type CreateEndpointsPayload,
   type FetchUpstreamModelsPayload,
+  type TestEndpointPayload,
+  type EndpointProbeResult,
   type UpdateEndpointPayload,
 } from '@/api/endpoint'
 
@@ -21,6 +24,8 @@ export type {
   CreateEndpointItem,
   CreateEndpointsPayload,
   FetchUpstreamModelsPayload,
+  TestEndpointPayload,
+  EndpointProbeResult,
   UpdateEndpointPayload,
 }
 
@@ -47,13 +52,26 @@ export const healthStatusFormOptions = [
   { label: '异常', value: 'down' },
 ]
 
+/** 待登记的一行模型：上游模型名 + 可选展示名 */
+export interface EndpointModelItem {
+  /** 上游模型名（外部=官方名，如 gpt-4o） */
+  served_model: string
+  /** 端点展示名；留空=后端取 served_model */
+  name: string
+}
+
+/** 造一行空模型（每次新对象，避免多行共享同一引用） */
+export function createModelItem(servedModel = '', name = ''): EndpointModelItem {
+  return { served_model: servedModel, name }
+}
+
 /** 表单模型 */
 export interface EndpointFormValues {
   id?: number
   protocol: EndpointProtocol
   api_base: string
-  /** 新建：上游模型名多选（提交时归并进 models 数组） */
-  served_models: string[]
+  /** 新建：多行模型（每行 上游模型名 + 显示名） */
+  models: EndpointModelItem[]
   /** 编辑：单条上游模型名（/{id}/update 契约） */
   served_model: string
   name: string
@@ -64,14 +82,21 @@ export interface EndpointFormValues {
 }
 
 /**
- * 上游模型名归一化：手动输入的标签逐个保留，仅去首尾空白并去重
- * （同一批里 served_model 重复会被后端判 422，一票否决整批）。
+ * 行数据归一化成可提交的模型项：去首尾空白、丢弃模型 ID 为空的行、
+ * 按模型名去重保序（同一批里 served_model 重复会被后端判 422，一票否决整批）。
+ * 显示名为空时不下发 name 键——空串会因 min_length=1 让整批 422，缺省值交给后端。
  */
-export function normalizeModelIds(values: readonly string[] | null | undefined): string[] {
-  const result: string[] = []
-  for (const value of values ?? []) {
-    const name = String(value).trim()
-    if (name && !result.includes(name)) result.push(name)
+export function normalizeModels(
+  items: readonly EndpointModelItem[] | null | undefined,
+): CreateEndpointItem[] {
+  const result: CreateEndpointItem[] = []
+  const seen = new Set<string>()
+  for (const item of items ?? []) {
+    const servedModel = String(item?.served_model ?? '').trim()
+    if (!servedModel || seen.has(servedModel)) continue
+    seen.add(servedModel)
+    const name = String(item?.name ?? '').trim()
+    result.push(name ? { served_model: servedModel, name } : { served_model: servedModel })
   }
   return result
 }
@@ -95,27 +120,35 @@ export function useStore() {
 
   /**
    * 新增端点（POST /admin/endpoints 收模型数组，单条即长度 1）。
-   * name 一律不下发：后端缺省取 served_model，而空串会因 min_length=1 让整批 422。
+   * 每行均可带显示名；留空时不下发 name（后端缺省取 served_model）。
    */
   const create = async (model: EndpointFormValues): Promise<EndpointData[]> => {
-    const models: CreateEndpointItem[] = normalizeModelIds(model.served_models).map(
-      (servedModel) => ({ served_model: servedModel }),
-    )
     const created = await createEndpoints({
       protocol: model.protocol,
       api_base: model.api_base,
       api_key: model.api_key || null,
       provider_name: model.provider_name || null,
       path: model.path || null,
-      models,
+      models: normalizeModels(model.models),
     })
     notify()
     return created
   }
 
-  /** 拉取上游模型清单（登记前发现，不落库）；失败静默返回，调用方在下拉空态里引导手动输入 */
+  /** 拉取上游模型清单（登记前发现，不落库）；失败静默返回，调用方在候选空态里引导手动输入 */
   const fetchUpstreamModels = (payload: FetchUpstreamModelsPayload): Promise<string[]> =>
     fetchUpstreamModelsApi(payload)
+
+  /**
+   * 探测端点连通性（真发一次最小 chat 请求，结论恒走 200）。
+   * 探的是该行已存配置，后端会把结论写回该行健康 —— 探完 notify 让列表跟着更新，
+   * 否则「Key 被上游吊销」这类问题会一直显示健康。
+   */
+  const testConnection = async (id: number): Promise<EndpointProbeResult> => {
+    const result = await testEndpointApi({ endpoint_id: id })
+    notify()
+    return result
+  }
 
   /** 调整端点 */
   const update = async (model: EndpointFormValues): Promise<{ name: string }> => {
@@ -155,5 +188,14 @@ export function useStore() {
     }
   }
 
-  return { request, create, update, toggleEnabled, remove, fetchUpstreamModels, subscribe }
+  return {
+    request,
+    create,
+    update,
+    toggleEnabled,
+    remove,
+    fetchUpstreamModels,
+    testConnection,
+    subscribe,
+  }
 }

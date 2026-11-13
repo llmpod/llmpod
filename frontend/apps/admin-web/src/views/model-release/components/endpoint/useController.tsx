@@ -11,7 +11,7 @@ import {
 } from './useStore'
 
 export function useController() {
-  const { request, toggleEnabled, remove, subscribe } = useStore()
+  const { request, toggleEnabled, remove, testConnection, subscribe } = useStore()
 
   /** 删除：二次确认 */
   async function onRemove(row: EndpointData) {
@@ -56,8 +56,37 @@ export function useController() {
     }
   }
 
-  /** 行操作：编辑 / 删除（启停由启用列 switch 承接） */
+  /**
+   * 测试连通性：向该端点真发一次最小 chat 请求（结论恒走 200，healthy 才是判定依据）。
+   * 探的是该行已存配置，后端会把结论写回该行健康，store 的 notify 已联动表格刷新 ——
+   * 「Key 被上游吊销」这类问题测一次就能在健康列上暴露。
+   */
+  async function onTest(row: EndpointData) {
+    try {
+      const result = await testConnection(row.id)
+      const cost = `耗时 ${result.elapsed_ms}ms`
+      if (result.healthy) {
+        message.success(`连通正常：${row.name} · ${cost}`)
+        return
+      }
+      // 连接失败/超时没有状态码；上游拒绝时给出 HTTP 状态 + 上游原话（不翻译，原样透出）
+      const reason = result.status_code === null ? '连接失败/超时' : `HTTP ${result.status_code}`
+      message.error(
+        `连通异常：${row.name} · ${reason} · ${cost}\n${result.detail ?? '上游无响应内容'}`,
+      )
+    } catch {
+      // 422（入参不足/地址无法解析/本地部署端点不适用）与 404（端点不存在）由 HTTP 层统一提示
+    }
+  }
+
+  /** 行操作：测试 / 编辑 / 删除（启停由启用列 switch 承接） */
   const selectActions: LmSelectAction<EndpointData>[] = [
+    {
+      title: '测试',
+      // 本地部署端点后端判不适用（422 且不消耗上游往返），不给死入口
+      show: (row) => row.upstream_type !== 'local',
+      onClick: (row) => onTest(row as EndpointData),
+    },
     { title: '编辑', onClick: (row) => openEdit(row as EndpointData) },
     { title: '删除', danger: true, onClick: (row) => onRemove(row as EndpointData) },
   ]

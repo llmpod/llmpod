@@ -128,6 +128,47 @@ export function fetchUpstreamModels(data: FetchUpstreamModelsPayload): Promise<s
   })
 }
 
+/** 连通性探测入参（对应后端 TestEndpointRequest；任一项不传就回落 endpoint_id 那行的存储值） */
+export interface TestEndpointPayload {
+  /** 已登记端点 ID；不传则全部字段由本次入参给出 */
+  endpoint_id?: number | null
+  /** 协议；不传则用已存行的 */
+  protocol?: EndpointProtocol | null
+  /** 转发基址；不传则用已存行的 */
+  api_base?: string | null
+  /** 上游模型名；不传则用已存行的 */
+  served_model?: string | null
+  /** 外部 API Key；不传则用已存行的（编辑弹窗不回传已存 Key，试填新 Key 只报告不写回） */
+  api_key?: string | null
+  /** 协议端点子路径；不传则用已存行的 */
+  path?: string | null
+}
+
+/** 连通性探测结论（对应后端 EndpointProbeOut） */
+export interface EndpointProbeResult {
+  /** 探测的端点 ID（未传 endpoint_id、纯字段探测时为 null） */
+  endpoint_id: number | null
+  /** 是否通过（最小 chat 请求回 2xx 且响应体可解析 JSON） */
+  healthy: boolean
+  /** 实际探测地址（真实流量会走到的那个地址） */
+  url: string
+  /** 上游 HTTP 状态；连接失败/超时为 null */
+  status_code: number | null
+  /** 上游响应体原文（截断 500 字）或连接异常文案，原样返回不做翻译 */
+  detail: string | null
+  /** 探测耗时（毫秒） */
+  elapsed_ms: number
+}
+
+/**
+ * 探测来源端点连通性（POST /api/v1/admin/endpoints/test）。
+ * 结论恒走 200：healthy=false 表示「上游拒绝了你」，不是请求写错了，按结论展示上游原话；
+ * 真错误只有 422（入参不足/地址无法解析/本地部署端点不适用）与 404（端点不存在）。
+ */
+export function testEndpoint(data: TestEndpointPayload): Promise<EndpointProbeResult> {
+  return request({ url: '/admin/endpoints/test', method: 'POST', data })
+}
+
 /** 调整端点（POST /api/v1/admin/endpoints/{endpoint_id}/update，不传的字段不改） */
 export function updateEndpoint(
   endpointId: number,
