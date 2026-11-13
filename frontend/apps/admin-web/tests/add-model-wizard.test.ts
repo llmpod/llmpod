@@ -59,6 +59,8 @@ function sourceExpose(overrides: Partial<SourceFormValues> = {}): SourceStepExpo
     source_url: 'Qwen/Qwen2.5-7B-Instruct',
     revision: '',
     local_mode: 'path',
+    source_auth: '',
+    node_id: null,
     ...overrides,
   })
   return {
@@ -244,6 +246,8 @@ describe('useWizard 探测与提交编排', () => {
         source_url: 'Qwen/Qwen2.5-7B-Instruct',
         revision: '',
         model_type: 'llm',
+        source_auth: '',
+        node_id: null,
       },
       expect.objectContaining({ quantization: 'awq', format: 'safetensors' }),
     )
@@ -290,6 +294,98 @@ describe('useWizard 探测与提交编排', () => {
     step.params().source_url = 'Qwen/Qwen3-32B'
     await nextTick()
     expect(wizard.inspected.value).toBeNull()
+    wrapper.unmount()
+  })
+})
+
+describe('useWizard 新增来源(第 6/7 点)', () => {
+  it('本地文件 + Node上传:探测下发 source=node 与 node_id,提交同样带 node_id', async () => {
+    const { wizard, wrapper } = mountWizard()
+    wizard.sourceStep.value = sourceExpose({
+      source: 'local',
+      local_mode: 'node',
+      source_url: '/data/models/Qwen2.5-7B-Instruct',
+      node_id: 'node-1',
+      revision: '',
+    })
+    wizard.infoStep.value = infoExpose({ name: 'Qwen2.5-7B-Instruct' })
+    inspect.mockResolvedValue({ files: makeFiles(), feasibility: null })
+    create.mockResolvedValue({ id: 11, name: 'Qwen2.5-7B-Instruct' })
+
+    await wizard.handleInspect()
+    expect(inspect).toHaveBeenCalledWith({
+      source: 'node',
+      source_url: '/data/models/Qwen2.5-7B-Instruct',
+      revision: null,
+      node_id: 'node-1',
+    })
+
+    await wizard.submit()
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'node',
+        source_url: '/data/models/Qwen2.5-7B-Instruct',
+        node_id: 'node-1',
+        source_auth: '',
+      }),
+      expect.anything(),
+    )
+    wrapper.unmount()
+  })
+
+  it('ModelScope:未改默认版本时 revision 提交 null(后端钉 commit),手改后原样提交', async () => {
+    const { wizard, wrapper } = mountWizard()
+    const step = sourceExpose({
+      source: 'modelscope',
+      source_url: 'Qwen/Qwen2.5-0.5B-Instruct',
+      revision: 'master',
+    })
+    wizard.sourceStep.value = step
+    wizard.infoStep.value = infoExpose({ name: 'Qwen2.5-0.5B-Instruct' })
+    inspect.mockResolvedValue({ files: makeFiles(), feasibility: null })
+    create.mockResolvedValue({ id: 12, name: 'Qwen2.5-0.5B-Instruct' })
+
+    await wizard.handleInspect()
+    expect(inspect).toHaveBeenCalledWith({
+      source: 'modelscope',
+      source_url: 'Qwen/Qwen2.5-0.5B-Instruct',
+      revision: null,
+    })
+
+    // 手改版本 → 原样提交
+    step.params().revision = 'v1.0'
+    await nextTick()
+    inspect.mockResolvedValue({ files: makeFiles(), feasibility: null })
+    await wizard.handleInspect()
+    expect(inspect.mock.calls[1][0]).toMatchObject({ revision: 'v1.0' })
+
+    await wizard.submit()
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'modelscope', revision: 'v1.0' }),
+      expect.anything(),
+    )
+    wrapper.unmount()
+  })
+
+  it('ModelScope 私有仓库:填写令牌时探测后提交带 source_auth', async () => {
+    const { wizard, wrapper } = mountWizard()
+    wizard.sourceStep.value = sourceExpose({
+      source: 'modelscope',
+      source_url: 'org/private-model',
+      revision: '',
+      source_auth: 'ms_xxx',
+    })
+    wizard.infoStep.value = infoExpose({ name: 'private-model' })
+    inspect.mockResolvedValue({ files: makeFiles(), feasibility: null })
+    create.mockResolvedValue({ id: 13, name: 'private-model' })
+
+    await wizard.handleInspect()
+    await wizard.submit()
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'modelscope', source_auth: 'ms_xxx' }),
+      expect.anything(),
+    )
     wrapper.unmount()
   })
 })

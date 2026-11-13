@@ -1,10 +1,11 @@
 import { onBeforeUnmount } from 'vue'
-import { NEllipsis, NTag } from 'naive-ui'
+import { NEllipsis, NButton, NTag } from 'naive-ui'
 import { LmTableGroup } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import { useDialog, useOperate, useTable, useConfirm, useEntryAction, message } from '@repo/hooks'
 import AddModelDialog from './add-model/AddModelDialog.vue'
 import EditModelDialog from './EditModelDialog.vue'
+import ModelNodesDialog from './ModelNodesDialog.vue'
 import {
   formatDateTime,
   SOURCE_LABEL,
@@ -13,6 +14,13 @@ import {
   useStore,
   type ModelRecord,
 } from './useStore'
+
+/** 已下载节点数:优先后端下发的计数,缺失时回退 cached_nodes 的节点数;两者都没有返回 null(未知,展示 --) */
+function cachedNodeCount(row: ModelRecord): number | null {
+  if (typeof row.cached_node_count === 'number') return row.cached_node_count
+  if (row.cached_nodes) return Object.keys(row.cached_nodes).length
+  return null
+}
 
 export function useController() {
   const { request, remove, subscribe } = useStore()
@@ -55,6 +63,20 @@ export function useController() {
     catch {
       // 取消,流程已打断
     }
+  }
+
+  /**
+   * 已下载节点:打开节点副本列表(节点/路径/节点状态/模型状态/大小/最近校验时间),
+   * 弹窗内可逐节点清理(仅移除记录或删除磁盘文件)。
+   */
+  function openNodes(row: ModelRecord) {
+    useDialog({
+      title: `已下载节点 · ${row.name}`,
+      component: ModelNodesDialog,
+      area: 62,
+      btn: false,
+      props: { modelId: row.id, modelName: row.name },
+    })
   }
 
   /**
@@ -120,6 +142,20 @@ export function useController() {
         title: '大小',
         key: 'size_gb',
         render: (row) => (row.size_gb != null ? `${row.size_gb} GB` : '—'),
+      },
+      {
+        // 已下载节点数:点击展开节点副本列表(可查看路径/状态/大小/校验时间并清理)
+        title: '已下载节点',
+        key: 'cached_node_count',
+        minWidth: 110,
+        render: (row) => {
+          const count = cachedNodeCount(row)
+          return (
+            <NButton text type={count ? 'primary' : 'default'} onClick={() => openNodes(row)}>
+              {count === null ? '--' : count ? `已下载节点：${count}` : '未下载'}
+            </NButton>
+          )
+        },
       },
       {
         title: '更新时间',

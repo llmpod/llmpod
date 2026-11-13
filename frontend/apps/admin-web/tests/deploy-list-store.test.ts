@@ -22,6 +22,7 @@ import {
 } from '@/api/deployment'
 import { listModels } from '@/api/model'
 import type { ModelDeploymentOut } from '@/api/deployment'
+import type { ImageEntryOut } from '@/api/inference-image'
 import {
   DEPLOY_CREATE_PHASES,
   DEPLOY_PHASE_LABEL,
@@ -30,6 +31,7 @@ import {
   deployStatusMap,
   formatDateTime,
   gpuSummary,
+  resolveDeployImage,
   useStore,
 } from '@/views/deploy/components/deploy-list/useStore'
 
@@ -337,5 +339,45 @@ describe('fetchDetail 详情透传', () => {
     await store.fetchDetail('d1')
 
     expect(getDeployment).toHaveBeenCalledWith('d1')
+  })
+})
+
+describe('resolveDeployImage 镜像地址展示(第 5 点)', () => {
+  /** 镜像目录条目(只声明断言用到的字段) */
+  function imageEntry(engineVersion: string, image: string) {
+    return { id: image, engine: 'vllm', arch: 'nvidia', image, engine_version: engineVersion } as
+      ImageEntryOut
+  }
+
+  it('自定义 spec.image 优先(用户在向导里改过镜像)', () => {
+    expect(
+      resolveDeployImage(
+        { image: 'xxx.io/xxa/vllm-ascend:0.313', image_tag: '0.27.1' },
+        [imageEntry('0.27.1', 'vllm/vllm-openai:v0.27.1')],
+      ),
+    ).toBe('xxx.io/xxa/vllm-ascend:0.313')
+  })
+
+  it('未自定义时按 spec.image_tag 反查 catalog 的实际镜像', () => {
+    expect(
+      resolveDeployImage({ image: null, image_tag: '0.27.1' }, [
+        imageEntry('0.26.0', 'vllm/vllm-openai:v0.26.0'),
+        imageEntry('0.27.1', 'vllm/vllm-openai:v0.27.1'),
+      ]),
+    ).toBe('vllm/vllm-openai:v0.27.1')
+  })
+
+  it('空镜像地址(空串/空白)视为未自定义', () => {
+    expect(
+      resolveDeployImage({ image: '  ', image_tag: '0.27.1' }, [
+        imageEntry('0.27.1', 'vllm/vllm-openai:v0.27.1'),
+      ]),
+    ).toBe('vllm/vllm-openai:v0.27.1')
+  })
+
+  it('无 image_tag / 目录未命中 / spec 缺失 → null(由调用方显示 --)', () => {
+    expect(resolveDeployImage({ image: null, image_tag: null }, [])).toBeNull()
+    expect(resolveDeployImage({ image: null, image_tag: '9.9.9' }, [])).toBeNull()
+    expect(resolveDeployImage(null, [])).toBeNull()
   })
 })

@@ -2,13 +2,21 @@
 import { PlayCircleOutline, StopCircleOutline, TrashOutline } from '@vicons/ionicons5'
 import { message, useConfirm } from '@repo/hooks'
 import { toReplicaSeq, type DeploymentDetailOut } from '@/api/deployment'
-import { deployStatusMap, formatDateTime, gpuSummary, useStore, type DeployRecord } from './useStore'
+import type { ImageEntryOut } from '@/api/inference-image'
+import {
+  deployStatusMap,
+  formatDateTime,
+  gpuSummary,
+  resolveDeployImage,
+  useStore,
+  type DeployRecord,
+} from './useStore'
 import { startDeploymentFlow } from './startFlow'
 
 const props = defineProps<{ show: boolean; record: DeployRecord | null }>()
 const emit = defineEmits<{ 'update:show': [value: boolean]; removed: [] }>()
 
-const { fetchDetail, modelName, stop, remove } = useStore()
+const { fetchDetail, modelName, stop, remove, imageEntriesOf } = useStore()
 
 const innerShow = computed({
   get: () => props.show,
@@ -40,6 +48,20 @@ watch(
 
 /** 部署记录:详情接口返回后用最新数据(停止等操作后状态会推进),否则用列表行快照 */
 const deployment = computed(() => detail.value?.deployment ?? props.record)
+
+/** 镜像目录条目(按引擎缓存):spec.image 缺失时按 spec.image_tag 反查实际镜像地址 */
+const imageEntries = shallowRef<ImageEntryOut[]>([])
+watch(
+  () => [props.show, deployment.value?.engine] as const,
+  async ([show, engine]) => {
+    if (!show) return
+    imageEntries.value = await imageEntriesOf(engine)
+  },
+  { immediate: true },
+)
+
+/** 实际使用镜像:自定义 spec.image 优先,否则 catalog 按镜像版本解析;都没有为 -- */
+const imageLabel = computed(() => resolveDeployImage(deployment.value?.spec, imageEntries.value) ?? '--')
 
 /** 状态标签配置 */
 const statusConf = computed(() =>
@@ -121,6 +143,8 @@ const sections = computed(() => {
         { label: '部署名称', value: data.name },
         { label: '模型', value: modelName(data.model_id) },
         { label: '引擎', value: data.engine },
+        // 镜像地址:自定义镜像或 catalog 按镜像版本解析出的完整 ref
+        { label: '镜像', value: imageLabel.value },
         { label: '状态', value: statusConf.value.label },
         { label: '创建时间', value: formatDateTime(data.created_at) },
         { label: '更新时间', value: formatDateTime(data.updated_at) },

@@ -13,6 +13,7 @@ import {
   type DeploymentStatus,
   type ModelDeploymentOut,
 } from '@/api/deployment'
+import { listInferenceImages, type ImageEntryOut } from '@/api/inference-image'
 import { listModels } from '@/api/model'
 
 /** 部署列表行记录(即后端 ModelDeploymentSchema) */
@@ -108,6 +109,23 @@ export function formatDateTime(value: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+/**
+ * 部署实际使用的镜像地址(部署详情「镜像」行):
+ * 用户手填过 spec.image(自定义镜像)即以它为准;否则按 spec.image_tag 在镜像目录里反查该版本的 image,
+ * 与创建向导口径一致(catalog 解析);都取不到返回 null,由调用方显示 --。
+ * entries 为对应引擎的镜像目录条目(可为空,此时只有 spec.image 生效)。
+ */
+export function resolveDeployImage(
+  spec: { image?: string | null; image_tag?: string | null } | null | undefined,
+  entries: ImageEntryOut[],
+): string | null {
+  const custom = spec?.image?.trim()
+  if (custom) return custom
+  const tag = spec?.image_tag
+  if (!tag) return null
+  return entries.find((entry) => entry.engine_version === tag)?.image ?? null
+}
+
 /** 变更监听器:写操作完成后触发,供表格 refresh 联动 */
 const listeners = new Set<() => void>()
 function notify(): void {
@@ -117,6 +135,11 @@ function notify(): void {
 /** 模型 id → 名称映射(列表/详情回显模型名);懒加载一次,失败回退 #id 展示 */
 const modelNameMap = shallowRef<Map<number, string>>(new Map())
 let modelNameLoaded = false
+
+/** 镜像目录缓存:engine → 该引擎条目(部署详情按 image_tag 反查实际镜像用);按引擎缓存一次 */
+const imageCatalog = new Map<string, ImageEntryOut[]>()
+/** 在途请求(同引擎并发只发一次) */
+const imageCatalogPending = new Map<string, Promise<void>>()
 
 /**
  * 部署数据 store:表格请求与写操作均走此单例,
@@ -152,6 +175,33 @@ export function useStore() {
 
   /** 模型名回显:未加载/未命中时回退 #id */
   const modelName = (modelId: number): string => modelNameMap.value.get(modelId) ?? `#${modelId}`
+
+  /**
+   * 镜像目录条目(按引擎,内存缓存):
+   * 部署详情的「镜像」行需要按 image_tag 反查实际镜像地址,没有 tag 直接反映射时用它补足。
+   * 失败静默返回空表(镜像行回退 spec.image 或 --),不阻塞详情渲染。
+   */
+  const imageEntriesOf = async (engine: string | null | undefined): Promise<ImageEntryOut[]> => {
+    if (!engine) return []
+    const cached = imageCatalog.get(engine)
+    if (cached) return cached
+    let pending = imageCatalogPending.get(engine)
+    if (!pending) {
+      pending = listInferenceImages({ engine })
+        .then((entries) => {
+          imageCatalog.set(engine, entries)
+        })
+        .catch(() => {
+          // 目录拉取失败不写缓存:下次打开详情可重试
+        })
+        .finally(() => {
+          imageCatalogPending.delete(engine)
+        })
+      imageCatalogPending.set(engine, pending)
+    }
+    await pending
+    return imageCatalog.get(engine) ?? []
+  }
 
   /** 部署详情(deployment + instances + endpoint) */
   const fetchDetail = (deploymentId: string): Promise<DeploymentDetailOut> =>
@@ -198,6 +248,7 @@ export function useStore() {
     request,
     loadModelNames,
     modelName,
+    imageEntriesOf,
     fetchDetail,
     createDeploy,
     stop,

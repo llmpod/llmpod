@@ -9,6 +9,8 @@ vi.mock('@/api/model', () => ({
   createModel: vi.fn(),
   updateModel: vi.fn(),
   deleteModel: vi.fn(),
+  listModelNodes: vi.fn(),
+  deleteModelNode: vi.fn(),
 }))
 
 const routerPushMock = vi.hoisted(() => vi.fn())
@@ -31,10 +33,11 @@ vi.mock('@repo/hooks', async (importOriginal) => {
   }
 })
 
-import { createModel, deleteModel, inspectModelSource, listModels, updateModel } from '@/api/model'
+import { createModel, deleteModel, deleteModelNode, inspectModelSource, listModels, listModelNodes, updateModel } from '@/api/model'
 import { useDialog } from '@repo/hooks'
 import type { LmSelectAction } from '@repo/naive-ui'
 import {
+  DEFAULT_REVISION,
   formatDateTime,
   MODEL_TYPE_OPTIONS,
   SOURCE_LABEL,
@@ -140,6 +143,60 @@ describe('model-management useStore', () => {
     unsubscribe()
   })
 
+  it('create:node 源下发 node_id,填写令牌时下发 source_auth', async () => {
+    vi.mocked(createModel).mockResolvedValue({ id: 9 } as Awaited<ReturnType<typeof createModel>>)
+    await store.create(
+      makeForm({
+        source: 'node',
+        source_url: '/data/models/Qwen2.5-7B-Instruct',
+        node_id: 'node-1',
+        revision: '',
+      }),
+      null,
+    )
+    expect(createModel).toHaveBeenCalledWith({
+      name: 'Qwen2.5-7B',
+      source: 'node',
+      source_url: '/data/models/Qwen2.5-7B-Instruct',
+      revision: null,
+      model_type: 'llm',
+      files: null,
+      node_id: 'node-1',
+    })
+  })
+
+  it('create:modelscope 源带令牌时下发 source_auth(空令牌不下发)', async () => {
+    vi.mocked(createModel).mockResolvedValue({ id: 10 } as Awaited<ReturnType<typeof createModel>>)
+    await store.create(
+      makeForm({ source: 'modelscope', revision: 'master', source_auth: 'ms_xxx' }),
+      null,
+    )
+    expect(vi.mocked(createModel).mock.calls[0][0]).toMatchObject({
+      source: 'modelscope',
+      source_auth: 'ms_xxx',
+    })
+    expect(vi.mocked(createModel).mock.calls[0][0]).not.toHaveProperty('node_id')
+
+    await store.create(makeForm({ source: 'modelscope', revision: 'master' }), null)
+    expect(vi.mocked(createModel).mock.calls[1][0]).not.toHaveProperty('source_auth')
+  })
+
+  it('nodes/removeNodeCopy:N 节点副本读取与清理(清理后 notify 刷新)', async () => {
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe(listener)
+    vi.mocked(listModelNodes).mockResolvedValue([
+      { node_id: 'node-1', path: '/data/models/x', model_status: 'cached' },
+    ])
+    await expect(store.nodes(7)).resolves.toHaveLength(1)
+    expect(listModelNodes).toHaveBeenCalledWith(7, undefined)
+
+    vi.mocked(deleteModelNode).mockResolvedValue(undefined)
+    await store.removeNodeCopy(7, 'node-1', true)
+    expect(deleteModelNode).toHaveBeenCalledWith(7, 'node-1', true)
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
   it('typeLabel:已知类别取文案,未知原样展示', () => {
     expect(typeLabel('llm')).toBe('LLM')
     expect(typeLabel('multimodal')).toBe('多模态')
@@ -147,10 +204,16 @@ describe('model-management useStore', () => {
   })
 
   it('选项与映射常量', () => {
-    // OSS 源暂时隐藏(useStore 中注释),选项仅剩 huggingface/local
-    expect(SOURCE_OPTIONS.map((item) => item.value)).toEqual(['huggingface', 'local'])
+    // OSS 源暂时隐藏(useStore 中注释),选项为 huggingface/modelscope/local
+    expect(SOURCE_OPTIONS.map((item) => item.value)).toEqual(['huggingface', 'modelscope', 'local'])
     expect(SOURCE_URL_PLACEHOLDER.local).toContain('/data/models')
+    // ModelScope 与节点源各有自己的地址占位
+    expect(SOURCE_URL_PLACEHOLDER.modelscope).toContain('ModelScope')
+    expect(SOURCE_URL_PLACEHOLDER.node).toContain('/data/models')
     expect(SOURCE_LABEL.local).toBe('本地')
+    expect(SOURCE_LABEL.modelscope).toBe('ModelScope')
+    // 默认版本按源区分:HF main / ModelScope master
+    expect(DEFAULT_REVISION).toEqual({ huggingface: 'main', modelscope: 'master' })
     expect(MODEL_TYPE_OPTIONS.length).toBeGreaterThan(5)
     expect(TYPE_TAG.llm.textColor).toContain('var(--n-primary-color)')
     expect(formatDateTime(null)).toBe('—')

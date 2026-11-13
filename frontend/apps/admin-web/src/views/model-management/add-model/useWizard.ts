@@ -1,7 +1,10 @@
 import { message, useConfirm, useDialogClose } from '@repo/hooks'
 import { validateManifest, type ManifestWarning } from '@/api/model'
 import {
+  AUTH_SOURCES,
+  DEFAULT_REVISION,
   MODEL_TYPE_OPTIONS,
+  REVISION_SOURCES,
   useStore,
   type FeasibilityReport,
   type InspectModelPayload,
@@ -11,15 +14,22 @@ import {
 } from '../useStore'
 import { useChunkedUpload } from './useUpload'
 
-/** 本地模型获取方式:upload=浏览器选文件夹分片上传;path=manager 本机已有路径直接探测 */
-export type LocalMode = 'upload' | 'path'
+/**
+ * 本地模型获取方式:
+ * path=manager 本机已有路径;upload=浏览器选文件夹分片上传;node=直接引用某台节点磁盘上的模型目录
+ */
+export type LocalMode = 'upload' | 'path' | 'node'
 
-/** 步骤 1:模型源表单值(local_mode 仅前端交互用,探测/创建时按模式取 source_url,不下发) */
+/** 步骤 1:模型源表单值(local_mode/node_id 仅前端交互用,提交时折算成 source/source_url/node_id) */
 export interface SourceFormValues {
   source: ModelSource
   source_url: string
   revision: string
   local_mode: LocalMode
+  /** 来源凭证(私有仓库用;可选,不下发时后端保留原 token) */
+  source_auth: string
+  /** source='node' 时选中的在线节点 ID */
+  node_id: string | null
 }
 
 /** 步骤 2:模型信息表单值(format/architecture/size_gb 由探测回填,仅展示不编辑) */
@@ -142,7 +152,16 @@ export function useWizard(onCreated?: (record: ModelData) => void) {
   watch(
     () => {
       const model = sourceStep.value?.params()
-      return model ? [model.source, model.source_url, model.revision, model.local_mode] : []
+      return model
+        ? [
+            model.source,
+            model.source_url,
+            model.revision,
+            model.local_mode,
+            model.node_id,
+            model.source_auth,
+          ]
+        : []
     },
     () => {
       inspected.value = null
@@ -183,7 +202,35 @@ export function useWizard(onCreated?: (record: ModelData) => void) {
     }
   }
 
-  /** 探测模型源:成功预填模型信息并自动进入下一步;软失败(success=false)展示原因,停留当前步 */
+  /**
+   * 步骤 1 表单值 → 实际提交来源:
+   * 「本地文件 + Node上传」在接口层是独立来源 source='node' + node_id(权重就地引用,不复制);
+   * 其余情况原样取所选来源。
+   */
+  function resolveSource(source: SourceFormValues): {
+    source: ModelSource
+    sourceUrl: string
+    nodeId: string | null
+  } {
+    if (source.source === 'local' && source.local_mode === 'node') {
+      return { source: 'node', sourceUrl: source.source_url, nodeId: source.node_id }
+    }
+    return { source: source.source, sourceUrl: source.source_url, nodeId: null }
+  }
+
+  /**
+   * 版本取值:仅远程仓库源（HF / ModelScope）有意义。
+   * 用户未改默认值（HF main / MS master）时提交 null,让后端把版本钉到具体 commit;
+   * 手改过的值原样提交。
+   */
+  function resolveRevision(source: SourceFormValues, realSource: ModelSource): string | null {
+    if (!REVISION_SOURCES.includes(realSource)) return null
+    const revision = source.revision.trim()
+    if (!revision || revision === DEFAULT_REVISION[realSource]) return null
+    return revision
+  }
+
+  /** 探测模型源：成功预填模型信息并自动进入下一步;软失败(success=false)展示原因,停留当前步 */
   async function handleInspect() {
     const step = sourceStep.value
     if (!step) return
@@ -195,6 +242,7 @@ export function useWizard(onCreated?: (record: ModelData) => void) {
     inspecting.value = true
     try {
       const source = step.params()
+      const { source: realSource, sourceUrl, nodeId } = resolveSource(source)
       // local 源分两种获取方式:upload=先预检文件清单(validate-manifest)再分片上传,staged 目录路径写回来源地址;
       // path=用户直接输入 manager 本机路径,无需上传,source_url 即输入值;
       // 预检/上传失败提示由 http 中间件或预检编排给出,此处中断即可
@@ -212,10 +260,11 @@ export function useWizard(onCreated?: (record: ModelData) => void) {
         }
       }
       const payload: InspectModelPayload = {
-        source: source.source,
-        source_url: source.source_url,
-        // revision 仅 HF 源有意义,空值按后端默认 main 处理
-        revision: source.source === 'huggingface' ? source.revision || null : null,
+        source: realSource,
+        source_url: realSource === 'node' ? sourceUrl : source.source_url,
+        revision: resolveRevision(source, realSource),
+        // node 源必须带节点 ID(后端读该节点磁盘目录;缺省 422)
+        ...(nodeId ? { node_id: nodeId } : {}),
       }
       const { files, feasibility: report } = await inspect(payload)
       inspected.value = files
@@ -282,13 +331,17 @@ export function useWizard(onCreated?: (record: ModelData) => void) {
         quantization: info.quantization,
         is_moe: info.is_moe,
       }
+      const { source: realSource, sourceUrl, nodeId } = resolveSource(source)
       const created = await create(
         {
           name: info.name,
-          source: source.source,
-          source_url: source.source_url,
-          revision: source.source === 'huggingface' ? source.revision : '',
+          source: realSource,
+          source_url: sourceUrl,
+          revision: resolveRevision(source, realSource) ?? '',
           model_type: info.model_type,
+          // 凭证仅远程仓库源有意义;留空不下发(后端保留原 token)
+          source_auth: AUTH_SOURCES.includes(realSource) ? source.source_auth.trim() : '',
+          node_id: nodeId,
         },
         mergedFiles,
       )

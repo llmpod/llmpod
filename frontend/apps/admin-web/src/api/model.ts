@@ -1,7 +1,10 @@
 import { request } from './request'
 
-/** 模型来源:huggingface | oss | local(local 为分片上传后的 staged 路径) */
-export type ModelSource = 'huggingface' | 'oss' | 'local'
+/**
+ * 模型来源:
+ * huggingface | modelscope | oss | local(local 为分片上传后的 staged 路径) | node(节点盘上就地引用)
+ */
+export type ModelSource = 'huggingface' | 'modelscope' | 'oss' | 'local' | 'node'
 
 /** 模型类别:llm|embedding|rerank|image|stt|tts|multimodal(后端为字符串非枚举) */
 export type ModelType = 'llm' | 'embedding' | 'rerank' | 'image' | 'stt' | 'tts' | 'multimodal'
@@ -30,10 +33,18 @@ export interface ModelData {
   hash: string | null
   /** 已缓存该模型的节点 {node_id: path} */
   cached_nodes: Record<string, string>
-  /** 来源:huggingface | oss | local(可空) */
+  /** 已下载该模型的节点数(列表列展示;后端未下发时前端回退 cached_nodes 的 key 数) */
+  cached_node_count?: number | null
+  /** 来源:huggingface | modelscope | oss | local | node(可空) */
   source: string | null
   /** 来源地址(可空) */
   source_url: string | null
+  /** 来源盘上布局:unknown | single_gguf | gguf_shards | transformers_folder | diffusers_folder */
+  source_kind?: string | null
+  /** 多 variant 仓选哪个变体的子路径(可空) */
+  source_subpath?: string | null
+  /** 就地引用模型绑定的节点 ID(source=node 时有值,该模型只能部署到这台节点) */
+  node_id?: string | null
   /** 来源版本标识/commit-hash(可空) */
   revision: string | null
   created_at: string
@@ -160,11 +171,11 @@ export function validateManifest(data: {
 
 /** 探测模型源请求体(POST /api/v1/admin/models/inspect);size_gb/model_type/model_format 为可选覆盖:不传用探测值,传了以用户值为准且回显/feasibility 按覆盖后值重算 */
 export interface InspectModelPayload {
-  /** 来源:huggingface | oss | local */
+  /** 来源:huggingface | modelscope | oss | local | node */
   source: string
-  /** 来源地址:HF repo id/URL / OSS 文件直链 / manager 本地路径 */
+  /** 来源地址:HF/MS repo id/URL / OSS 文件直链 / manager 本地路径 / 节点上的绝对目录 */
   source_url: string
-  /** 版本/commit-hash(HF 可选,默认 main) */
+  /** 版本/commit-hash(HF 默认 main,ModelScope 默认 master;不填由后端钉 commit) */
   revision?: string | null
   /** 覆盖:权重大小 GB(探测不到时 feasibility.deployable 恒为 false,手填后才解锁判定) */
   size_gb?: number | null
@@ -172,6 +183,8 @@ export interface InspectModelPayload {
   model_type?: string | null
   /** 覆盖:权重格式 safetensors|gguf|pytorch|onnx|... */
   model_format?: string | null
+  /** 节点 ID(source=node 必填:探测读取该节点磁盘上的目录;缺省 422) */
+  node_id?: string | null
 }
 
 /** 探测模型源(POST /api/v1/admin/models/inspect,抓文件清单/config,不下载权重) */
@@ -183,9 +196,9 @@ export function inspectModelSource(data: InspectModelPayload): Promise<InspectRe
 export interface CreateModelPayload {
   /** 模型显示名 */
   name: string
-  /** 来源:huggingface | oss | local */
+  /** 来源:huggingface | modelscope | oss | local | node */
   source: string
-  /** 来源地址(HF repo id/URL / OSS 直链 / manager 本地路径) */
+  /** 来源地址(HF/MS repo id/URL / OSS 直链 / manager 本地路径 / 节点上的绝对目录) */
   source_url: string
   /** 版本/commit-hash */
   revision?: string | null
@@ -193,6 +206,10 @@ export interface CreateModelPayload {
   model_type?: string
   /** /inspect 识别结果(前端回显后回传) */
   files?: ModelFiles | null
+  /** 来源凭证(HuggingFace Token / ModelScope Access Token);加密保存且不在响应中返回 */
+  source_auth?: string | null
+  /** 节点 ID(source=node 必填:模型就地绑定该节点,权重不复制) */
+  node_id?: string | null
 }
 
 /** 创建模型(POST /api/v1/admin/models) */
@@ -213,6 +230,25 @@ export interface UpdateModelPayload {
   source?: string
   source_url?: string
   revision?: string | null
+  /** 多 variant 仓变体子路径(显式 null 清空) */
+  source_subpath?: string | null
+  /**
+   * 来源凭证三态:不传=保留原 token;null=清除;字符串=设置新 token(加密入库)。
+   * 前端「令牌」输入为空时不下发该字段,即保留原值。
+   */
+  source_auth?: string | null
+  /** 层数 */
+  num_layers?: number | null
+  /** KV head 数(GQA 下 ≠ attention heads) */
+  num_kv_heads?: number | null
+  /** 每 head 维度 */
+  head_dim?: number | null
+  /** 模型自带上下文上限 */
+  max_context?: number | null
+  /** GGUF 多模态视觉投影器文件(repo 相对路径) */
+  mmproj_file?: string | null
+  /** 模型带自定义代码,部署需 --trust-remote-code */
+  needs_trust_remote_code?: boolean
 }
 
 /** 更新模型(POST /api/v1/admin/models/{model_id}/update) */
@@ -223,4 +259,49 @@ export function updateModel(modelId: number, data: UpdateModelPayload): Promise<
 /** 删除模型(POST /api/v1/admin/models/{model_id}/delete) */
 export function deleteModel(modelId: number): Promise<void> {
   return request({ url: `/admin/models/${modelId}/delete`, method: 'POST' })
+}
+
+/** 模型在某节点上的副本(对应后端模型节点副本项;字段缺失时前端按 -- 展示) */
+export interface ModelNodeCopy {
+  /** 节点 ID */
+  node_id: string
+  /** 节点主机名 */
+  hostname?: string | null
+  /** 节点 IP */
+  ip?: string | null
+  /** 该节点上的模型目录路径 */
+  path?: string | null
+  /** 节点状态:online | offline | maintenance | ...(与模型状态分开展示) */
+  node_status?: string | null
+  /** 模型在该节点上的状态:cached | downloading | verifying | missing | ...(与节点状态分开展示) */
+  model_status?: string | null
+  /** 该节点上的权重大小 GB */
+  size_gb?: number | null
+  /** 最近一次在位校验时间(ISO8601) */
+  last_verified_at?: string | null
+}
+
+/** 模型已下载节点副本列表(GET /api/v1/admin/models/{model_id}/nodes;后端返回数组) */
+export function listModelNodes(
+  modelId: number,
+  signal?: AbortSignal,
+): Promise<ModelNodeCopy[]> {
+  return request({ url: `/admin/models/${modelId}/nodes`, method: 'GET', signal })
+}
+
+/**
+ * 删除模型在某节点上的副本(POST /api/v1/admin/models/{model_id}/nodes/{node_id}/delete)。
+ * delete_files=false(默认)仅移除平台记录、磁盘文件保留;true 删除节点上的模型目录并移除记录。
+ * 该节点仍有部署(含规划中)时 409;节点离线或删除失败 400(记录保留)。
+ */
+export function deleteModelNode(
+  modelId: number,
+  nodeId: string,
+  deleteFiles = false,
+): Promise<void> {
+  return request({
+    url: `/admin/models/${modelId}/nodes/${nodeId}/delete`,
+    method: 'POST',
+    data: { delete_files: deleteFiles },
+  })
 }

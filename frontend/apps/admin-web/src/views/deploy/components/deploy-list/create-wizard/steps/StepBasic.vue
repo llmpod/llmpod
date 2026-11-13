@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { h } from 'vue'
+import { h, type VNodeChild } from 'vue'
+import { NTooltip } from 'naive-ui'
 import { FormCustom, FormInput, FormSelect, useForm } from '@repo/hooks'
+import { buildImageVersionOptions, formatDriver, type ImageVersionOption } from '../imageVersion'
 import { useWizardStore, type WizardFormValues } from '../useStore'
 
 const store = useWizardStore()
@@ -30,6 +32,8 @@ const formApi = useForm<WizardFormValues>({
         loading: store.imageEntriesLoading.value,
         disabled: !effectiveFormEngine.value,
         placeholder: effectiveFormEngine.value ? '留空按后端默认版本' : '请先选择模型与引擎',
+        // 一行一版本:版本号 + 架构标签 + 末尾「驱动要求」(悬浮看各架构驱动下限);下拉项与已选项共用同一渲染
+        renderLabel: (option: ImageVersionOption) => renderVersionLabel(option),
       },
     }),
     FormSelect('目标集群', 'clusterId', store.clusterOptions.value, {
@@ -80,18 +84,87 @@ const effectiveFormEngine = computed(() =>
   params().engine !== 'auto' ? params().engine : store.inspect.value?.recommendation?.engine,
 )
 
-/** 镜像版本下拉选项:按 engine_version 去重(catalog 同版本多 gpu_model/driver 变体合并为一项) */
-const imageVersionOptions = computed<{ label: string; value: string }[]>(() => {
-  const seen = new Map<string, { label: string; value: string }>()
-  for (const entry of store.imageEntries.value) {
-    if (!entry.engine_version || seen.has(entry.engine_version)) continue
-    seen.set(entry.engine_version, {
-      value: entry.engine_version,
-      label: entry.notes ? `${entry.engine_version}(${entry.notes})` : entry.engine_version,
-    })
-  }
-  return [...seen.values()]
-})
+/** 镜像版本下拉项:同名版本的多条 catalog 变体(按 arch/gpu_model/driver 区分)聚合后的一行 */
+const imageVersionOptions = computed(() => buildImageVersionOptions(store.imageEntries.value))
+
+/**
+ * 架构标签配色:nvidia 绿 / cann 橙(与蓝、青明显区分,两种色相互补不易看混)。
+ * 直接消费运行时主题色变量(--n-success-color / --n-warning-color 是 RGB 串,须用 rgb()/rgba() 包裹),
+ * 字取实色、底取 10% 透明,明暗主题与主题色变更都自动跟随。
+ */
+const ARCH_TAG_STYLE: Record<string, { background: string; color: string }> = {
+  nvidia: {
+    background: 'rgba(var(--n-success-color), 0.1)',
+    color: 'rgb(var(--n-success-color))',
+  },
+  cann: {
+    background: 'rgba(var(--n-warning-color), 0.12)',
+    color: 'rgb(var(--n-warning-color))',
+  },
+}
+
+/** 架构标签(VNode):彩色小 tag,文案为 arch 原值 */
+function renderArchTag(arch: string): VNodeChild {
+  const style = ARCH_TAG_STYLE[arch]
+  return h(
+    'span',
+    {
+      key: arch,
+      class: 'shrink-0 text-base leading-[1.6] px-[.6rem] rounded-[.3rem] whitespace-nowrap',
+      style: style
+        ? { backgroundColor: style.background, color: style.color }
+        : { backgroundColor: 'var(--c-fill-4)', color: 'var(--c-secondary)' },
+    },
+    arch,
+  )
+}
+
+/**
+ * 「驱动要求」入口:靠右显示,默认隐藏,仅鼠标悬浮到本选项行时出现(样式见下方全局块)。
+ * 无下划线/虚线,纯文字 + 悬浮浮层(浮层内是按架构分组的驱动下限)。
+ */
+function renderDriverRequirement(option: ImageVersionOption): VNodeChild {
+  const trigger = h('span', { class: 'cursor-help whitespace-nowrap' }, '驱动要求')
+  // 无驱动信息时不渲染入口(不留空位)
+  if (!option.drivers.length) return null
+  return h('span', { class: 'deploy-image-version__driver ml-auto shrink-0' }, [
+    h(
+      NTooltip,
+      { trigger: 'hover', placement: 'right' },
+      {
+        trigger: () => trigger,
+        default: () =>
+          h(
+            'div',
+            { class: 'flex flex-col gap-[.4rem] min-w-[16rem]' },
+            option.drivers.map((row) =>
+              h(
+                'div',
+                {
+                  key: `${row.group}|${row.driver}`,
+                  class: 'flex justify-between gap-[2.4rem] tabular-nums',
+                },
+                [
+                  h('span', { class: 'text-secondary' }, row.group),
+                  h('span', null, formatDriver(row.driver)),
+                ],
+              ),
+            ),
+          ),
+      },
+    ),
+  ])
+}
+
+/** 版本下拉项渲染:版本号 + 架构彩色标签 + 悬浮显示的「驱动要求」;下拉项与已选回显共用 */
+function renderVersionLabel(option: ImageVersionOption): VNodeChild {
+  // w-full:让行撑满选项内容区,舍此 ml-auto 只能把「驱动要求」推到文字宽度处(紧贴 tag)
+  return h('div', { class: 'deploy-image-version flex items-center gap-[.6rem] min-w-0 w-full' }, [
+    h('span', { class: 'shrink-0' }, option.label),
+    ...option.archs.map((arch) => renderArchTag(arch)),
+    renderDriverRequirement(option),
+  ])
+}
 
 /** 平台解析出的镜像:三层解析回显优先,进 Step2 前退回推荐镜像(镜像地址框的自动预填源) */
 const resolvedImage = computed(
@@ -269,5 +342,42 @@ defineExpose({
   width: 8rem;
   text-align: right;
   color: var(--c-secondary);
+}
+</style>
+
+<style>
+/*
+ * 镜像版本下拉:下拉菜单由 naive-ui teleport 到 body,scoped 命中不到,
+ * 故「驱动要求」的显隐用全局块 + 专属 class 前缀(同 deploy-detail/index.vue 的画布样式做法)。
+ *
+ * 显示口径:
+ * - 输入框回显(已选版本,.n-base-selection 内):常驻显示,右侧靠边,方便随时确认该版本的驱动要求;
+ * - 下拉选项行:不常驻,只有鼠标悬浮到该行时才在行右端出现。
+ */
+.deploy-image-version__driver {
+  display: none;
+  color: var(--c-primary);
+  font-size: 1.2rem;
+}
+
+/* 选项内容区默认是 block 且宽度贴合文字,这里撑满整行,「驱动要求」才能真正靠右 */
+.n-base-select-option__content:has(> .deploy-image-version) {
+  width: 100%;
+}
+
+/* 已选回显(输入框内)常驻显示 */
+.n-base-selection .deploy-image-version__driver {
+  display: inline-flex;
+  align-items: center;
+}
+
+/*
+ * 下拉选项行:只有真实鼠标悬浮时才显示。
+ * 不用 --pending:naive-ui 用它记录「鼠标最后停留/键盘高亮」的项且一直保留,
+ * 会让选中过的版本重开下拉后不悬浮也显示。
+ */
+.n-base-select-option:hover > .n-base-select-option__content > .deploy-image-version > .deploy-image-version__driver {
+  display: inline-flex;
+  align-items: center;
 }
 </style>

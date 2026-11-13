@@ -82,6 +82,8 @@ const rows = computed<[string, string, string?, boolean?][]>(() => {
         ],
         ['模型', deploy.modelName],
         ['引擎', deploy.engine],
+        // 镜像地址:自定义镜像或 catalog 按镜像版本解析出的完整 ref;未解析出为 --
+        ['镜像', deploy.image ?? '--', undefined, true],
         ['TP 并行', topo ? `× ${topo.tp}` : '--'],
         ['PP 流水', topo ? `× ${topo.pp}` : '--'],
         ['副本数', topo ? String(topo.replicas) : '--'],

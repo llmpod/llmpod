@@ -3,6 +3,7 @@ import { h } from 'vue'
 import { NTag } from 'naive-ui'
 import {
   FormInput,
+  FormPassword,
   FormSelect,
   message,
   useDialogClose,
@@ -10,6 +11,7 @@ import {
   type UseFormReturn,
 } from '@repo/hooks'
 import {
+  AUTH_SOURCES,
   MODEL_TYPE_OPTIONS,
   QUANTIZATION_OPTIONS,
   useStore,
@@ -40,6 +42,9 @@ const form: UseFormReturn<ModelFormValues> = useForm<ModelFormValues>({
     size_gb: props.initial.size_gb,
     quantization: props.initial.quantization,
     is_moe: props.initial.is_moe,
+    // 令牌三态:留空不下发(保留原 token),填写则覆盖
+    source_auth: '',
+    node_id: props.initial.node_id ?? null,
   }),
   options: () => [
     FormInput('模型名称', 'name', {
@@ -54,6 +59,12 @@ const form: UseFormReturn<ModelFormValues> = useForm<ModelFormValues>({
     }),
     FormSelect('量化方案', 'quantization', QUANTIZATION_OPTIONS, {
       attrs: { placeholder: '未识别' },
+    }),
+    // 访问令牌:仅远程仓库源(HF / ModelScope)有意义;留空表示保持原 token 不变
+    FormPassword('访问令牌', 'source_auth', {
+      visible: computed(() => AUTH_SOURCES.includes(form.params().source)),
+      attrs: { showPasswordOn: 'click', placeholder: '留空则不修改已保存的令牌' },
+      itemProps: { feedback: '加密保存且不会回显;留空即保留原值' },
     }),
   ],
   layout: { labelPlacement: 'top' },

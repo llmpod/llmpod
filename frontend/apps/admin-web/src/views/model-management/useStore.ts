@@ -5,8 +5,11 @@ import {
   createModel,
   updateModel,
   deleteModel,
+  listModelNodes,
+  deleteModelNode,
   type ModelData,
   type ModelFiles,
+  type ModelNodeCopy,
   type ModelSource,
   type ModelType,
   type FeasibilityReport,
@@ -18,6 +21,7 @@ import {
 export type {
   ModelData,
   ModelFiles,
+  ModelNodeCopy,
   ModelSource,
   ModelType,
   FeasibilityReport,
@@ -35,7 +39,7 @@ export interface ModelFormValues {
   name: string
   /** 模型源 */
   source: ModelSource
-  /** 来源地址(HF repo id/URL / OSS 直链) */
+  /** 来源地址(HF/MS repo id/URL / OSS 直链 / 本地路径 / 节点绝对路径) */
   source_url: string
   /** 版本/commit-hash(可选) */
   revision: string
@@ -51,22 +55,41 @@ export interface ModelFormValues {
   quantization?: string | null
   /** 是否 MoE 架构(可选) */
   is_moe?: boolean
+  /** 来源凭证(HF Token / ModelScope Token;私有仓库用,可选) */
+  source_auth?: string
+  /** source=node 时绑定的节点 ID(就地引用,权重不复制) */
+  node_id?: string | null
 }
 
-/** 模型源选项:local 支持「本机路径直填」与「浏览器分片上传」两种获取方式(向导内二级选择) */
+/** 模型源选项:local 支持「本机路径直填」「浏览器分片上传」「Node上传(节点盘就地引用)」三种获取方式(向导内二级选择) */
 export const SOURCE_OPTIONS: { label: string; value: ModelSource; disabled?: boolean }[] = [
   { label: 'HuggingFace', value: 'huggingface' },
+  { label: 'ModelScope', value: 'modelscope' },
   // 暂时隐藏 OSS 源(仅从选项中移除;类型/占位/文案映射保留,存量 oss 模型展示不受影响)
   // { label: 'OSS', value: 'oss' },
   { label: '本地文件', value: 'local' },
 ]
 
 /** 来源地址输入占位:按模型源区分(local 对应「本机路径」模式的输入) */
-export const SOURCE_URL_PLACEHOLDER: Record<ModelSource, string> = {
+export const SOURCE_URL_PLACEHOLDER: Record<string, string> = {
   huggingface: 'HF repo id 或 URL,如 Qwen/Qwen2.5-7B-Instruct',
+  modelscope: 'ModelScope repo id 或 URL,如 Qwen/Qwen2.5-0.5B-Instruct',
   oss: 'OSS 文件直链,如 https://oss.example.com/models/xxx.safetensors',
   local: 'manager 本机模型目录路径,如 /data/models/Qwen2.5-7B-Instruct',
+  node: '节点上的模型目录绝对路径,如 /data/models/Qwen2.5-7B-Instruct',
 }
+
+/** 各来源的默认版本:HF 为 main,ModelScope 为 master;其余源不使用 revision */
+export const DEFAULT_REVISION: Partial<Record<ModelSource, string>> = {
+  huggingface: 'main',
+  modelscope: 'master',
+}
+
+/** 支持版本(revision)输入的来源(revision 仅远程仓库有意义) */
+export const REVISION_SOURCES: ModelSource[] = ['huggingface', 'modelscope']
+
+/** 支持来源凭证(token)的来源:私有仓库走 source_auth 加密通道 */
+export const AUTH_SOURCES: ModelSource[] = ['huggingface', 'modelscope']
 
 /** 模型类别选项 */
 export const MODEL_TYPE_OPTIONS: { label: string; value: string }[] = [
@@ -99,8 +122,50 @@ export const QUANTIZATION_OPTIONS: { label: string; value: string }[] = [
 /** 模型源文案映射(供表格渲染) */
 export const SOURCE_LABEL: Record<string, string> = {
   huggingface: 'HuggingFace',
+  modelscope: 'ModelScope',
   oss: 'OSS',
   local: '本地',
+  node: '节点',
+}
+
+/** 模型在节点上的状态文案(与节点状态分开展示;未知值原样) */
+export const MODEL_NODE_STATUS_LABEL: Record<string, string> = {
+  cached: '已缓存',
+  ready: '就绪',
+  downloading: '下载中',
+  verifying: '校验中',
+  missing: '缺失',
+  corrupted: '异常',
+  failed: '失败',
+}
+
+/** 节点状态文案(模型副本列表用;与 node-list 同口径) */
+export const NODE_STATUS_LABEL: Record<string, string> = {
+  online: '在线',
+  offline: '离线',
+  maintenance: '维护',
+  busy: '繁忙',
+  drained: '已排空',
+}
+
+/** 节点状态 → 标签配色(模型副本列表的「节点状态」列) */
+export const NODE_STATUS_TAG: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
+  online: 'success',
+  busy: 'warning',
+  maintenance: 'warning',
+  offline: 'error',
+  drained: 'default',
+}
+
+/** 模型副本状态 → 标签配色(「模型状态」列;与节点状态各自独立判定) */
+export const MODEL_NODE_STATUS_TAG: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
+  cached: 'success',
+  ready: 'success',
+  downloading: 'warning',
+  verifying: 'warning',
+  missing: 'default',
+  corrupted: 'error',
+  failed: 'error',
 }
 
 /** 类别标签配色:llm 紫 / embedding 蓝 / rerank 青 走自定义色,其余默认 */
@@ -166,6 +231,10 @@ export function useStore() {
       revision: model.revision || null,
       model_type: model.model_type,
       files,
+      // 凭证仅在填写时下发(空串不下发,避免把已有 token 覆盖成空)
+      ...(model.source_auth ? { source_auth: model.source_auth } : {}),
+      // node 源必须带节点 ID(后端据此校验目录并绑定),其它源不下发
+      ...(model.source === 'node' && model.node_id ? { node_id: model.node_id } : {}),
     })
     notify()
     return created
@@ -184,6 +253,8 @@ export function useStore() {
       size_gb: model.size_gb ?? null,
       quantization: model.quantization ?? null,
       is_moe: model.is_moe ?? false,
+      // 令牌三态:填写才下发(=设置新 token);留空不下发(=保留原 token)
+      ...(model.source_auth ? { source_auth: model.source_auth } : {}),
     })
     notify()
   }
@@ -202,12 +273,31 @@ export function useStore() {
     notify()
   }
 
+  /** 已下载节点副本列表(GET /models/{id}/nodes;按节点展示路径/模型状态/大小/最近校验时间) */
+  const nodes = (modelId: number, signal?: AbortSignal): Promise<ModelNodeCopy[]> =>
+    listModelNodes(modelId, signal)
+
+  /**
+   * 删除某节点上的模型副本:deleteFiles=false 仅移除记录(磁盘保留),true 连磁盘文件一起删。
+   * 成功后 notify 联动列表刷新(已下载节点数同步变化)。
+   */
+  const removeNodeCopy = async (
+    modelId: number,
+    nodeId: string,
+    deleteFiles: boolean,
+  ): Promise<void> => {
+    await deleteModelNode(modelId, nodeId, deleteFiles)
+    notify()
+  }
+
   return {
     request,
     inspect,
     create,
     update,
     remove,
+    nodes,
+    removeNodeCopy,
     subscribe,
   }
 }

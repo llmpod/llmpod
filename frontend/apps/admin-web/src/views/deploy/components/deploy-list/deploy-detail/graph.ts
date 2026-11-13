@@ -40,6 +40,8 @@ export interface DeploymentNodeData {
   name: string
   modelName: string
   engine: string
+  /** 实际使用镜像地址(自定义 spec.image 或 catalog 按 image_tag 解析);未解析出为 null */
+  image: string | null
   statusLabel: string
   statusDot: string
   /** creating 期间的编排子态文案;其余为 null */
@@ -155,6 +157,8 @@ export interface BuildDeployGraphInput {
   topology: ClusterTopology | null
   /** 副本层组图数据(详情 replicas;缺层回退 instances 均分启发式) */
   replicas?: DeploymentReplica[]
+  /** 实际使用镜像(部署详情「镜像」行;未解析出为 null) */
+  image?: string | null
 }
 
 export interface BuiltDeployGraph {
@@ -316,7 +320,7 @@ export function buildReplicaRows(
 
 /** 由部署详情 + 节点摘要组装 Vue Flow 节点与连线(纯函数) */
 export function buildDeployGraph(input: BuildDeployGraphInput): BuiltDeployGraph {
-  const { deployment, instances, nodeSummary, modelName, topology, replicas } = input
+  const { deployment, instances, nodeSummary, modelName, topology, replicas, image } = input
   const flowNodes: Node[] = []
   const flowEdges: Edge[] = []
   /** 推理链路动画总门控:仅部署 running 时流动(与 node-pool 口径一致) */
@@ -337,6 +341,7 @@ export function buildDeployGraph(input: BuildDeployGraphInput): BuiltDeployGraph
     name: deployment.name,
     modelName,
     engine: deployment.engine,
+    image: image ?? null,
     statusLabel: statusConf.label,
     statusDot: tagTypeDot(statusConf.type),
     phaseLabel:

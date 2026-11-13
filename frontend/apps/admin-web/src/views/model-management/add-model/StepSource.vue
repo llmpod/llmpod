@@ -1,16 +1,32 @@
 <script setup lang="ts">
 import { CloseOutline, CloudUploadOutline, DocumentOutline } from '@vicons/ionicons5'
 import type { UploadFileInfo, UploadInst } from 'naive-ui'
-import { FormInput, FormRadioButtonGroup, useForm, type UseFormReturn } from '@repo/hooks'
-import { SOURCE_OPTIONS, SOURCE_URL_PLACEHOLDER, type ModelFiles } from '../useStore'
+import {
+  FormInput,
+  FormPassword,
+  FormRadioButtonGroup,
+  FormSelect,
+  useForm,
+  type UseFormReturn,
+} from '@repo/hooks'
+import {
+  AUTH_SOURCES,
+  DEFAULT_REVISION,
+  REVISION_SOURCES,
+  SOURCE_OPTIONS,
+  SOURCE_URL_PLACEHOLDER,
+  type ModelFiles,
+} from '../useStore'
 import type { ManifestWarning, ManifestWarningSeverity } from '@/api/model'
+import { listNodes, type NodeData } from '@/api/node'
 import type { LocalMode, SourceFormValues } from './useWizard'
 import type { UploadState } from './useUpload'
 
-/** 本地模型获取方式选项(local 源二级选择):path=manager 本机已有路径;upload=浏览器选文件夹分片上传 */
+/** 本地模型获取方式选项(local 源二级选择):path=manager 本机已有路径;upload=浏览器选文件夹分片上传;node=引用节点盘目录 */
 const LOCAL_MODE_OPTIONS: { label: string; value: LocalMode }[] = [
   { label: '本机路径', value: 'path' },
   { label: '上传文件', value: 'upload' },
+  { label: 'Node上传', value: 'node' },
 ]
 
 const props = defineProps<{
@@ -33,36 +49,113 @@ const form: UseFormReturn<SourceFormValues> = useForm<SourceFormValues>({
   data: () => ({
     source: 'huggingface',
     source_url: '',
-    revision: 'main',
+    revision: DEFAULT_REVISION.huggingface ?? 'main',
     local_mode: 'path',
+    source_auth: '',
+    node_id: null,
   }),
   options: () => [
     FormRadioButtonGroup('模型源', 'source', SOURCE_OPTIONS, { disabled: uploading }),
     FormRadioButtonGroup('获取方式', 'local_mode', LOCAL_MODE_OPTIONS, {
       disabled: uploading,
-      // 仅 local 源需要区分「本机路径 / 上传文件」
+      // 仅 local 源需要区分「本机路径 / 上传文件 / Node上传」
       visible: computed(() => form.params().source === 'local'),
+    }),
+    // 节点下拉:仅「本地文件 + Node上传」时展示;只列在线节点(离线节点无法读目录)
+    FormSelect('节点', 'node_id', nodeOptions.value, {
+      disabled: uploading,
+      visible: computed(
+        () => form.params().source === 'local' && form.params().local_mode === 'node',
+      ),
+      rules: [{ required: true, type: 'string', message: '请选择节点', trigger: ['blur', 'change'] }],
+      attrs: {
+        clearable: false,
+        loading: nodesLoading.value,
+        placeholder: nodesLoading.value ? '加载在线节点…' : '选择一台在线节点',
+      },
     }),
     FormInput('来源地址', 'source_url', {
       disabled: uploading,
       rules: [{ required: true, message: '请输入来源地址', trigger: 'blur' }],
       // local+上传模式改为文件选择,来源地址由上传完成后的 staged 路径回填,不展示输入框
       visible: computed(
-        () => form.params().source !== 'local' || form.params().local_mode === 'path',
+        () => form.params().source !== 'local' || form.params().local_mode !== 'upload',
       ),
-      attrs: { placeholder: SOURCE_URL_PLACEHOLDER[form.params().source] },
+      attrs: {
+        placeholder:
+          form.params().source === 'local' && form.params().local_mode === 'node'
+            ? SOURCE_URL_PLACEHOLDER.node
+            : SOURCE_URL_PLACEHOLDER[form.params().source],
+      },
     }),
     FormInput('版本(revision)', 'revision', {
       disabled: uploading,
-      // revision 仅 HF 源有意义
-      visible: computed(() => form.params().source === 'huggingface'),
-      attrs: { placeholder: 'commit-hash,默认 main' },
+      // revision 仅远程仓库源(HF / ModelScope)有意义
+      visible: computed(() => REVISION_SOURCES.includes(form.params().source)),
+      attrs: {
+        placeholder: `commit-hash,默认 ${DEFAULT_REVISION[form.params().source] ?? 'main'}`,
+      },
+      // 留默认值时不下发,由后端钉到具体 commit(ModelScope 钉 LatestCommitter)
+      itemProps: { feedback: '留空或保持默认则提交后由后端钉到具体版本' },
+    }),
+    FormPassword('访问令牌', 'source_auth', {
+      disabled: uploading,
+      // 私有仓库凭证通道:与 HF 一致,创建/更新时传 token,节点下载时带鉴权
+      visible: computed(() => AUTH_SOURCES.includes(form.params().source)),
+      attrs: { showPasswordOn: 'click', placeholder: '可选,私有仓库需填写' },
+      itemProps: { feedback: '仅用于私有仓库鉴权,加密保存且不会回显' },
     }),
   ],
   layout: { labelPlacement: 'top' },
 })
 
 const { LmForm, validate, params } = form
+
+/** 在线节点列表(仅「Node上传」需要):加载失败静默,下拉为空时由占位提示 */
+const onlineNodes = ref<NodeData[]>([])
+const nodesLoading = ref(false)
+let nodesLoaded = false
+
+/** 节点下拉选项:label 形如「gpu-a (10.0.0.11)」,value 为节点 ID */
+const nodeOptions = computed(() =>
+  onlineNodes.value.map((node) => ({
+    label: `${node.hostname} (${node.ip})`,
+    value: node.id,
+  })),
+)
+
+/** 拉取在线节点(仅首次进入 Node上传 时请求一次;失败可再触发重试) */
+async function ensureNodesLoaded() {
+  if (nodesLoaded || nodesLoading.value) return
+  nodesLoading.value = true
+  try {
+    const pageData = await listNodes({ status: 'online', page: 1, page_size: 100 })
+    onlineNodes.value = pageData.items
+    nodesLoaded = true
+  } catch {
+    // 接口异常已由 HTTP 层统一提示,保留空态供重试
+  } finally {
+    nodesLoading.value = false
+  }
+}
+
+// 切到「Node上传」才拉节点列表,避免其它来源无谓请求
+watch(
+  () => [params().source, params().local_mode] as const,
+  ([source, localMode]) => {
+    if (source === 'local' && localMode === 'node') void ensureNodesLoaded()
+  },
+  { immediate: true },
+)
+
+// 切换来源时把版本号重置为该源默认值(revision 语义按源不同:HF main / MS master)
+watch(
+  () => params().source,
+  (source, prevSource) => {
+    if (source === prevSource) return
+    params().revision = DEFAULT_REVISION[source] ?? ''
+  },
+)
 
 /** 已选本地文件(n-upload 受控列表;default-upload=false 仅收集不上传,点「探测模型源」时才上传) */
 const fileList = ref<UploadFileInfo[]>([])

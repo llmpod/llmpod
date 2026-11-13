@@ -2,10 +2,12 @@ import { useConfirm, useDialog, message, copyToClipboard } from '@repo/hooks'
 import type { Edge, Node } from '@vue-flow/core'
 import { useNodesInitialized, useVueFlow } from '@vue-flow/core'
 import { normalizedTopology, toReplicaSeq, type ModelEndpoint } from '@/api/deployment'
+import type { ImageEntryOut } from '@/api/inference-image'
 import {
   DEPLOY_CREATE_PHASES,
   DEPLOY_PHASE_LABEL,
   deployStatusMap,
+  resolveDeployImage,
   useStore as useListStore,
   type DeployRecord,
 } from '../useStore'
@@ -33,7 +35,7 @@ import { pollIntervalMs, useStore } from './useStore'
 export function useController(record: DeployRecord, onExit: () => void) {
   const { detail, nodeSummary, topology, loading, load, nodeAssets, assetsLoading, loadNodeAssets } =
     useStore(record.deployment_id)
-  const { modelName, stop, remove, subscribe } = useListStore()
+  const { modelName, stop, remove, subscribe, imageEntriesOf } = useListStore()
 
   // 订阅列表 store 写操作变更(详情抽屉等外部入口的停止/启动经 notify 联动):
   // 立即手动刷一轮同步拓扑视图状态,不等下一轮轮询
@@ -42,6 +44,22 @@ export function useController(record: DeployRecord, onExit: () => void) {
 
   /** 部署记录:详情返回后用最新数据(轮询/停止后状态会推进),否则用列表行快照 */
   const deployment = computed(() => detail.value?.deployment ?? record)
+
+  /**
+   * 实际使用镜像(详情面板/抽屉「镜像」行):
+   * spec.image(自定义)优先;否则按引擎加载镜像目录、用 spec.image_tag 反查实际 ref。
+   * 目录按引擎缓存,失败静默 → 该行回退 --,不影响详情其余内容。
+   */
+  const imageEntries = shallowRef<ImageEntryOut[]>([])
+  const deployImage = computed(() => resolveDeployImage(deployment.value.spec, imageEntries.value))
+  // 引擎变化才重拉目录(轮询期间引擎不变 → 命中缓存,不重复请求)
+  watch(
+    () => deployment.value.engine,
+    async (engine) => {
+      imageEntries.value = await imageEntriesOf(engine)
+    },
+    { immediate: true },
+  )
 
   /** 状态标签配置(launching 等历史值按 creating 渲染;未知值原样展示) */
   const statusConf = computed(() => {
@@ -187,6 +205,7 @@ export function useController(record: DeployRecord, onExit: () => void) {
         modelName: modelName(deployment.value.model_id),
         topology: topology.value,
         replicas: detail.value?.replicas,
+        image: deployImage.value,
       })
       nodes.value = graph.nodes
       edges.value = graph.edges
