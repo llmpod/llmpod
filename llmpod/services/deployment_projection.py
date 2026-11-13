@@ -12,29 +12,30 @@
 
 投影规则：
 
-- 引擎 = 全部分片 READY ⇔ ready；任一分片死或宿主节点离线 ⇒ down；全 PENDING ⇒
-  provisioning；其余（启动中/部分就绪）⇒ starting。
+- 引擎 = 全部分片 READY ⇔ ready；任一分片死 ⇒ down；全 PENDING ⇒ provisioning；
+  其余（启动中/部分就绪）⇒ starting。
 - 副本 = 份内全部引擎 ready ⇔ serving；任一引擎 down ⇒ down（份内配对作废，
   整份判死）；其余 provisioning。
 - 端点 health = 所属副本 serving ⇔ healthy，否则 down（proxy 快照过滤摘/回流量，
   API 网关零改动）。
-- 部署健康灯 = 全副本 serving ⇔ healthy；任一副本 down/provisioning ⇒ degraded
-  （仅 running 期维护；crash 计数不在投影范围——那是崩溃事件计数，无法从当前
-  状态反推历史）。
+- 部署健康灯 = 全副本 serving ⇔ healthy；任一副本 down/provisioning 或宿主节点离线
+  ⇒ degraded（仅 running 期维护；crash 计数不在投影范围——那是崩溃事件计数，无法
+  从当前状态反推历史）。
 
-节点离线感知：分片宿主节点 OFFLINE ⇒ 该分片按死投影（引擎 down → 端点摘流 →
-健康灯降级）。容器行（权威依据）不动——自愈触发集不因节点离线扩大，节点回线
-（register_node）后重算即恢复。离线集由 :func:`project_upwards` 每次自查
-（OFFLINE 节点集），与容器状态迁移后的常规重算路径同一口径——离线口径不依赖
-翻转写点的一次性事件。此外 ``mark_node_offline`` / ``register_node`` 翻完
-Node.status 后经 :func:`reproject_after_node_transition` 就地触发受影响部署的
-重算（实时性）；manager 重启恢复不额外触发——重启窗口节点会快速重连，全量摘流
-反而制造流量抖动，且窗口一过任何一次常规重算都会收敛到正确口径。
+**节点离线不参与引擎/副本/端点判定**：node agent 的 WebSocket 与引擎进程是两回事
+（网关直连引擎端口，不经 node agent），把通道断开当引擎死亡会误摘流——一次计划的
+节点升级就能造成整条路由不可用。引擎是否还能服务，只认两条真凭据：
+
+1. 容器上报的权威状态（``Instance.status``，CRASHED/FAILED/STOPPED 等）；
+2. 网关的真实请求结果（连接失败/超时 → 选择器熔断，见 proxyserver 的
+   ``EndpointSelector.report_failure``）——「请求真的失败了」才算死。
+
+因此节点离线只降级部署健康灯（运维信号，不影响流量）；节点回线
+（``register_node``）经 :func:`reproject_after_node_transition` 就地重算这盏灯。
 """
 
 from __future__ import annotations
 
-from collections.abc import Collection
 import logging
 
 from sqlalchemy import select
@@ -59,13 +60,13 @@ from llmpod.models.node import Node
 log = logging.getLogger("llmpod.services.deployment_projection")
 
 
-def engine_status_from_shards(shards: list[Instance], offline_nodes: Collection[str] = frozenset()) -> str:
+def engine_status_from_shards(shards: list[Instance]) -> str:
     """由引擎的全部容器分片状态重算引擎投影状态（纯函数，规则见模块 docstring）。
 
-    ``offline_nodes``：当前 OFFLINE 的节点 id 集——宿主在其中的分片按死投影
-    （容器行不动，见模块 docstring「节点离线感知」）。测试注入用。
+    只看容器上报的权威状态；宿主节点是否在线不参与——节点通道断开不代表引擎进程
+    死了（见模块 docstring「节点离线不参与引擎/副本/端点判定」）。
     """
-    if any(s.assigned_node in offline_nodes or s.status in ENGINE_SHARD_DEAD_STATUSES for s in shards):
+    if any(s.status in ENGINE_SHARD_DEAD_STATUSES for s in shards):
         return EngineStatus.DOWN
     if shards and all(s.status == InstanceStatus.READY for s in shards):
         return EngineStatus.READY
@@ -96,8 +97,9 @@ def deployment_health_from_replicas(replicas: list[ModelDeploymentReplica]) -> s
 async def project_upwards(db: AsyncSession, deployment_id: str) -> None:
     """重算某部署的四层投影（容器行只读——权威来源不动）。
 
-    节点离线集每次自查（当前 OFFLINE 节点集）：离线口径不依赖翻转写点的
-    一次性事件，任何调用路径（容器上报/扩缩/状态翻转触发）同一收敛结果。
+    节点离线集每次自查（当前 OFFLINE 节点集）：它只决定健康灯是否降级，不参与引擎/
+    副本/端点判定。口径不依赖翻转写点的一次性事件，任何调用路径（容器上报/扩缩/
+    状态翻转触发）同一收敛结果。
 
     幂等：值不变不写库（FakeSession 友好，也避免无谓 updated_at 抖动）。部署无
     副本行（挂载前的旧数据）时只跳过引擎/副本级，端点/健康灯按 down/degraded 收敛
@@ -106,6 +108,7 @@ async def project_upwards(db: AsyncSession, deployment_id: str) -> None:
     dep = await db.get(ModelDeployment, deployment_id)
     if dep is None:
         return
+    # 节点离线集：只用于部署健康灯（运维信号），不参与引擎/副本/端点判定
     offline_nodes = set((await db.execute(select(Node.id).where(Node.status == NodeStatus.OFFLINE))).scalars())
     replica_rows = await replica_rows_of(db, deployment_id)
     if not replica_rows:
@@ -128,9 +131,9 @@ async def project_upwards(db: AsyncSession, deployment_id: str) -> None:
     grouped = shards_by_engine(shard_rows)
     engines_by_rep = engines_by_replica(engine_rows)
 
-    # 引擎投影
+    # 引擎投影（只认容器上报状态；宿主节点离线不参与——见模块 docstring）
     for e in engine_rows:
-        target = engine_status_from_shards(grouped.get(e.instance_id, []), offline_nodes=offline_nodes)
+        target = engine_status_from_shards(grouped.get(e.instance_id, []))
         if e.status != target:
             e.status = target
 
@@ -153,9 +156,12 @@ async def project_upwards(db: AsyncSession, deployment_id: str) -> None:
         if ep.health_status != target:
             ep.health_status = target
 
-    # 部署健康灯：全副本 serving ⇔ healthy（仅 running 期维护）
+    # 部署健康灯：全副本 serving ⇔ healthy；有分片宿主节点离线也降级（仅 running 期维护）。
+    # 离线只影响这盏灯（运维信号），不影响端点 health——见模块 docstring。
     if dep.status == DeploymentStatus.RUNNING:
         target_health = deployment_health_from_replicas(replica_rows)
+        if any(s.assigned_node in offline_nodes for s in shard_rows):
+            target_health = HealthStatus.DEGRADED
         if dep.health_status != target_health:
             dep.health_status = target_health
 
@@ -165,7 +171,8 @@ async def project_upwards(db: AsyncSession, deployment_id: str) -> None:
 async def reproject_after_node_transition(db: AsyncSession, node_id: str) -> None:
     """节点上下线后重算其上分片所属部署的投影（实时触发；口径自查见 project_upwards）。
 
-    由 ``mark_node_offline`` / ``register_node`` 在翻完 Node.status 后就地调用。
+    由 ``mark_node_offline`` / ``register_node`` 在翻完 Node.status 后就地调用。节点
+    状态只影响部署健康灯（运维信号），不影响端点是否摘流——见模块 docstring。
     单部署重算失败只告警不中断——翻转写点（on_close / on_hello）不能因投影重算
     挂掉而回滚节点注册本身。
     """

@@ -260,23 +260,23 @@ class TestProjectionChain:
         assert dep.health_status == "degraded"
 
 
-# ---- 节点离线感知投影 ----
+# ---- 节点离线只降级健康灯 ----
 
 
 def _mk_node(session, node_id: str, *, status: str):
     return session.preload(Node(id=node_id, cluster_id=1, hostname=node_id, ip="0.0.0.0", status=status))
 
 
-class TestNodeOfflineAwareProjection:
-    """节点离线感知：宿主节点离线的分片按不可服务投影——引擎/副本判死、端点摘流、
-    健康灯降级；节点回线（register_node）即恢复。容器行（权威依据）不动，
-    自愈触发集（Instance.status）不因此扩大。
+class TestNodeOfflineOnlyDegradesHealthLamp:
+    """节点离线的边界：只降级部署健康灯（运维信号），不动引擎/副本/端点。
 
-    触发点在状态翻转写点上：mark_node_offline / register_node 翻完 Node.status
-    后就地重算（reproject_after_node_transition），bootstrap 回调零改动。
+    node agent 的 WS 通道与引擎进程是两回事，网关直连引擎端口不经 node agent。
+    把通道断开当引擎死亡会误摘流——计划内的节点升级就能让整条路由不可用（实测
+    升级窗口 6 秒全量 503，而引擎容器 restarts=0）。引擎死活只认两条真凭据：
+    容器上报的权威状态、网关真实请求失败（选择器熔断）。
     """
 
-    async def test_mark_node_offline_reprojects_to_down(self):
+    async def test_mark_node_offline_keeps_endpoint_serving(self):
         session = FakeSession()
         dep, rep, eng, shards, ep = _mk_stack(session)
         for s in shards:
@@ -285,21 +285,22 @@ class TestNodeOfflineAwareProjection:
 
         await mark_node_offline("n1", session)
 
-        assert eng.status == "down"
-        assert rep.status == "down"
-        assert ep.health_status == "down"
+        # 端点继续接流量：容器上报仍是 READY，网关到引擎的链路没断
+        assert eng.status == "ready"
+        assert rep.status == "serving"
+        assert ep.health_status == "healthy"
+        # 健康灯仍降级：运维需要看到这台机器失联了
         assert dep.health_status == "degraded"
-        # 权威依据不动：分片容器态维持 READY（节点回来 monitor 首扫再对真实死容器收敛）
         assert all(s.status == "READY" for s in shards)
 
-    async def test_register_node_restores_projection(self):
+    async def test_register_node_restores_health_lamp(self):
         session = FakeSession()
         dep, rep, eng, shards, ep = _mk_stack(session)
         for s in shards:
             s.assigned_node = "n1"
         _mk_node(session, "n1", status="online")
         await mark_node_offline("n1", session)
-        assert ep.health_status == "down"
+        assert dep.health_status == "degraded"
 
         await register_node("n1", 1, NodeReport(hostname="n1"), session)
 
@@ -309,8 +310,8 @@ class TestNodeOfflineAwareProjection:
         assert dep.health_status == "healthy"
         assert all(s.status == "READY" for s in shards)
 
-    async def test_offline_node_only_degrades_own_replica(self):
-        """跨节点双副本：仅离线节点上的副本判死摘流，另一副本继续 serving。"""
+    async def test_offline_node_keeps_both_replicas_serving(self):
+        """跨节点双副本：一台离线，两份端点都继续接流量（容器状态才是判据）。"""
         session = FakeSession()
         dep = session.preload(
             ModelDeployment(
@@ -376,31 +377,31 @@ class TestNodeOfflineAwareProjection:
         await mark_node_offline("n-b", session)
 
         assert rows["a"][0].status == "serving"
-        assert rows["a"][2].health_status == "healthy"  # 幸存副本端点仍在流
-        assert rows["b"][0].status == "down"
-        assert rows["b"][2].health_status == "down"
-        assert dep.health_status == "degraded"
+        assert rows["a"][2].health_status == "healthy"
+        assert rows["b"][0].status == "serving"  # 容器仍 READY，照样接流量
+        assert rows["b"][2].health_status == "healthy"
+        assert dep.health_status == "degraded"  # 但有台机器失联，灯要红
 
-    async def test_regular_recalc_keeps_offline_down(self):
-        """常规重算不洗白离线：摘流后任意普通 project_upwards（容器上报/扩缩等
-        有机触发路径）仍按当前 OFFLINE 节点集收敛——离线口径不依赖翻转写点的
-        一次性事件状态，每次重算自查。"""
+    async def test_regular_recalc_keeps_endpoint_serving(self):
+        """常规重算同样不因节点离线摘流：任何调用路径同一口径。"""
         session = FakeSession()
         dep, rep, eng, shards, ep = _mk_stack(session)
         for s in shards:
             s.assigned_node = "n1"
         _mk_node(session, "n1", status="online")
         await mark_node_offline("n1", session)
-        assert ep.health_status == "down"
 
         await deployment_projection.project_upwards(session, dep.deployment_id)
 
-        assert eng.status == "down"
-        assert ep.health_status == "down"
+        assert eng.status == "ready"
+        assert ep.health_status == "healthy"
         assert dep.health_status == "degraded"
 
-    async def test_engine_spanning_nodes_down_when_one_offline(self):
-        """多机引擎（head@n-a + worker@n-b）任一节点离线 ⇒ 整引擎判死。"""
+    async def test_engine_spanning_nodes_stays_ready_when_one_offline(self):
+        """多机引擎（head@n-a + worker@n-b）一台节点离线：引擎仍 ready。
+
+        真实死掉时由网关的真实请求失败熔断，不靠节点通道状态推断。
+        """
         session = FakeSession()
         dep, rep, eng, shards, ep = _mk_stack(session, shard_statuses=("READY", "READY"))
         shards[0].assigned_node = "n-a"
@@ -409,6 +410,21 @@ class TestNodeOfflineAwareProjection:
         _mk_node(session, "n-b", status="online")
 
         await mark_node_offline("n-b", session)
+
+        assert eng.status == "ready"
+        assert rep.status == "serving"
+        assert ep.health_status == "healthy"
+        assert dep.health_status == "degraded"
+
+    async def test_container_crash_still_pulls_endpoint(self):
+        """容器真的崩了（节点上报 CRASHED）→ 引擎判死 → 端点摘流。真实凭据照旧生效。"""
+        session = FakeSession()
+        dep, rep, eng, shards, ep = _mk_stack(session, shard_statuses=("CRASHED",))
+        for s in shards:
+            s.assigned_node = "n1"
+        _mk_node(session, "n1", status="online")
+
+        await deployment_projection.project_upwards(session, dep.deployment_id)
 
         assert eng.status == "down"
         assert rep.status == "down"

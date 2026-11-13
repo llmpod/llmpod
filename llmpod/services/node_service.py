@@ -140,8 +140,8 @@ async def register_node(
 
     await db.flush()
 
-    # 回线恢复面：节点重新在线 ⇒ 其上分片按可服务重算投影（离线期间被摘流的
-    # 端点回流）。与 mark_node_offline 的重算对称。
+    # 回线恢复面：重算该节点上分片所属部署的投影（健康灯按当前容器状态与节点在
+    # 线情况重新落定）。与 mark_node_offline 的重算对称。
     await reproject_after_node_transition(db, node_id)
     return Registration(node_id=node_id, is_first=is_first)
 
@@ -255,8 +255,10 @@ async def mark_node_offline(node_id: str, db: AsyncSession):
 
     await db.flush()
 
-    # 离线感知投影：该节点宿主的部署按不可服务重算（引擎/副本判死、端点摘流、
-    # 健康灯降级）。容器行（权威依据）不动——自愈触发集不因此扩大，节点回线重算即恢复。
+    # 重算投影：节点状态只驱动部署健康灯降级（运维信号）。端点是否摘流不跟节点
+    # 通道走——node agent 的 WS 与引擎进程是两回事，网关直连引擎端口，误摘流会让
+    # 一次计划内的节点升级造成整条路由不可用。引擎死活只认容器上报状态与网关真实
+    # 请求失败（选择器熔断），见 deployment_projection 模块 docstring。
     await reproject_after_node_transition(db, node_id)
 
 

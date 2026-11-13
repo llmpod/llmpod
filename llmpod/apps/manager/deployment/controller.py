@@ -166,12 +166,12 @@ class DeploymentController:
         #
         # TODO(探测健康)：当前对「部署是否健康」是**推论**而非**探测**——常规信号是
         # Instance.status ∈ RUNTIME_ABNORMAL（由 Node monitor 容器 inspect 上报 CRASHED
-        # 驱动）；node 掉线时 monitor 无法上报，但状态翻转写点会把其宿主分片按死投影
-        # （端点摘流、健康灯降级，见 deployment_projection 节点离线感知），只是实例行
-        # 仍 READY、不会进本自愈循环——部署保持 running 由用户决定去留，节点永久离线
-        # 时 stop/delete 收敛。未来应加端点级主动探测——周期对 ModelEndpoint
-        # 逐行 HTTP GET api_base/health（权威清单在端点表，不依赖部署单值 api_endpoint
-        # 代表地址），探测失败同样进入本恢复循环。
+        # 驱动）；node 掉线时 monitor 无法上报，投影只把健康灯降级（运维信号，端点
+        # 继续接流量——通道断开不等于引擎死了），实例行仍 READY、不会进本自愈循环——
+        # 部署保持 running 由用户决定去留，节点永久离线时 stop/delete 收敛。未来应加
+        # 端点级主动探测——周期对 ModelEndpoint 逐行 HTTP GET api_base/health（权威
+        # 清单在端点表，不依赖部署单值 api_endpoint 代表地址），探测失败同样进入本
+        # 恢复循环。
         for did in runtime_dids - self._active.keys():
             self._launch(did, "runtime", reconciler.reconcile_runtime_instances(did))
 
