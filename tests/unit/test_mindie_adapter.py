@@ -14,6 +14,11 @@ import shlex
 import pytest
 
 from llmpod.apps.manager.deployment import image_catalog
+from llmpod.apps.manager.deployment.command import (
+    command_placeholder_names,
+    render_command_template,
+    validate_command_template,
+)
 from llmpod.apps.manager.deployment.engine import get_adapter, registered_engines
 from llmpod.apps.manager.deployment.engine.mindie import MindIEAdapter
 from llmpod.apps.manager.deployment.schemas import EngineConfig, InstanceSpec, Topology
@@ -202,6 +207,81 @@ class TestAssembleArgs:
         )
         assert "--config-file" not in args and "/evil.json" not in args
         assert "--ok" in args
+
+
+class TestCommandMode:
+    """完整启动命令模式：模板可回传、经镜像入口执行、渲染回真实实例后与自动生成等价。"""
+
+    def _inst(self, **kw) -> InstanceSpec:
+        base = {
+            "model_path": "/data/models/qwen2-5-1-5b",
+            "served_model_name": "qwen",
+            "gpu_arch": "cann",
+            "port": 18234,
+            "tp": 2,
+            "pp": 1,
+            "nnodes": 1,
+            "assigned_gpus": [0, 1],
+        }
+        base.update(kw)
+        return InstanceSpec(**base)
+
+    def _entry(self):
+        return image_catalog.ImageEntry(id="t", engine="mindie", arch="cann", image="x")
+
+    def test_template_has_all_placeholders_and_validates(self, adapter):
+        inst = self._inst()
+        tpl = adapter.command_template(adapter.assemble_args(inst, Topology(tp=2), self._entry(), {}), inst)
+        names = command_placeholder_names(tpl)
+        assert {"port", "management_port", "metrics_port", "device_ids"} <= set(names)
+        assert "{model_path}" in tpl and "{model_path_json}" in tpl
+        assert "{served_model_name_json}" in tpl
+        validate_command_template(tpl, has_multinode=False, required=[])
+
+    def test_template_does_not_tail_zero_placeholder_or_flags(self, adapter):
+        """模板只有脚本本体：``bash`` $0 占位与 extra_args 落在 exit 之后永远不执行。"""
+        inst = self._inst()
+        args = adapter.assemble_args(inst, Topology(tp=2), self._entry(), {"extra_args": ["--max-batch-size", "32"]})
+        tpl = adapter.command_template(args, inst)
+        assert "--max-batch-size" not in tpl
+        assert not tpl.endswith(" bash")
+
+    def test_template_renders_back_to_generated_script(self, adapter):
+        """模板渲染回真实实例 → 与自动生成的 config.json 逐字段一致（含卡数不等 tp 的异常态）。"""
+        for gpus in ([0, 1], [5]):  # 后者：卡数与 tp 不等，模板与自动生成仍须同源
+            inst = self._inst(assigned_gpus=gpus)
+            auto = adapter.assemble_args(inst, Topology(tp=2), self._entry(), {})
+            replayed = _conf_from_script(render_command_template(adapter.command_template(auto, inst), inst, adapter))
+            replayed_bc = replayed["BackendConfig"]
+            auto_bc = _conf_from_script(auto[0])["BackendConfig"]
+            assert replayed_bc["npuDeviceIds"] == auto_bc["npuDeviceIds"]
+            assert (
+                replayed_bc["ModelDeployConfig"]["ModelConfig"][0]["worldSize"]
+                == auto_bc["ModelDeployConfig"]["ModelConfig"][0]["worldSize"]
+            )
+            server = replayed["ServerConfig"]
+            assert (server["port"], server["managementPort"], server["metricsPort"]) == (18234, 18235, 18236)
+            assert replayed_bc["ModelDeployConfig"]["ModelConfig"][0]["modelWeightPath"] == inst.model_path
+
+    def test_run_argv_keeps_image_entrypoint(self, adapter):
+        """命令模式保住镜像入口：覆盖它会让 CANN 环境初始化丢失（Exit127）。"""
+        entrypoint, args = adapter.command_run_argv("echo hi | tee /tmp/x", "cann")
+        assert entrypoint == adapter.entrypoint
+        assert args == ["echo hi | tee /tmp/x", "bash"]
+
+    def test_template_detects_script_shape_drift(self, adapter):
+        """脚本形态变了就抛错，不能把占位值静默固化进模板。"""
+        with pytest.raises(LLMPodValidationError):
+            adapter.command_template(["set -e\necho hi\n", "bash"], self._inst())
+
+    def test_served_name_falls_back_to_model_path(self, adapter):
+        """served_model_name 为空时回填模型路径（否则 JSON 缺键，ConfigManager 崩）。"""
+        inst = self._inst(served_model_name=None)
+        script = adapter.assemble_args(inst, Topology(tp=2), self._entry(), {})[0]
+        tpl = adapter.command_template([script, "bash"], inst)
+        rendered = render_command_template(tpl, inst, adapter)
+        conf = _conf_from_script(rendered)["BackendConfig"]
+        assert conf["ModelDeployConfig"]["ModelConfig"][0]["modelName"] == inst.model_path
 
 
 class TestTopologyConflict:

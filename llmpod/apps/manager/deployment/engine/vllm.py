@@ -15,6 +15,7 @@ from llmpod.apps.manager.deployment.engine.base import (
     hf_nccl_env,
     nvidia_device_config,
 )
+from llmpod.apps.manager.deployment.command import command_needs_shell
 from llmpod.apps.manager.deployment.image_catalog import engine_vocab, version_key
 from llmpod.apps.manager.deployment.schemas import DeviceConfig, EngineConfig, InstanceSpec, Topology
 from llmpod.config.enums import ModelType
@@ -508,6 +509,12 @@ class VLLMAdapter(EngineAdapter):
         if arch == "cann" and tokens[: len(self.command_prefix)] == self.command_prefix:
             return self.entrypoint, list(tokens)
         return super().split_command(tokens, arch)
+
+    def command_run_argv(self, rendered: str, arch: str) -> tuple[list[str] | None, list[str]]:
+        """cann 镜像入口是 bash-source 脚本，含 shell 语法的命令也走 args，保住入口。"""
+        if arch == "cann" and command_needs_shell(rendered):
+            return None, ["bash", "-c", rendered]
+        return super().command_run_argv(rendered, arch)
 
     def command_placeholder_values(self, inst: InstanceSpec) -> dict[str, str]:
         return {"headless": "--headless" if inst.node_rank > 0 else ""}

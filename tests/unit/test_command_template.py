@@ -31,6 +31,11 @@ EXPECTED_PLACEHOLDERS = {
     "master_addr",
     "master_port",
     "headless",
+    "management_port",
+    "metrics_port",
+    "device_ids",
+    "model_path_json",
+    "served_model_name_json",
 }
 
 
@@ -129,6 +134,27 @@ class TestValidateCommandForTopology:
     def test_single_node_needs_no_headless(self):
         topology = Topology(copies=[UnitTemplate(nnodes=1)])
         validate_command_for_topology("myvllm --port {port}", topology, get_adapter("vllm"))
+
+    def test_extra_args_rejected_when_engine_declares_conflict(self):
+        """命令模式 + extra_args：引擎声明无法落地（MindIE 靠引导脚本 "$@" 透传）即拒。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        with pytest.raises(LLMPodValidationError) as exc:
+            validate_command_for_topology(
+                "mycmd --port {port}", topology, get_adapter("mindie"), {"extra_args": ["--x"]}
+            )
+        assert "extra_args" in str(exc.value)
+
+    def test_extra_args_allowed_without_command(self):
+        """自动生成路径下 extra_args 照常由引导脚本透传，不拦。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        validate_command_for_topology(None, topology, get_adapter("mindie"), {"extra_args": ["--x"]})
+
+    def test_extra_args_allowed_when_engine_has_no_conflict(self):
+        """未声明冲突的引擎维持原语义：命令接管，多余参数静默忽略。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        validate_command_for_topology(
+            "vllm serve {model_path} --port {port}", topology, get_adapter("vllm"), {"extra_args": ["--x"]}
+        )
 
 
 class TestRenderCommandTemplate:
@@ -265,6 +291,20 @@ class TestAdapterCommandSplit:
         tokens = ["myvllm", "xxxx", "--port", "8000"]
         entrypoint, args = adapter.split_command(tokens, "cann")
         assert entrypoint == tokens
+        assert args == []
+
+    def test_vllm_cann_shell_command_keeps_image_entrypoint(self):
+        """cann + shell 语法：命令进 args，保住镜像 bash-source 入口（CANN 环境不丢）。"""
+        adapter = get_adapter("vllm")
+        entrypoint, args = adapter.command_run_argv("vllm serve /m --port 8000 | tee /tmp/x", "cann")
+        assert entrypoint is None
+        assert args == ["bash", "-c", "vllm serve /m --port 8000 | tee /tmp/x"]
+
+    def test_vllm_nvidia_shell_command_runs_through_bash(self):
+        """nvidia 无 bootstrap 入口，shell 命令照旧交给 /bin/bash -c。"""
+        adapter = get_adapter("vllm")
+        entrypoint, args = adapter.command_run_argv("vllm serve /m --port 8000 | tee /tmp/x", "nvidia")
+        assert entrypoint == ["/bin/bash", "-c", "vllm serve /m --port 8000 | tee /tmp/x"]
         assert args == []
 
     def test_custom_binary_replaces_entrypoint(self):

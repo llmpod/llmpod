@@ -208,8 +208,8 @@ async def create_deployment(
     )
 
     # 完整启动命令占位符校验（多机/节点数约束按拓扑推导）。命令模式下 extra_args
-    # 不参与执行，也不再为它报错——用户填了就按命令跑，多余参数静默忽略。
-    validate_command_for_topology(request.spec.command, request.spec.topology, adapter)
+    # 不参与执行——引擎若声明了无法落地（flag 靠引导脚本 "$@" 透传）则在此拒。
+    validate_command_for_topology(request.spec.command, request.spec.topology, adapter, request.spec.engine_params)
 
     # 手选 GPU 与 CPU 部署互斥（手选即固定显存部署）。判据用 cpu_lane_requested
     # （= allow_cpu 或显式 cpu_only）——只认 allow_cpu 会漏掉「显式 cpu_only + 手选卡」：

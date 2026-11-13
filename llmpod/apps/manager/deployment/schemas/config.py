@@ -436,9 +436,11 @@ class DeploymentConfig(CpuLaneConfig):
     command: str | None = Field(
         None,
         description=(
-            "完整启动命令模板（覆盖镜像入口与系统生成的参数；填了之后 engine_params.extra_args 不再参与）。"
+            "完整启动命令模板（覆盖镜像入口与系统生成的参数；填了之后 engine_params.extra_args 不再参与——"
+            "靠引导脚本透传参数的引擎会直接拒绝该组合）。"
             "可用占位符：" + COMMAND_PLACEHOLDER_DOC + "；其中 {port} 必填（平台按节点分配端口并就绪探活用它）。"
-            "命令带 shell 语法（管道/重定向/变量展开）时经 bash -c 执行，否则按 argv 直接 exec"
+            "默认命令带 shell 语法（管道/重定向/变量展开）时经 bash -c 执行，否则按 argv 直接 exec；"
+            "镜像入口是引导脚本的引擎（vLLM cann / MindIE）始终保留镜像入口，命令作为其参数执行"
         ),
     )
     force: bool = Field(

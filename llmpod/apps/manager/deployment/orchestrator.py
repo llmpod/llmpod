@@ -18,8 +18,6 @@ from sqlalchemy import select
 
 from llmpod.apps.manager.deployment.category import category_to_path
 from llmpod.apps.manager.deployment.command import (
-    command_argv,
-    command_needs_shell,
     render_command_template,
     validate_command_for_topology,
 )
@@ -741,7 +739,7 @@ class DeploymentOrchestrator:
         # tp 能否切开模型权重：结构类硬约束，不受 force 影响（路由已 422，此处覆盖直调路径）
         parallel.validate_parallel_shape(config.topology, parallel.shape_for(adapter, model))
         # 完整启动命令占位符校验（路由已 422，此处覆盖 controller/直调路径）
-        validate_command_for_topology(config.command, config.topology, adapter)
+        validate_command_for_topology(config.command, config.topology, adapter, config.engine_params)
 
         # 幂等守卫：部署已有 Instance 行（重启恢复/控制器重驱动再次进入 _plan）→ 直接复用
         # 持久化的规划结果，不重复调度/预留/建行（调度与 VRAM 预留只允许发生一次）。
@@ -1376,15 +1374,12 @@ def build_run_spec(
     # engine_config 默认值兜底（hf_endpoint/nccl_ifname）在 adapter.build_env 内做（唯一定义处），
     # 此处只透传 config.engine_config 原始值；health_timeout_s 由 health_check 合成传入。
     device = adapter.build_device_config(inst, arch)
-    # 完整命令：用户给了就按实例回填占位符后原样执行（平台不再拼参数）；命令仍以引擎
-    # 默认入口开头时拆分回「镜像入口 + 参数」，保留镜像自带的环境初始化（如 CANN 入口）。
+    # 完整命令：用户给了就按实例回填占位符后原样执行（平台不再拼参数）。落到容器的
+    # 形态交给适配器定：镜像入口是 bootstrap 脚本的引擎（CANN 镜像 / MindIE）要保住
+    # 入口，其余引擎按 argv 拆或整条交给 bash -c。
     if config.command:
         rendered = render_command_template(config.command, inst, adapter)
-        if command_needs_shell(rendered):
-            entrypoint: list[str] | None = ["/bin/bash", "-c", rendered]
-            args: list[str] = []
-        else:
-            entrypoint, args = adapter.split_command(command_argv(rendered), arch)
+        entrypoint, args = adapter.command_run_argv(rendered, arch)
     else:
         entrypoint = adapter.entrypoint
         args = adapter.assemble_args(inst, config.topology, entry, config.engine_params)

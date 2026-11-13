@@ -1045,7 +1045,7 @@ def _dry_run_resolve(c: InspectState) -> None:
     if request.command:
         command_template = request.command
         try:
-            validate_command_for_topology(request.command, topo, adapter)
+            validate_command_for_topology(request.command, topo, adapter, request.engine_params)
         except LLMPodValidationError as e:
             c.fail(str(e))
     elif not assembly_failed:

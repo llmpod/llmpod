@@ -18,7 +18,7 @@ from llmpod.apps.manager.deployment.schemas import (
     InstanceSpec,
     Topology,
 )
-from llmpod.apps.manager.deployment.command import command_argv, join_command
+from llmpod.apps.manager.deployment.command import command_argv, command_needs_shell, join_command
 from llmpod.apps.manager.deployment import parallel
 from llmpod.apps.manager.deployment import resource
 from llmpod.apps.manager.deployment.resource_ledger import DEFAULT_GPU_MEMORY_UTILIZATION
@@ -206,6 +206,9 @@ class EngineAdapter(ABC):
     command_prefix: list[str] = []
     # 多机部署时完整命令必须包含的引擎占位符（如 vLLM worker 的 ``{headless}``）。
     multinode_command_placeholders: list[str] = []
+    # 非空 = 本引擎的 extra_args 靠引导脚本 ``"$@"`` 透传，命令模式下无处落地；
+    # 值即拒绝时的报错文案（创建/预检/规划三处共用）。
+    command_extra_args_error: str = ""
 
     # 多机分片启动顺序（reconciler 消费，不硬编码）：head_first（默认——head 当
     # rendezvous 服务端，workers 连它）| workers_first（特殊引擎用：head 启动即注册
@@ -720,7 +723,7 @@ class EngineAdapter(ABC):
     # ---- 完整启动命令（DeploymentConfig.command）----
 
     def command_placeholder_values(self, inst: InstanceSpec) -> dict[str, str]:
-        """本引擎特有的完整命令占位符取值；通用占位符由 command.render_command_template 给。"""
+        """本引擎特有的完整命令占位符取值（可覆盖通用占位符）；其余由 command.render_command_template 给。"""
         return {}
 
     def split_command(self, tokens: list[str], arch: str) -> tuple[list[str] | None, list[str]]:
@@ -736,6 +739,17 @@ class EngineAdapter(ABC):
         if not starts_with_prefix:
             return list(tokens), []
         return self.entrypoint, list(tokens[len(prefix) :])
+
+    def command_run_argv(self, rendered: str, arch: str) -> tuple[list[str] | None, list[str]]:
+        """把渲染后的用户命令落到容器 ``(entrypoint, args)``。
+
+        默认：含 shell 语法整条交给 ``bash -c``；否则按 argv 拆分入口与参数。
+        镜像 ENTRYPOINT 本身是 bootstrap 脚本的引擎（vLLM cann / MindIE）覆写本方法，
+        否则覆盖入口会丢掉镜像自带的 CANN 环境初始化。
+        """
+        if command_needs_shell(rendered):
+            return ["/bin/bash", "-c", rendered], []
+        return self.split_command(command_argv(rendered), arch)
 
     def command_template(self, tokens: list[str], inst: InstanceSpec) -> str:
         """把按占位实例生成的 argv 反推成可编辑模板（实例相关值换成占位符）。

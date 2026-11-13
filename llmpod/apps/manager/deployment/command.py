@@ -2,8 +2,8 @@
 
 用户在部署配置里可以直接给一条完整命令（``DeploymentConfig.command``）。部署期平台把
 ``{model_path}`` 等占位符替换成实例的真实值后执行；不填时仍由适配器按引擎规则生成参数。
-占位符表是平台与用户之间的契约：新增占位符要同时改这里与适配器的回显映射
-（``EngineAdapter.command_placeholder_flags``）。
+占位符表是平台与用户之间的契约：新增通用占位符要同时改这里与适配器的回显映射
+（``EngineAdapter.command_placeholder_flags`` 或 ``command_template`` 覆写）。
 """
 
 from __future__ import annotations
@@ -31,6 +31,13 @@ COMMAND_PLACEHOLDER_HINTS: dict[str, str] = {
     "master_addr": "多机 rendezvous 主节点地址（仅 nnodes>1）",
     "master_port": "多机 rendezvous 主端口（仅 nnodes>1）",
     "headless": "worker 分片自动加 --headless（head 分片渲染为空）",
+    "management_port": "由业务端口派生的管理口（业务端口 +1）",
+    "metrics_port": "由业务端口派生的指标口（业务端口 +2）",
+    "device_ids": "本实例可见的设备逻辑编号（0..tp-1，逗号分隔）",
+    # JSON 字符串上下文专用：值按 JSON 转义后填入（引号/反斜杠/换行安全）。
+    # 同一实例值在 shell 与 JSON 两种上下文需要不同的引号规则，故各留一个占位符。
+    "model_path_json": "模型权重路径（JSON 字符串内使用，已转义）",
+    "served_model_name_json": "对外模型名（JSON 字符串内使用，已转义）",
 }
 
 # 占位符清单的人读文本（Swagger 描述共用，避免两处手写清单漂移）
@@ -98,7 +105,12 @@ def validate_command_template(
             raise LLMPodValidationError(f"完整启动命令含多机占位符（{given}），但当前部署没有多机单元")
 
 
-def validate_command_for_topology(command: str | None, topology: "Topology", adapter: "EngineAdapter") -> None:
+def validate_command_for_topology(
+    command: str | None,
+    topology: "Topology",
+    adapter: "EngineAdapter",
+    engine_params: dict | None = None,
+) -> None:
     """按部署拓扑推导多机/节点数约束后校验完整命令模板（create / inspect / _plan 共用）。"""
     unit_nnodes = topology.nnodes_values()
     if command is not None and len(unit_nnodes) > 1:
@@ -110,6 +122,12 @@ def validate_command_for_topology(command: str | None, topology: "Topology", ada
         has_multinode=has_multinode,
         required=adapter.multinode_command_placeholders if has_multinode else [],
     )
+    # 命令模式下 extra_args 不参与执行（见 DeploymentConfig.command 的契约）。对 flag 由
+    # 引导脚本 "$@" 透传的引擎，脚本被整条命令替换后 flag 无处落地——静默丢弃是最差的
+    # 失败模式，直接拒。
+    error = adapter.command_extra_args_error
+    if command is not None and error and (engine_params or {}).get("extra_args"):
+        raise LLMPodValidationError(error)
 
 
 def render_command_template(command: str, inst: "InstanceSpec", adapter: "EngineAdapter") -> str:

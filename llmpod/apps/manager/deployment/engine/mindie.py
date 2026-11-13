@@ -30,6 +30,7 @@ positional token ``[引导脚本, "bash"]``，经 entrypoint ``/bin/bash -c`` �
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from typing import Any, Callable
 
@@ -102,6 +103,11 @@ def _bootstrap_script(conf: dict, model_path: str) -> str:
     return script
 
 
+def _json_escape(value: str | None) -> str:
+    """JSON 字符串值的内容层转义（去掉 ``json.dumps`` 的外层引号）。"""
+    return json.dumps(str(value or ""), ensure_ascii=False)[1:-1]
+
+
 class MindIEAdapter(EngineAdapter):
     """MindIE 适配器（昇腾 NPU，310P 家族验收）。"""
 
@@ -123,6 +129,13 @@ class MindIEAdapter(EngineAdapter):
     # set_env.sh 是 aie_ops / torch 库路径的唯一来源，覆盖掉会让 daemon 启动即崩
     # （ExitCode 127）。入口最后 `exec "$@"`，对 bash -c 透明。
     entrypoint = ["/usr/local/bin/docker-entrypoint.sh", "/bin/bash", "-c"]
+
+    # 用户 flag 靠引导脚本的 "$@" 透传给 daemon；命令模式整条命令替换掉脚本，flag 无处
+    # 落地（拼在 exit 之后永远不执行），静默丢弃比拒绝更糟。
+    command_extra_args_error = (
+        "MindIE 的完整启动命令模式下不支持额外启动参数（extra_args）："
+        "命令会整条替换引导脚本，参数无处落地。请把参数直接写进命令，或清空命令改用平台自动生成"
+    )
 
     # 容器/服务默认值（host 网络同 vLLM cann 先例）
     default_port = 1025  # MindIE Service 业务端口出厂值
@@ -352,3 +365,54 @@ class MindIEAdapter(EngineAdapter):
             "EnableDynamicAdjustTimeoutConfig": False,
         }
         return [_bootstrap_script(conf, str(instance.model_path)), "bash"]
+
+    def command_run_argv(self, rendered: str, arch: str) -> tuple[list[str] | None, list[str]]:
+        """用户命令经镜像入口执行（覆盖它会让 CANN 环境初始化丢失）；``"bash"`` 是 $0 占位。"""
+        return self.entrypoint, [rendered, "bash"]
+
+    def command_template(self, tokens: list[str], inst: InstanceSpec) -> str:
+        """把 ``[引导脚本, "bash"]`` 反推成模板：脚本里的实例值换成占位符。
+
+        脚本就是整条命令，``tokens[1:]`` 不输出（$0 占位与 extra_args 落在 ``exit``
+        之后永不执行）。JSON 字段用 ``*_json`` 占位符（JSON 与 shell 引号规则不同），
+        其余按字面量精确替换；任一处失配即抛错，不把预检的占位值静默固化进模板。
+        """
+        script, port = tokens[0], int(inst.port or self.default_port)
+        served = json.dumps(str(inst.served_model_name or inst.model_path or ""), ensure_ascii=False)
+        path = str(inst.model_path or "")
+        subs = [
+            (f'"port": {port},', '"port": {port},'),
+            (f'"managementPort": {port + 1},', '"managementPort": {management_port},'),
+            (f'"metricsPort": {port + 2},', '"metricsPort": {metrics_port},'),
+            (f'"worldSize": {len(inst.assigned_gpus or [0])},', '"worldSize": {tp},'),
+            (f'"modelName": {served},', '"modelName": "{served_model_name_json}",'),
+            (f'"modelWeightPath": {json.dumps(path, ensure_ascii=False)},', '"modelWeightPath": "{model_path_json}",'),
+            (shlex.quote(path + "/config.json"), "{model_path}/config.json"),
+        ]
+        for old, new in subs:
+            if script.count(old) != 1:
+                raise LLMPodValidationError(f"MindIE 引导脚本形态变化，无法反推完整启动命令：{old!r}")
+            script = script.replace(old, new)
+        tpl, hits = re.subn(r'"npuDeviceIds": \[\s*\[[^\]]*\]\s*\],', '"npuDeviceIds": [[{device_ids}]],', script)
+        if hits != 1:
+            raise LLMPodValidationError("MindIE 引导脚本形态变化，无法反推 npuDeviceIds 占位符")
+        return tpl
+
+    def command_placeholder_values(self, inst: InstanceSpec) -> dict[str, str]:
+        """MindIE 的派生占位符（管理口/指标口/设备列表）与 JSON 转义值。
+
+        ``tp`` 按本实例 NPU 数回填而非实例 tp：自动生成的 worldSize 与 npuDeviceIds
+        都取 ``len(assigned_gpus)``，模板要还原成同一份值（调度保证卡数 == tp，两者
+        正常相等；直接取卡数才不会在异常态下与预览分叉）。
+        """
+        port = int(inst.port or self.default_port)
+        world = len(inst.assigned_gpus or [0])
+        return {
+            "tp": str(world),
+            "management_port": str(port + 1),
+            "metrics_port": str(port + 2),
+            "device_ids": ",".join(str(i) for i in range(world)),
+            # 去掉外层引号：模板里已自带 `"…"`，值只需内容层的转义
+            "served_model_name_json": _json_escape(inst.served_model_name or inst.model_path),
+            "model_path_json": _json_escape(inst.model_path),
+        }
