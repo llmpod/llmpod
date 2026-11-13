@@ -3,6 +3,7 @@ import { h } from 'vue'
 import { NTag } from 'naive-ui'
 import { useDialog, useOperate, useTable } from '@repo/hooks'
 import {
+  formatBytes,
   formatDateTime,
   MODEL_NODE_STATUS_LABEL,
   MODEL_NODE_STATUS_TAG,
@@ -63,9 +64,9 @@ const { LmTable, LmRefresh, total, refresh } = useTable<ModelNodeCopy>({
     },
     {
       title: '路径',
-      key: 'path',
+      key: 'local_dir',
       minWidth: 200,
-      render: (row) => row.path ?? '--',
+      render: (row) => row.local_dir ?? '--',
     },
     {
       title: '节点状态',
@@ -79,13 +80,13 @@ const { LmTable, LmRefresh, total, refresh } = useTable<ModelNodeCopy>({
     },
     {
       title: '大小',
-      key: 'size_gb',
-      render: (row) => (row.size_gb != null ? `${row.size_gb} GB` : '--'),
+      key: 'bytes_total',
+      render: (row) => formatBytes(row.bytes_total),
     },
     {
       title: '最近校验时间',
-      key: 'last_verified_at',
-      render: (row) => formatDateTime(row.last_verified_at ?? null),
+      key: 'last_checked_at',
+      render: (row) => formatDateTime(row.last_checked_at ?? null),
     },
     useOperate<ModelNodeCopy>([{ title: '删除', danger: true, onClick: openDelete }], {
       width: 80,

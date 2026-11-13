@@ -53,12 +53,12 @@ defineExpose({
       </div>
       <div class="flex gap-[.8rem]">
         <span class="shrink-0 w-[4.8rem] text-right text-secondary">路径:</span>
-        <span class="font-mono break-all">{{ node.path || '--' }}</span>
+        <span class="font-mono break-all">{{ node.local_dir || '--' }}</span>
       </div>
     </div>
     <LmForm />
     <n-alert v-if="deleteFiles" type="warning" :show-icon="false" class="text-small">
-      将删除该节点上「{{ node.path || nodeLabel }}」目录下的模型文件,不可恢复。
+      将删除该节点上「{{ node.local_dir || nodeLabel }}」目录下的模型文件,不可恢复。
     </n-alert>
   </div>
 </template>

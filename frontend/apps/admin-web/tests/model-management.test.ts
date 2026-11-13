@@ -185,7 +185,7 @@ describe('model-management useStore', () => {
     const listener = vi.fn()
     const unsubscribe = store.subscribe(listener)
     vi.mocked(listModelNodes).mockResolvedValue([
-      { node_id: 'node-1', path: '/data/models/x', model_status: 'cached' },
+      { node_id: 'node-1', local_dir: '/data/models/x', model_status: 'present' },
     ])
     await expect(store.nodes(7)).resolves.toHaveLength(1)
     expect(listModelNodes).toHaveBeenCalledWith(7, undefined)

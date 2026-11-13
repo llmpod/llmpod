@@ -31,10 +31,8 @@ export interface ModelData {
   quantization: string | null
   /** 权重哈希(可空) */
   hash: string | null
-  /** 已缓存该模型的节点 {node_id: path} */
-  cached_nodes: Record<string, string>
-  /** 已下载该模型的节点数(列表列展示;后端未下发时前端回退 cached_nodes 的 key 数) */
-  cached_node_count?: number | null
+  /** 已下载该模型的节点数(GET /models 列表下发;列表「已下载节点」列展示) */
+  node_count?: number | null
   /** 来源:huggingface | modelscope | oss | local | node(可空) */
   source: string | null
   /** 来源地址(可空) */
@@ -269,16 +267,16 @@ export interface ModelNodeCopy {
   hostname?: string | null
   /** 节点 IP */
   ip?: string | null
-  /** 该节点上的模型目录路径 */
-  path?: string | null
-  /** 节点状态:online | offline | maintenance | ...(与模型状态分开展示) */
+  /** 该节点上该模型的本地目录(后端字段名 local_dir) */
+  local_dir?: string | null
+  /** 节点状态:online | offline | maintenance | busy | drained(与模型状态分开展示) */
   node_status?: string | null
-  /** 模型在该节点上的状态:cached | downloading | verifying | missing | ...(与节点状态分开展示) */
+  /** 模型在该节点上的状态:present | absent | downloading | verifying | failed(与节点状态分开展示) */
   model_status?: string | null
-  /** 该节点上的权重大小 GB */
-  size_gb?: number | null
-  /** 最近一次在位校验时间(ISO8601) */
-  last_verified_at?: string | null
+  /** 该节点上的权重总字节数(后端字段名 bytes_total;展示时换算成 GB) */
+  bytes_total?: number | null
+  /** 最近一次在位校验时间(ISO8601;后端字段名 last_checked_at) */
+  last_checked_at?: string | null
 }
 
 /** 模型已下载节点副本列表(GET /api/v1/admin/models/{model_id}/nodes;后端返回数组) */

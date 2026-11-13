@@ -15,11 +15,9 @@ import {
   type ModelRecord,
 } from './useStore'
 
-/** 已下载节点数:优先后端下发的计数,缺失时回退 cached_nodes 的节点数;两者都没有返回 null(未知,展示 --) */
+/** 已下载节点数:后端 GET /models 下发 node_count;未下发时为 null(未知,展示 --) */
 function cachedNodeCount(row: ModelRecord): number | null {
-  if (typeof row.cached_node_count === 'number') return row.cached_node_count
-  if (row.cached_nodes) return Object.keys(row.cached_nodes).length
-  return null
+  return typeof row.node_count === 'number' ? row.node_count : null
 }
 
 export function useController() {
@@ -144,9 +142,9 @@ export function useController() {
         render: (row) => (row.size_gb != null ? `${row.size_gb} GB` : '—'),
       },
       {
-        // 已下载节点数:点击展开节点副本列表(可查看路径/状态/大小/校验时间并清理)
+        // 已下载节点数:点击展开节点副本列表(可查看目录/状态/大小/校验时间并清理)
         title: '已下载节点',
-        key: 'cached_node_count',
+        key: 'node_count',
         minWidth: 110,
         render: (row) => {
           const count = cachedNodeCount(row)

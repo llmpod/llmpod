@@ -30,6 +30,7 @@ vi.mock('@repo/hooks', async (importOriginal) => {
 import { deleteModelNode, listModelNodes } from '@/api/model'
 import { useDialog } from '@repo/hooks'
 import {
+  formatBytes,
   MODEL_NODE_STATUS_LABEL,
   MODEL_NODE_STATUS_TAG,
   NODE_STATUS_LABEL,
@@ -61,7 +62,7 @@ function nodeColumn() {
   const options = useTableMock.mock.calls[0][0] as {
     columns: Array<Record<string, unknown>>
   }
-  const column = options.columns.find((col) => col.key === 'cached_node_count') as
+  const column = options.columns.find((col) => col.key === 'node_count') as
     | {
         title: string
         render: (row: ModelRecord) => { props: { onClick: () => void }; children: unknown }
@@ -95,11 +96,11 @@ function makeNodeCopy(overrides: Partial<ModelNodeCopy> = {}): ModelNodeCopy {
     node_id: 'node-1',
     hostname: 'gpu-a',
     ip: '10.0.0.11',
-    path: '/data/models/qwen2.5-7b',
+    local_dir: '/data/models/qwen2.5-7b',
     node_status: 'online',
-    model_status: 'cached',
-    size_gb: 14.5,
-    last_verified_at: '2026-11-01T10:00:00Z',
+    model_status: 'present',
+    bytes_total: 15_998_222_336, // ≈14.90 GB
+    last_checked_at: '2026-11-01T10:00:00Z',
     ...overrides,
   }
 }
@@ -135,15 +136,41 @@ describe('模型节点副本 store(第 8 点)', () => {
     unsubscribe()
   })
 
-  it('节点状态与模型状态是两套独立映射(需分开展示)', () => {
+  it('节点状态与模型状态是两套独立映射(需分开展示,词表对齐后端)', () => {
     expect(NODE_STATUS_LABEL.online).toBe('在线')
     expect(NODE_STATUS_LABEL.offline).toBe('离线')
-    expect(MODEL_NODE_STATUS_LABEL.cached).toBe('已缓存')
+    // 模型状态词表为后端的 present/absent/downloading/verifying/failed
+    expect(MODEL_NODE_STATUS_LABEL.present).toBe('已就绪')
+    expect(MODEL_NODE_STATUS_LABEL.absent).toBe('未下载')
     expect(MODEL_NODE_STATUS_LABEL.downloading).toBe('下载中')
+    expect(MODEL_NODE_STATUS_LABEL.verifying).toBe('校验中')
+    expect(MODEL_NODE_STATUS_LABEL.failed).toBe('失败')
     expect(NODE_STATUS_TAG.online).toBe('success')
-    expect(MODEL_NODE_STATUS_TAG.cached).toBe('success')
-    // 键不交叉:节点状态映射里没有 cached
-    expect(NODE_STATUS_TAG.cached).toBeUndefined()
+    expect(MODEL_NODE_STATUS_TAG.present).toBe('success')
+    // 键不交叉:节点状态映射里没有 present
+    expect(NODE_STATUS_TAG.present).toBeUndefined()
+    // 后端不会下发这些历史词,不应残留映射(否则会漏翻成英文原文)
+    expect(MODEL_NODE_STATUS_LABEL.cached).toBeUndefined()
+    expect(MODEL_NODE_STATUS_LABEL.ready).toBeUndefined()
+    expect(MODEL_NODE_STATUS_LABEL.missing).toBeUndefined()
+    expect(MODEL_NODE_STATUS_LABEL.corrupted).toBeUndefined()
+  })
+})
+
+describe('formatBytes(模型副本大小列:后端下发 bytes_total)', () => {
+  it('按量级换算 GB / MB / KB / B', () => {
+    expect(formatBytes(15_998_222_336)).toBe('14.90 GB')
+    expect(formatBytes(1024 ** 3)).toBe('1.00 GB')
+    expect(formatBytes(5 * 1024 ** 2)).toBe('5.0 MB')
+    expect(formatBytes(2048)).toBe('2.0 KB')
+    expect(formatBytes(512)).toBe('512 B')
+  })
+
+  it('空值/非法值为 --', () => {
+    expect(formatBytes(null)).toBe('--')
+    expect(formatBytes(undefined)).toBe('--')
+    expect(formatBytes(Number.NaN)).toBe('--')
+    expect(formatBytes(-1)).toBe('--')
   })
 })
 
@@ -159,12 +186,12 @@ describe('模型列表「已下载节点」列(第 8 点)', () => {
     return { controller, wrapper }
   }
 
-  it('后端计数优先 → 「已下载节点：N」;点击打开节点副本弹窗', () => {
+  it('后端 node_count 渲染「已下载节点：N」;点击打开节点副本弹窗', () => {
     const { wrapper } = mountController()
     const column = nodeColumn()
     expect(column.title).toBe('已下载节点')
 
-    const vnode = column.render(makeNodeRecord({ cached_node_count: 2 }))
+    const vnode = column.render(makeNodeRecord({ node_count: 2 }))
     expect(collectText(vnode)).toContain('已下载节点：2')
 
     vnode.props.onClick()
@@ -174,16 +201,11 @@ describe('模型列表「已下载节点」列(第 8 点)', () => {
     wrapper.unmount()
   })
 
-  it('计数缺失回退 cached_nodes 节点数;两者都缺显示 --(后端未下发)', () => {
+  it('node_count=0 显示「未下载」;未下发(undefined)显示 --', () => {
     const { wrapper } = mountController()
     const column = nodeColumn()
 
-    expect(
-      collectText(column.render(makeNodeRecord({ cached_nodes: { a: '/a', b: '/b' } }))),
-    ).toContain('已下载节点：2')
-    expect(collectText(column.render(makeNodeRecord({ cached_node_count: 0 })))).toContain(
-      '未下载',
-    )
+    expect(collectText(column.render(makeNodeRecord({ node_count: 0 })))).toContain('未下载')
     expect(collectText(column.render(makeNodeRecord()))).toContain('--')
     wrapper.unmount()
   })

@@ -128,14 +128,15 @@ export const SOURCE_LABEL: Record<string, string> = {
   node: '节点',
 }
 
-/** 模型在节点上的状态文案(与节点状态分开展示;未知值原样) */
+/**
+ * 模型在节点上的状态文案:词表对齐后端(absent | downloading | verifying | present | failed),
+ * 与节点状态分开展示;未知值原样。
+ */
 export const MODEL_NODE_STATUS_LABEL: Record<string, string> = {
-  cached: '已缓存',
-  ready: '就绪',
+  present: '已就绪',
+  absent: '未下载',
   downloading: '下载中',
   verifying: '校验中',
-  missing: '缺失',
-  corrupted: '异常',
   failed: '失败',
 }
 
@@ -157,14 +158,12 @@ export const NODE_STATUS_TAG: Record<string, 'success' | 'warning' | 'error' | '
   drained: 'default',
 }
 
-/** 模型副本状态 → 标签配色(「模型状态」列;与节点状态各自独立判定) */
+/** 模型副本状态 → 标签配色(「模型状态」列;词表同 MODEL_NODE_STATUS_LABEL,与节点状态各自独立判定) */
 export const MODEL_NODE_STATUS_TAG: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
-  cached: 'success',
-  ready: 'success',
+  present: 'success',
+  absent: 'default',
   downloading: 'warning',
   verifying: 'warning',
-  missing: 'default',
-  corrupted: 'error',
   failed: 'error',
 }
 
@@ -194,6 +193,21 @@ export function formatDateTime(value: string | null): string {
   if (Number.isNaN(d.getTime())) return value
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/**
+ * 字节数 → 人类可读大小(模型副本「大小」列):
+ * 后端下发 bytes_total(字节),≥1GB 按 GB 保留两位,其余按 MB/KB 显示;空值或非法值为 --。
+ */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '--'
+  const gb = bytes / 1024 ** 3
+  if (gb >= 1) return `${gb.toFixed(2)} GB`
+  const mb = bytes / 1024 ** 2
+  if (mb >= 1) return `${mb.toFixed(1)} MB`
+  const kb = bytes / 1024
+  if (kb >= 1) return `${kb.toFixed(1)} KB`
+  return `${bytes} B`
 }
 
 /** 变更监听器:写操作完成后触发,供表格 refresh 联动 */
