@@ -245,7 +245,7 @@ class TestDeleteEndpoint:
         _setup(client, session, monkeypatch)
         response = await client.post("/api/v1/admin/nodes/n1/delete")
         data = response.json()["data"]
-        assert data == {"id": "n1", "deleted": True, "notified": True, "cleaned": True}
+        assert data == {"id": "n1", "deleted": True, "notified": True, "cleaned": True, "deleted_deployments": []}
         assert sent == ["n1"]
 
     async def test_delete_online_node_timeout_continues(self, client: AsyncClient, monkeypatch):
@@ -272,6 +272,101 @@ class TestDeleteEndpoint:
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["notified"] is True and data["cleaned"] is False
+
+
+class TestForceRemove:
+    """注销接口的 force=true：机器报废时唯一出口——不看实例状态、连带删部署、只允许离线节点。"""
+
+    @staticmethod
+    def _fake_orch(monkeypatch, cancelled: list[str], released: list[str]):
+        class _Orch:
+            async def request_cancel(self, deployment_id):
+                cancelled.append(deployment_id)
+
+            async def await_deploy(self, deployment_id, timeout=30.0):
+                pass
+
+            async def release_vram(self, deployment_id):
+                released.append(deployment_id)
+
+        monkeypatch.setattr("llmpod.apps.manager.deployment.orchestrator.get_orchestrator", lambda: _Orch())
+
+    async def test_force_remove_not_found(self, client: AsyncClient):
+        session = FakeSession()
+        _setup(client, session, None)
+        response = await client.post("/api/v1/admin/nodes/nope/delete?force=true")
+        assert response.status_code == 404
+
+    async def test_force_remove_rejects_online_node(self, client: AsyncClient, monkeypatch):
+        """在线节点拒绝（409）：机器还活着时走正常注销，让节点清理容器与数据卷。"""
+        from llmpod.apps.manager import dispatch
+
+        monkeypatch.setattr(dispatch, "node_online", lambda nid: True)
+        session = FakeSession()
+        session.preload(_node(status=NodeStatus.ONLINE))
+        _setup(client, session, monkeypatch)
+        response = await client.post("/api/v1/admin/nodes/n1/delete?force=true")
+        assert response.status_code == 409
+        assert "仍在线" in response.json()["message"]
+
+    async def test_force_remove_cascades_deployments(self, client: AsyncClient, monkeypatch):
+        """离线节点 + 运行中实例：不看实例状态直接删，连带级联删部署（正常注销此时 409）。"""
+        from llmpod.apps.manager import dispatch
+        from llmpod.services import deployment_service, node_service
+        from llmpod.models.node_model import NodeModel
+        from llmpod.models.task import Task
+
+        monkeypatch.setattr(dispatch, "node_online", lambda nid: False)
+        cancelled: list[str] = []
+        released: list[str] = []
+        self._fake_orch(monkeypatch, cancelled, released)
+
+        cascaded: list[str] = []
+
+        async def fake_cascade(db, deployment_id):
+            cascaded.append(deployment_id)
+
+        async def fake_recompute(self):
+            pass
+
+        async def fake_tomb(node_id):
+            pass
+
+        monkeypatch.setattr(deployment_service, "delete_deployment_cascade", fake_cascade)
+        monkeypatch.setattr(
+            "llmpod.apps.manager.deployment.placement.PlacementService.recompute_demand", fake_recompute
+        )
+        monkeypatch.setattr(node_service, "set_node_tombstone", fake_tomb)
+        monkeypatch.setattr(node_service, "_FORCE_CANCEL_WAIT_SECONDS", 0.01)
+
+        session = FakeSession()
+        session.preload(_node(status=NodeStatus.OFFLINE))
+        session.preload(_instance(status=InstanceStatus.RUNNING, iid="inst-1"))
+        session.preload(Gpu(uuid="gpu-1", node_id="n1", index=0, name="G", arch="nvidia"))
+        session.preload(NodeModel(model_id=1, node_id="n1", status="present", desired_state="present"))
+        session.preload(
+            Task(
+                id="t1",
+                resource_type="MODEL_PLACEMENT",
+                resource_key="model:1:n1",
+                node_id="n1",
+                type="ENSURE_MODEL",
+                status="PENDING",
+                payload={},
+                attempt=1,
+            )
+        )
+        _setup(client, session, monkeypatch)
+        response = await client.post("/api/v1/admin/nodes/n1/delete?force=true")
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["deleted_deployments"] == ["d1"]
+        assert data["notified"] is False and data["cleaned"] is False
+        assert cancelled == ["d1"] and cascaded == ["d1"] and released == ["d1"]
+        assert session.all(Node) == []
+        assert session.all(Gpu) == []
+        assert session.all(NodeModel) == []
+        assert session.all(Task) == []
 
 
 class TestVersionVisibility:

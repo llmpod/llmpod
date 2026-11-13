@@ -125,6 +125,9 @@ class NodeDeleteData(BaseModel):
     deleted: bool = Field(True, description="删除是否生效")
     notified: bool = Field(False, description="是否向在线节点下发过自清理通知（$node_decommission）")
     cleaned: bool = Field(False, description="节点是否确认自清理（WS 已断开）；离线节点/超时为 False")
+    deleted_deployments: list[str] = Field(
+        default_factory=list, description="强制移除时连带删除的部署ID（正常注销恒为空列表）"
+    )
 
 
 class NodeUpgradeItem(BaseModel):
@@ -282,6 +285,10 @@ async def upgrade_nodes_batch(
 @audit_action(action="delete", resource="node", resource_id="node_id")
 async def delete_node(
     node_id: Annotated[str, Path(description="节点ID（由 Manager 分配的 UUID）")],
+    force: bool = Query(
+        False,
+        description="强制移除：跳过未停止实例的守卫，连同该节点上的部署一并删除；仅对离线节点生效",
+    ),
     db: AsyncSession = Depends(get_db),
     user: SessionData = Depends(get_current_user),
 ):
@@ -291,9 +298,28 @@ async def delete_node(
     硬禁删；在线节点发 ``$node_decommission``（node 侧 rm -f 自己 + 删本节点
     推理容器 + 回收具名数据卷）等 WS 断开（≤10s）；写 Redis 注销标记拦残活容器
     重连。挂载进来的宿主路径（模型目录、extra_mounts）不连带删。
+
+    ``force=true`` = 强制移除，给机器报废/过期这类再也回不来的节点用：报废机器上的
+    实例永远停在运行/崩溃态，正常路径等于永久锁死这条记录。这条路径的语义是：
+
+    - 不看实例状态，直接删；
+    - 该节点上有实例的部署整条级联删除（含多机部署在其它节点上的分片、端点、路由
+      绑定、部署日志、卡预留），回执 ``deleted_deployments`` 列出被删的部署；
+    - 只对离线节点开放：节点还连着说明机器活着，应走正常注销让节点清理容器与数据卷，
+      否则容器和卷会留在活机器上成为孤儿（在线传 force 返回 409）。
+
+    强制移除后残留在机器上的容器与数据卷无法触达，需人工清理；节点身份由注销标记
+    拦住，不会自动注册回来。审计行以 ``force=true`` 参数留痕。
     """
-    result = await decommission_node(node_id, db)
-    return success(NodeDeleteData(id=node_id, notified=result.notified, cleaned=result.cleaned))
+    result = await decommission_node(node_id, db, force=force)
+    return success(
+        NodeDeleteData(
+            id=node_id,
+            notified=result.notified,
+            cleaned=result.cleaned,
+            deleted_deployments=result.deleted_deployments,
+        )
+    )
 
 
 # ===== 节点引导令牌（短期 HMAC）=====

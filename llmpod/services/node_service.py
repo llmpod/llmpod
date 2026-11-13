@@ -11,10 +11,14 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from llmpod.core.exceptions import Conflict, NotFound
+from llmpod.apps.manager.deployment.constants import DeploymentStatus
 from llmpod.models.instance import Instance
+from llmpod.models.model_deployment import ModelDeployment
 from llmpod.models.node import Node
 from llmpod.models.cluster import Cluster
 from llmpod.models.gpu import Gpu
+from llmpod.models.node_model import NodeModel
+from llmpod.models.task import Task
 from llmpod.services.cluster_service import get_cluster_name_map
 from llmpod.services.deployment_projection import reproject_after_node_transition
 from llmpod.services.version_service import parse_version
@@ -493,12 +497,17 @@ _ACTIVE_INSTANCE_STATUSES = (
 # 通知自清理后等 WS 断开的上限（秒）；超时也继续删（cleaned=false）
 _DECOMMISSION_WAIT_SECONDS = 10.0
 
+# 强制移除时等在途部署协程退出的上限（秒）：取消事件已置位，deploy 在 staging 循环
+# 里下一个检查点就会退出；节点离线时 RPC 也不会真发包，等不到就继续删。
+_FORCE_CANCEL_WAIT_SECONDS = 10.0
+
 
 class DecommissionResult(NamedTuple):
-    """decommission_node 的结果：是否通知过自清理 / 是否确认 WS 已断。"""
+    """decommission_node 的结果：是否通知过自清理 / 是否确认 WS 已断 / 连带删掉的部署 ID。"""
 
     notified: bool
     cleaned: bool
+    deleted_deployments: list[str]
 
 
 async def node_tombstone_hit(node_id: str) -> bool:
@@ -521,7 +530,7 @@ async def set_node_tombstone(node_id: str) -> None:
         log.warning("注销标记写入失败（Redis 不可用）：node %s 重连可能复活", node_id)
 
 
-async def decommission_node(node_id: str, db: AsyncSession) -> DecommissionResult:
+async def decommission_node(node_id: str, db: AsyncSession, *, force: bool = False) -> DecommissionResult:
     """注销节点：守卫 → 通知在线节点自清理（等 WS 断）→ 注销标记 → 级联删节点/GPU。
 
     注销语义声明：
@@ -540,12 +549,18 @@ async def decommission_node(node_id: str, db: AsyncSession) -> DecommissionResul
     - 注销标记（7 天）：拦住残活旧身份的 $hello，防「删了又自动注册回来」；被
       拦的节点同样执行自清理并作废身份，同机重装以全新 node_id 注册不受误伤。
     等待期间连接已释放（守卫读后先 commit），不占连接池。
+
+    ``force=True`` 走强制移除路径（见 :func:`_force_remove_node`）：跳过上述实例
+    守卫、连带删除该节点上的部署。只对已离线节点开放。
     """
     from llmpod.apps.manager import dispatch
 
     node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
     if node is None:
         raise NotFound("Node", node_id)
+
+    if force:
+        return await _force_remove_node(node, db)
 
     active_count = (
         await db.execute(
@@ -588,4 +603,100 @@ async def decommission_node(node_id: str, db: AsyncSession) -> DecommissionResul
     await db.delete(node)
     await db.flush()
     await db.commit()
-    return DecommissionResult(notified=notified, cleaned=cleaned)
+    return DecommissionResult(notified=notified, cleaned=cleaned, deleted_deployments=[])
+
+
+async def _force_remove_node(node: Node, db: AsyncSession) -> DecommissionResult:
+    """强制移除节点：连同该节点上仍存在的部署一起删除（机器报废/过期时的唯一出口）。
+
+    由 ``decommission_node(force=True)`` 在节点行已加载后调用。与正常注销的差别只在
+    守卫与连带范围：
+
+    - **不做实例状态守卫**。正常注销要求节点上只剩 STOPPED 实例，而报废机器上的实例
+      永远停在 RUNNING/READY/CRASHED——节点再也回不来，那些部署也永远起不来，
+      恢复正常路径等于永久锁死这条记录。这里是管理员确认过的破窗操作。
+    - **只允许离线节点**：节点 WS 还连着说明机器活着，走正常注销（会通知节点自清理
+      容器与具名数据卷）。在线强行删记录会把容器和卷留在活机器上成为孤儿。
+    - **连带删除部署**：该节点上有实例的部署整条级联删（实例 / 副本 / 引擎 / 端点 /
+      路由绑定 / 部署日志 / 卡预留），而不只是把实例标失败——单机部署失去宿主后没有
+      任何恢复可能，留着只会让自愈循环每轮对不存在的节点重发 START；多机部署的其余
+      分片也随之一并删除，用户按需重新部署到别的机器。
+
+    顺序：先取消在途编排并等协程退出（避免删行的同时 deploy/staging 还在写实例行），
+    再落库级联，最后同步进程内资源账本。
+
+    机器上残留的容器与数据卷无法触达（节点已离线），需人工在机器上清理——节点身份
+    被注销标记拦住不会再自动注册回来。
+
+    不连带删模型记录：从该节点目录导入的模型（``Model.source=node`` 绑定此节点）会变成
+    再也部署不了的记录（权重在那台机器上），但模型行本身可能还有别的用途，留给管理员
+    在模型页自行删除。
+    """
+    from llmpod.apps.manager import dispatch
+    from llmpod.apps.manager.deployment.orchestrator import get_orchestrator
+    from llmpod.apps.manager.deployment.placement import PlacementService
+    from llmpod.services import deployment_service
+
+    node_id = node.id
+    if dispatch.node_online(node_id):
+        raise Conflict("节点仍在线，无法强制移除；请先注销（会通知节点清理容器与数据卷）")
+
+    # 该节点上仍有实例的部署（含多机部署：其余节点的分片一并删除）
+    deployment_ids = sorted(
+        set((await db.execute(select(Instance.deployment_id).where(Instance.assigned_node == node_id))).scalars())
+    )
+
+    # 先置 deleting 再提交：控制器不再为这些部署新起 staging / 运行期自愈协程，
+    # 后续级联删除不会与编排写同一批行打架（与「删除部署」路由同一落位手法）。
+    for deployment_id in deployment_ids:
+        dep = await db.get(ModelDeployment, deployment_id)
+        if dep is not None:
+            dep.status = DeploymentStatus.DELETING
+            dep.health_status = None
+
+    # 守卫读到此为止：先提交释放连接。取消在途编排期间不占连接池。
+    await db.commit()
+
+    orch = get_orchestrator()
+    if deployment_ids:
+        # 并发取消：每个部署最多等 _FORCE_CANCEL_WAIT_SECONDS，串行等会让一次请求
+        # 拖成「部署数 × 上限」
+        await asyncio.gather(*(orch.request_cancel(did) for did in deployment_ids))
+        await asyncio.gather(
+            *(orch.await_deploy(did, timeout=_FORCE_CANCEL_WAIT_SECONDS) for did in deployment_ids)
+        )
+
+    # 级联删部署（与「删除部署」路由同一套清理：四层规划产物 / 端点 / 路由绑定 / 日志）
+    for deployment_id in deployment_ids:
+        await deployment_service.delete_deployment_cascade(db, deployment_id)
+
+    # 该节点上的模型分发记录与任务行（逻辑外键，无 DB 级联）——留着的 PENDING
+    # ENSURE_MODEL 会被周期 redrive 每 30s 重发给一台不存在的节点，纯噪声
+    await db.execute(delete(NodeModel).where(NodeModel.node_id == node_id))
+    await db.execute(delete(Task).where(Task.node_id == node_id))
+    await db.execute(delete(Gpu).where(Gpu.node_id == node_id))
+    await db.delete(node)
+    await db.flush()
+    await db.commit()
+
+    # 进程内账本同步（DB 权威行已随级联删除，这里只清内存态）
+    for deployment_id in deployment_ids:
+        try:
+            await orch.release_vram(deployment_id)
+        except Exception as e:
+            log.warning("强制移除节点：释放部署 %s 的预留失败: %s", deployment_id[:8], e)
+
+    # 模型分发需求重算：失主模型在其它节点上的下载需求可能随之消失
+    try:
+        await PlacementService().recompute_demand()
+    except Exception:
+        log.exception("强制移除节点：recompute_demand 失败（不影响已完成的删除）")
+
+    await set_node_tombstone(node_id)
+    log.warning(
+        "节点 %s 已强制移除（连带删除 %d 个部署：%s）",
+        node_id,
+        len(deployment_ids),
+        deployment_ids,
+    )
+    return DecommissionResult(notified=False, cleaned=False, deleted_deployments=deployment_ids)
