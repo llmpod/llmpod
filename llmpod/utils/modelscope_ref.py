@@ -8,10 +8,27 @@
 
 from __future__ import annotations
 
+import re
+from typing import NamedTuple
 from urllib.parse import quote, unquote, urlparse
 
 # ModelScope 默认分支（HF 是 main）
 MODELSCOPE_DEFAULT_REVISION = "master"
+
+# ``repo/files`` 单次最多回这么些条目，超出部分静默丢弃（HTTP 200、Success=true，
+# 响应里没有任何「还有更多」的标记）。正好等于这个数就意味着可能已经被截断——
+# 少下的文件不会报错，容器起来才缺件，所以按「可能不完整」处理而不是当正常结果。
+MODELSCOPE_LISTING_LIMIT = 3000
+
+_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
+
+
+class ModelScopeFile(NamedTuple):
+    """文件清单里的一条：``path`` 仓库相对路径、``size`` 字节数、``sha256`` 可选哈希。"""
+
+    path: str
+    size: int | None
+    sha256: str | None
 
 
 def parse_modelscope_ref(source_url: str) -> tuple[str, str | None, str | None, str | None]:
@@ -89,9 +106,13 @@ def modelscope_resolve_url(endpoint: str, repo_id: str, revision: str, rel_path:
     return f"{endpoint.rstrip('/')}/models/{repo}/resolve/{rev}/{rel}"
 
 
-def extract_modelscope_files(data: dict) -> list[tuple[str, int | None]]:
-    """文件清单响应 → ``[(Path, Size)]``，只保留 blob，路径去前导斜杠。"""
-    out: list[tuple[str, int | None]] = []
+def extract_modelscope_files(data: dict) -> list[ModelScopeFile]:
+    """文件清单响应 → ``[ModelScopeFile]``，只保留 blob，路径去前导斜杠。
+
+    ``Sha256`` 一并取出：它是下载完成后校验内容的唯一依据（响应头 ``X-Linked-Etag``
+    只在 LFS 文件上有，且要额外发请求）。
+    """
+    out: list[ModelScopeFile] = []
     for item in (data.get("Data") or {}).get("Files") or []:
         if not isinstance(item, dict) or item.get("Type") != "blob":
             continue
@@ -101,8 +122,25 @@ def extract_modelscope_files(data: dict) -> list[tuple[str, int | None]]:
         size = item.get("Size")
         if isinstance(size, bool) or not isinstance(size, int) or size < 0:
             size = None
-        out.append((path, size))
+        sha = item.get("Sha256")
+        sha256 = sha.strip().lower() if isinstance(sha, str) and _SHA256_HEX.fullmatch(sha.strip()) else None
+        out.append(ModelScopeFile(path, size, sha256))
     return out
+
+
+def listing_may_be_truncated(data: dict) -> bool:
+    """清单恰好等于服务端单次上限 → 可能被截断（多出来的条目已被静默丢弃）。"""
+    files = (data.get("Data") or {}).get("Files") or []
+    return len(files) >= MODELSCOPE_LISTING_LIMIT
+
+
+def file_entries_missing(data: dict) -> bool:
+    """响应的 ``Data.Files`` 是 ``null`` 而不是列表。
+
+    出现过在 ``Root`` 指向不存在目录时：HTTP 200、``Code: 200``、``Files: null``。
+    与「空目录」不同义——空目录回空列表，这里连列表都没有，说明服务端没找到那个子树。
+    """
+    return (data.get("Data") or {}).get("Files") is None
 
 
 def latest_modelscope_short_id(data: dict) -> str | None:

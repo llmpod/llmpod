@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
@@ -260,6 +261,111 @@ async def test_junk_and_internal_files_skipped(tmp_path):
     assert not any(_MANIFEST_NAME in path for path in requested)
     assert not any("model.safetensors.part" in path for path in requested)
     assert json.loads((dest / _MANIFEST_NAME).read_text())["files"] == ["config.json", "model.safetensors"]
+
+
+async def test_listing_at_server_limit_refuses_to_download(tmp_path):
+    """清单正好等于服务端单次上限：可能被截断，宁可失败也不下个半套。"""
+    from llmpod.utils.modelscope_ref import MODELSCOPE_LISTING_LIMIT
+
+    dest = tmp_path / "dest"
+
+    async def handler(request: httpx.Request):
+        entries = [
+            {"Path": f"f{i}.bin", "Size": 1, "Type": "blob"} for i in range(MODELSCOPE_LISTING_LIMIT)
+        ]
+        return httpx.Response(
+            200,
+            json={"Code": 200, "Success": True, "Data": {"Files": entries, "LatestCommitter": {"ShortId": "abc"}}},
+        )
+
+    with pytest.raises(ModelScopeDownloadError, match="单次上限"):
+        await _run(dest, handler)
+
+
+async def test_existing_file_with_same_size_but_wrong_content_is_redownloaded(tmp_path):
+    """已存在且长度相同、内容不对的文件必须重下，不能因为「大小对了」就跳过。
+
+    只比大小的跳过会让长度恰好相同的旧版本文件永久通过（位翻转同理）。
+    """
+    declared = hashlib.sha256(b"PAYLOAD").hexdigest()
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "m.bin").write_bytes(b"XXXXXXX")  # 与清单同长、内容不同
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request):
+        if request.url.path.endswith("/repo/files"):
+            entries = [{"Path": "m.bin", "Size": 7, "Type": "blob", "Sha256": declared}]
+            return httpx.Response(
+                200,
+                json={"Code": 200, "Success": True, "Data": {"Files": entries, "LatestCommitter": {"ShortId": "abc"}}},
+            )
+        requested.append(request.url.path)
+        return httpx.Response(200, content=b"PAYLOAD")
+
+    await _run(dest, handler)
+
+    assert requested, "内容不符的旧文件不应被跳过"
+    assert (dest / "m.bin").read_bytes() == b"PAYLOAD"
+
+
+async def test_existing_file_matching_sha_is_skipped(tmp_path):
+    declared = hashlib.sha256(b"PAYLOAD").hexdigest()
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "m.bin").write_bytes(b"PAYLOAD")
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request):
+        if request.url.path.endswith("/repo/files"):
+            entries = [{"Path": "m.bin", "Size": 7, "Type": "blob", "Sha256": declared}]
+            return httpx.Response(
+                200,
+                json={"Code": 200, "Success": True, "Data": {"Files": entries, "LatestCommitter": {"ShortId": "abc"}}},
+            )
+        requested.append(request.url.path)
+        return httpx.Response(200, content=b"PAYLOAD")
+
+    await _run(dest, handler)
+
+    assert not requested, "哈希一致的已存在文件应跳过下载"
+
+
+async def test_sha256_passed_to_downloader(tmp_path):
+    """清单里的 Sha256 要一路传到下载器，否则内容损坏拦不住。"""
+    declared = hashlib.sha256(b"PAYLOAD").hexdigest()
+    dest = tmp_path / "dest"
+
+    async def handler(request: httpx.Request):
+        if request.url.path.endswith("/repo/files"):
+            entries = [{"Path": "m.bin", "Size": 7, "Type": "blob", "Sha256": declared}]
+            return httpx.Response(
+                200,
+                json={"Code": 200, "Success": True, "Data": {"Files": entries, "LatestCommitter": {"ShortId": "abc"}}},
+            )
+        return httpx.Response(200, content=b"PAYLOAD")
+
+    await _run(dest, handler)
+
+    assert (dest / "m.bin").read_bytes() == b"PAYLOAD"
+
+
+async def test_sha256_mismatch_fails_download(tmp_path):
+    dest = tmp_path / "dest"
+
+    async def handler(request: httpx.Request):
+        if request.url.path.endswith("/repo/files"):
+            entries = [{"Path": "m.bin", "Size": 7, "Type": "blob", "Sha256": "0" * 64}]
+            return httpx.Response(
+                200,
+                json={"Code": 200, "Success": True, "Data": {"Files": entries, "LatestCommitter": {"ShortId": "abc"}}},
+            )
+        return httpx.Response(200, content=b"PAYLOAD")
+
+    with pytest.raises(ModelScopeDownloadError, match="内容校验失败"):
+        await _run(dest, handler)
+
+    assert not (dest / "m.bin").exists()
 
 
 async def test_size_missing_raises(tmp_path):

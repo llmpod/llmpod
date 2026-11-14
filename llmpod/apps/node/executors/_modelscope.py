@@ -1,8 +1,8 @@
 """ModelScope 下载器（Node 侧）：自建 HTTP，逐文件 Range 续传。
 
 不引入 ModelScope SDK：文件清单走公开 API，文件内容走 resolve URL（支持 Range），
-复用 :func:`_download.download_resumable` 的续传 / 取消 / 进度 / 原子落定。
-仅支持公开模型；不读取 token。
+复用 :func:`_download.download_resumable` 的续传 / 取消 / 进度 / 哈希校验 / 原子落定。
+私有仓库把 token 同时放进 ``Authorization: Bearer`` 与 ``m_session_id`` cookie。
 
 落盘约定与 HF/manager 下载器一致：文件按 **仓库相对路径** 写入 ``local_dir``，
 下载开始前原子写入期望 manifest，``_verify_existing`` 据此判定中断目录未完成。
@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -18,17 +19,16 @@ from pathlib import Path
 
 import httpx
 
-from llmpod.apps.node.executors._download import download_resumable
+from llmpod.apps.node.executors._download import download_resumable, hash_file
 from llmpod.apps.node.executors._hf import _allow_patterns, _is_junk, _matches
 from llmpod.apps.node.executors.base import ByteProgressReporter, ReportFn
 from llmpod.apps.node.executors.ensure_model import DownloadCancelled, _MANIFEST_NAME
 from llmpod.config.constants import EnsureModelStage, TaskStatus
 from llmpod.config.settings import settings
+from llmpod.utils.modelscope_listing import ModelScopeListingError, list_repo_files
 from llmpod.utils.modelscope_ref import (
     MODELSCOPE_DEFAULT_REVISION,
-    extract_modelscope_files,
-    latest_modelscope_short_id,
-    modelscope_files_api_url,
+    ModelScopeFile,
     modelscope_resolve_url,
     parse_modelscope_ref,
 )
@@ -73,26 +73,29 @@ async def download_modelscope(
 
     timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, transport=transport) as client:
-        data = await _get_json(
-            client,
-            modelscope_files_api_url(endpoint, repo_id),
-            params={"Revision": request_rev, "Recursive": "true"},
-            label=repo_id,
-            headers=auth_headers,
-        )
-        all_files = extract_modelscope_files(data)
+        try:
+            listing = await list_repo_files(
+                client, endpoint, repo_id, request_rev, headers=auth_headers, subpath=subpath
+            )
+        except ModelScopeListingError as e:
+            raise ModelScopeDownloadError(str(e)) from e
+        all_files = listing.files
         if not all_files:
             raise ModelScopeDownloadError(f"ModelScope 仓库 {repo_id} 没有可下载文件")
+        if listing.walked:
+            log.info(
+                "ModelScope 仓库 %s 走分目录补枚举，得到 %d 个文件", repo_id, len(all_files)
+            )
 
-        resolve_rev = explicit_rev or latest_modelscope_short_id(data) or request_rev
+        resolve_rev = explicit_rev or listing.short_commit or request_rev
         files = _select_files(all_files, subpath, extra_files)
-        total_bytes = sum(size for _path, size in files) or None
+        total_bytes = sum(size for _path, size, _sha in files) or None
 
         dest_root = Path(local_dir)
         dest_root.mkdir(parents=True, exist_ok=True)
         # 下载开始前原子写期望清单：中断/失败留下的部分目录被 _verify_main 判「未完成」，
         # 下一 attempt 按 size 跳过已完成文件（与 manager 下载器同口径）
-        _write_manifest(dest_root, [path for path, _size in files])
+        _write_manifest(dest_root, [path for path, _size, _sha in files])
 
         await report(
             TaskStatus.RUNNING,
@@ -110,7 +113,7 @@ async def download_modelscope(
 
         reporter = ByteProgressReporter(report, bytes_total=total_bytes, stage=EnsureModelStage.DOWNLOADING)
         bytes_done = 0
-        for idx, (rel, size) in enumerate(files):
+        for idx, (rel, size, sha256) in enumerate(files):
             if cancel_event.is_set():
                 log.info("ModelScope download cancelled: repo=%s done=%d/%d", repo_id, idx, len(files))
                 raise DownloadCancelled()
@@ -120,14 +123,13 @@ async def download_modelscope(
                 raise ModelScopeDownloadError(f"路径越界，拒绝写入：{rel}")
             dest_file.parent.mkdir(parents=True, exist_ok=True)
 
-            if dest_file.is_file():
-                try:
-                    if dest_file.stat().st_size == size:
-                        bytes_done += size
-                        await reporter.report(bytes_done, force=True)
-                        continue
-                except OSError:
-                    pass
+            # 已存在且大小一致：视为上一轮下完的文件。清单给了哈希时仍要验一次——
+            # 只比大小的话，一个长度恰好相同的旧版本文件（或位翻转）会被永久接受，
+            # 而那正是 verify 阶段唯一会放过的东西。
+            if dest_file.is_file() and await _existing_file_ok(dest_file, size, sha256):
+                bytes_done += size
+                await reporter.report(bytes_done, force=True)
+                continue
 
             await download_resumable(
                 client,
@@ -140,6 +142,7 @@ async def download_modelscope(
                 base_bytes=bytes_done,
                 extra_headers=auth_headers,
                 error_cls=ModelScopeDownloadError,
+                expected_sha256=sha256,
             )
             bytes_done += size
             await reporter.report(bytes_done, force=True)
@@ -153,34 +156,6 @@ async def download_modelscope(
         log.info("ModelScope download done: repo=%s files=%d bytes_done=%s", repo_id, len(files), bytes_done)
 
 
-async def _get_json(
-    client: httpx.AsyncClient,
-    url: str,
-    *,
-    params: dict,
-    label: str,
-    headers: dict[str, str] | None = None,
-) -> dict:
-    """GET + HTTP 2xx + JSON + 业务码校验；失败抛中文下载错误。"""
-    try:
-        resp = await client.get(url, params=params, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        raise ModelScopeDownloadError(
-            f"无法访问 ModelScope 仓库 {label}（{type(e).__name__}）；"
-            "请检查仓库是否存在、是否公开，或私有仓库 token 是否有效"
-        ) from e
-
-    if not isinstance(data, dict):
-        raise ModelScopeDownloadError(f"ModelScope 仓库 {label} 响应不是 JSON 对象")
-    code = data.get("Code")
-    if str(code) != "200" or data.get("Success") is False:
-        message = str(data.get("Message") or "")[:200]
-        raise ModelScopeDownloadError(f"ModelScope 仓库 {label} 返回错误 {code}: {message}")
-    return data
-
-
 def _auth_headers(token: str | None) -> dict[str, str]:
     """ModelScope 私有仓库鉴权头：Bearer 覆盖新接口，``m_session_id`` cookie 覆盖旧接口。"""
     if not token:
@@ -188,22 +163,42 @@ def _auth_headers(token: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Cookie": f"m_session_id={token}"}
 
 
+async def _existing_file_ok(path: Path, size: int, sha256: str | None) -> bool:
+    """已存在的目标文件能否当作「已完成」跳过。
+
+    大小不符一律跳过重下；清单给了哈希时再整份算一次——只比大小的跳过会让长度
+    恰好相同的旧版本文件（或位翻转为同长度）永久通过。哈希由调用方从清单取，
+    没有时退回大小判定（此时没有更好的依据）。
+    """
+    try:
+        if path.stat().st_size != size:
+            return False
+    except OSError:
+        return False
+    if not sha256:
+        return True
+    digest = hashlib.sha256()
+    await asyncio.to_thread(hash_file, digest, path)
+    return digest.hexdigest() == sha256
+
+
 def _select_files(
-    files: list[tuple[str, int | None]], subpath: str | None, extra_files: list[str] | None
-) -> list[tuple[str, int]]:
+    files: list[ModelScopeFile], subpath: str | None, extra_files: list[str] | None
+) -> list[ModelScopeFile]:
     """按子路径/配套件收窄、跳过噪音与内部状态文件，并校验大小已知。"""
     patterns = _allow_patterns(subpath, extra_files)
-    out: list[tuple[str, int]] = []
+    out: list[ModelScopeFile] = []
     seen: set[str] = set()
-    for path, size in files:
+    for item in files:
+        path = item.path
         if path in seen or path == _MANIFEST_NAME or path.endswith(".part"):
             continue
         if not _matches(path, patterns) or _is_junk(path):
             continue
-        if size is None:
+        if item.size is None:
             raise ModelScopeDownloadError(f"文件大小缺失，无法校验下载完整性：{path}")
         seen.add(path)
-        out.append((path, size))
+        out.append(item)
 
     if not out:
         raise ModelScopeDownloadError(

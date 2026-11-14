@@ -402,8 +402,12 @@ class PlacementService:
                 # 3. 构造 task（payload 不含 secrets）。看门狗 12h：大模型下载
                 #    （node 内部 3 次重试 + 断点续传）合法耗时以小时计，取值只兜
                 #    「await 永不返回」的挂死，不误杀慢下载
-                # 模型体积汇总在线程池（rglob 大目录阻塞事件循环）；失败回落 None
+                # 模型体积：local 源在镜像上 rglob 汇总；其余源用探测时记下的 size_gb
+                # （HF / ModelScope 的清单探测就填了这个字段）。拿不到即 None，节点回落
+                # 固定阈值预检——只有真的不知道体积时才这样，不是所有非 local 源都 None
                 size_bytes = await asyncio.to_thread(_manager_source_size_bytes, model)
+                if size_bytes is None and model.size_gb:
+                    size_bytes = int(model.size_gb * 1024**3)
                 payload = self._build_payload(model, nm.local_dir, node_id)
                 payload = payload.model_copy(update={"total_bytes": size_bytes})
                 task = Task(

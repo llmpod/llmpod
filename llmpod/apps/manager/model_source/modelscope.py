@@ -21,11 +21,10 @@ from llmpod.apps.manager.model_source import inference, remote_gguf
 from llmpod.apps.manager.model_source.base import ModelFiles, ModelInspector
 from llmpod.apps.manager.model_source.huggingface import build_model_files
 from llmpod.config.settings import settings
+from llmpod.utils.modelscope_listing import list_repo_files
 from llmpod.utils.modelscope_ref import (
     MODELSCOPE_DEFAULT_REVISION,
-    extract_modelscope_files,
-    latest_modelscope_short_id,
-    modelscope_files_api_url,
+    ModelScopeFile,
     modelscope_repo_api_url,
     modelscope_resolve_url,
     parse_modelscope_ref,
@@ -55,14 +54,13 @@ class ModelScopeInspector(ModelInspector):
         timeout = settings.model_source_probe_timeout
 
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            # 文件清单是成败分水岭：不存在/私有仓库在这里拿到 404
+            # 文件清单是成败分水岭：不存在/私有仓库在这里拿到 404。
+            # 命中服务端单次上限时 list_repo_files 会按目录补枚举，保证清单完整
             try:
-                data = await _api_json(
-                    client,
-                    modelscope_files_api_url(endpoint, repo_id),
-                    params={"Revision": request_rev, "Recursive": "true"},
+                listing = await list_repo_files(
+                    client, endpoint, repo_id, request_rev, subpath=subpath
                 )
-            except Exception as e:  # 网络不通 / 仓库不存在 / 私有
+            except Exception as e:  # 网络不通 / 仓库不存在 / 私有 / 文件过多补不全
                 log.warning("ModelScope probe files failed for %s: %s", repo_id, e)
                 return ModelFiles(
                     success=False,
@@ -72,16 +70,16 @@ class ModelScopeInspector(ModelInspector):
                     ),
                 )
 
-            all_files = extract_modelscope_files(data)
+            all_files = listing.files
             if not all_files:
                 return ModelFiles(
                     success=False,
                     message=f"自动获取失败：ModelScope 仓库 {repo_id} 没有可下载文件",
                 )
-            all_names = [path for path, _size in all_files]
+            all_names = [item.path for item in all_files]
 
             # 未显式指定版本时钉到当前 commit，避免仓库前进后目录名不变、内容漂移
-            pinned_rev = explicit_rev or latest_modelscope_short_id(data) or request_rev
+            pinned_rev = explicit_rev or listing.short_commit or request_rev
 
             scoped = _scope_files(all_files, subpath)
             if subpath and not scoped:
@@ -109,7 +107,7 @@ class ModelScopeInspector(ModelInspector):
                 )
 
             gguf_header = None
-            scoped_names = [path for path, _size in scoped]
+            scoped_names = [item.path for item in scoped]
             if inference.infer_format([n.lower() for n in scoped_names]) == "gguf":
                 rel = inference.first_gguf_shard(scoped_names)
                 if rel:
@@ -118,7 +116,7 @@ class ModelScopeInspector(ModelInspector):
                     )
 
         files = build_model_files(
-            [{"rfilename": path, "size": size} for path, size in scoped],
+            [{"rfilename": item.path, "size": item.size} for item in scoped],
             task_name,
             config=config,
             model_index=model_index,
@@ -150,11 +148,11 @@ async def _api_json(client: httpx.AsyncClient, url: str, *, params: dict | None 
     return data
 
 
-def _scope_files(files: list[tuple[str, int | None]], subpath: str | None) -> list[tuple[str, int | None]]:
+def _scope_files(files: list[ModelScopeFile], subpath: str | None) -> list[ModelScopeFile]:
     sp = (subpath or "").strip("/")
     if not sp:
         return files
-    return [(path, size) for path, size in files if path == sp or path.startswith(sp + "/")]
+    return [item for item in files if item.path == sp or item.path.startswith(sp + "/")]
 
 
 async def _repo_meta(client: httpx.AsyncClient, endpoint: str, repo_id: str) -> tuple[str | None, str | None]:
