@@ -366,6 +366,102 @@ class TestRequestScale:
             await scale_mod.request_scale(session, dep.deployment_id, 3, trigger="test")
 
 
+class TestNodeSourceScale:
+    """节点目录模型（source=node）的在线扩缩：新份只落在绑定节点。
+
+    权重只存在于绑定节点：扩容调度若不收窄，新份会落到别的节点、在 staging 阶段以
+    「节点上模型目录不可用」失败回滚——受理/预览/驱动三口同判（enforce_node_source_spec）。
+    """
+
+    @staticmethod
+    def _make_node_source(scale_stack, monkeypatch):
+        """把 stack 模型改造成 source=node（绑 n1），并让 ncann 节点出现空闲 cann 卡。"""
+        session, dep, model = scale_stack
+        model.source, model.node_id = "node", "n1"
+        from llmpod.services import deployment_service
+
+        class _G:
+            def __init__(self, uuid, node_id, index=0, arch="nvidia", total_vram_gb=11.0, status="online"):
+                self.uuid, self.node_id, self.index = uuid, node_id, index
+                self.arch, self.total_vram_gb, self.status = arch, total_vram_gb, status
+                self.name, self.driver_version = ("Ascend 310P3", "25.2.3") if arch == "cann" else ("RTX2080Ti", None)
+
+        async def _gpus(db):
+            # g0/g1 本部署占用；n1 还有 g2/g3 空闲；ncann 另有 4 张空闲卡——不受限时
+            # 调度完全可能落过去
+            return (
+                [_G(f"g{i}", "n1", index=i) for i in range(4)]
+                + [_G(f"c{i}", "ncann", index=i, arch="cann") for i in range(4)]
+            )
+
+        async def _ips(db, node_ids):
+            return {**{f"g{i}": "10.0.1.5" for i in range(4)}, "ncann": "10.9.9.9", **{}}
+
+        monkeypatch.setattr(deployment_service, "load_online_gpus", _gpus)
+        monkeypatch.setattr(deployment_service, "load_node_ips", _ips)
+        return session, dep, model
+
+    async def test_preview_pool_restricted_to_bound_node(self, scale_stack, monkeypatch):
+        """预览的空闲卡/建议调度只看绑定节点——与真实扩容同口径。"""
+        session, dep, model = self._make_node_source(scale_stack, monkeypatch)
+        data = await scale_mod.preview_scale(session, dep.deployment_id)
+
+        assert data["free_gpus"] == 2  # 只数 n1 的 g2/g3，ncann 的 4 张不算
+        assert data["suggested_placement"]["node_ids"] == ["n1"]
+        assert set(data["suggested_placement"]["gpu_uuids"]) <= {"g2", "g3"}
+        assert data["max_feasible_copies"] == 4  # n1 上 g0..g3 四卡各占一份的极限
+
+    async def test_preview_rejects_when_copy_not_present(self, scale_stack, monkeypatch):
+        """副本不在绑定节点（被解绑/清除）→ 预览当场拒绝，不给会失败的扩容建议。"""
+        from llmpod.models.node_model import NodeModel
+
+        session, dep, model = self._make_node_source(scale_stack, monkeypatch)
+        session._store[NodeModel].pop((1, "n1"))
+        with pytest.raises(scale_mod.Conflict, match="可用副本"):
+            await scale_mod.preview_scale(session, dep.deployment_id)
+
+    async def test_request_scale_up_rejects_when_copy_not_present(self, scale_stack, monkeypatch):
+        """扩容受理期副本校验：拒绝且不落意图（缩容不受此限，见下一例）。"""
+        from llmpod.models.node_model import NodeModel
+
+        session, dep, model = self._make_node_source(scale_stack, monkeypatch)
+        session._store[NodeModel].pop((1, "n1"))
+        with pytest.raises(scale_mod.Conflict, match="可用副本"):
+            await scale_mod.request_scale(session, dep.deployment_id, 3, trigger="test")
+        dep2 = await session.get(ModelDeployment, dep.deployment_id)
+        assert dep2.scale_target is None and dep2.phase == "RUNNING"
+
+    async def test_request_scale_down_allowed_without_present_copy(self, scale_stack, monkeypatch):
+        """缩容只是摘份、不新落位：副本缺失不影响受理（不受扩容的副本校验限制）。"""
+        from llmpod.models.node_model import NodeModel
+
+        session, dep, model = self._make_node_source(scale_stack, monkeypatch)
+        session._store[NodeModel].pop((1, "n1"))
+        await scale_mod.request_scale(session, dep.deployment_id, 1, trigger="test")
+        dep2 = await session.get(ModelDeployment, dep.deployment_id)
+        assert dep2.scale_target == 1 and dep2.phase == "SCALING"
+
+    async def test_scale_up_assigns_new_copy_to_bound_node(self, scale_stack, monkeypatch):
+        """真实扩容：新份落在绑定节点——ncann 有 4 张空闲卡也不得成为候选。"""
+        session, dep, model = self._make_node_source(scale_stack, monkeypatch)
+
+        async def _drive_ok(deployment_id, trigger):
+            for r in session._store[ModelDeploymentReplica].values():
+                if r.seq >= 2:
+                    r.status = "serving"
+
+        monkeypatch.setattr(scale_mod, "_drive_new_replicas", _drive_ok)
+        await scale_mod.request_scale(session, dep.deployment_id, 3, trigger="test")
+        await scale_mod.drive_scaling(dep.deployment_id)
+
+        new = [s for s in session._store[Instance].values() if s.spec.get("replica_idx") == 2]
+        assert len(new) == 1
+        assert new[0].assigned_node == "n1"
+        assert new[0].spec["assigned_gpu_uuids"][0] in {"g2", "g3"}
+        dep2 = await session.get(ModelDeployment, dep.deployment_id)
+        assert dep2.spec["topology"]["replicas"] == 3
+
+
 class TestDriveScaling:
     async def test_resume_provisioning_residue_continues_scale_up(self, scale_stack, monkeypatch):
         """扩容中断（provisioning 残留 + spec 未回写）→ 按落库意图续跑到目标份数。"""

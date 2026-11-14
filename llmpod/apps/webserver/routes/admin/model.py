@@ -30,7 +30,7 @@ from llmpod.apps.webserver.auth.deps import get_current_user, require_permission
 from llmpod.apps.webserver.auth.session import SessionData
 from llmpod.apps.webserver.schemas import Result, success
 from llmpod.apps.webserver.schemas.response import PaginatedResponse
-from llmpod.apps.webserver.schemas.out_models import ModelListItemOut, ModelOut
+from llmpod.apps.webserver.schemas.out_models import ModelListItemOut, ModelNodeCopyOut, ModelOut
 from llmpod.config.enums import ModelSource, ModelType
 from llmpod.config.settings import settings
 from llmpod.core.exceptions import Conflict, LLMPodError, LLMPodValidationError, NotFound
@@ -249,25 +249,6 @@ class ModelDeleteData(BaseModel):
     purged_dirs: list[str] = Field(
         default_factory=list, description="连带清理的全部盘上目录（仅平台上架的 upload 产物；purged_dir 为首个，兼容旧字段）"
     )
-
-
-class ModelNodeCopyOut(BaseModel):
-    """模型在某台节点上的副本（平台记录，不主动探测节点）。"""
-
-    node_id: str = Field(..., description="节点ID")
-    hostname: str | None = Field(None, description="节点主机名")
-    ip: str | None = Field(None, description="节点 IP")
-    node_status: str | None = Field(None, description="节点在线状态：online | offline | maintenance | busy | drained")
-    desired_state: str = Field(..., description="manager 期望：present | absent")
-    model_status: str = Field(..., description="节点回报的模型状态：absent | downloading | verifying | present | failed")
-    local_dir: str | None = Field(None, description="模型所在目录")
-    model_path: str | None = Field(None, description="引擎 --model 实际指向的路径")
-    bytes_total: int | None = Field(None, description="模型总字节")
-    bytes_done: int = Field(0, description="已下字节")
-    verified_hash: str | None = Field(None, description="上次校验通过哈希")
-    last_error: str | None = Field(None, description="最近一次失败/不一致说明")
-    last_checked_at: datetime | None = Field(None, description="最近一次校验时间")
-    updated_at: datetime | None = Field(None, description="记录更新时间")
 
 
 class DeleteModelNodeRequest(BaseModel):

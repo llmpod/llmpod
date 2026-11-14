@@ -54,9 +54,9 @@ class TestGenerateStartArgs:
         assert len(args) == 2  # [引导脚本, $0 占位]
         script, zero = args
         assert zero == "bash"
-        assert "--config-file" in script  # daemon 只认 --config-file（M1 真机 strings 实证）
+        assert "--config-file" in script  # daemon 只认 --config-file（310P 真机 strings 实证）
         conf = _conf_from_script(script)
-        # 出厂模板顶层四段（M1 真机核验的结构，嵌套错误 daemon 拒启或静默空配）
+        # 出厂模板顶层四段（310P 真机核验的结构，嵌套错误 daemon 拒启或静默空配）
         assert set(conf) == {"Version", "ServerConfig", "BackendConfig", "LogConfig", "EnableDynamicAdjustTimeoutConfig"}
         server = conf["ServerConfig"]
         assert server["port"] == 1025
@@ -72,11 +72,11 @@ class TestGenerateStartArgs:
         assert model["modelWeightPath"] == "/models/Qwen"
         assert model["modelName"] == "qwen"
         assert model["worldSize"] == 1
-        # 键名对齐出厂模板（M1 真机模板实证；此前误写 interNodePk 被 daemon 静默忽略）
+        # 键名对齐出厂模板（310P 真机模板实证；此前误写 interNodePk 被 daemon 静默忽略）
         assert "interNodeTlsPk" in backend and "interNodePk" not in backend
 
     def test_bootstrap_patches_torch_dtype(self, adapter):
-        """310P 不支持 bfloat16：引导脚本幂等改写模型 config.json 为 fp16（M1 实测）。"""
+        """310P 不支持 bfloat16：引导脚本幂等改写模型 config.json 为 fp16（310P 真机实测）。"""
         args = adapter.generate_start_args(
             InstanceSpec(model_path="/models/Qwen", served_model_name="q", port=1025, nnodes=1),
             Topology(tp=1),
@@ -399,7 +399,7 @@ class TestBuildEnv:
 class TestHealthCheck:
     def test_ready_path_and_predicate(self, adapter):
         path, pred = adapter.health_check()
-        # 业务口唯一可探路径（M1 实测：/health 等恒 404，权威探针在管理口够不着）
+        # 业务口唯一可探路径（310P 真机实测：/health 等恒 404，权威探针在管理口够不着）
         assert path == "/v1/models"
 
         class _Resp:

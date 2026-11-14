@@ -134,6 +134,29 @@ async def test_flat_directory_at_limit_fails_loudly():
         await _listing(handler)
 
 
+async def test_shallow_listing_at_limit_fails_loudly():
+    """非递归列出自己也命中上限（直属条目被截断）：子目录集不完整，明确失败。
+
+    根级文件 + 大量子目录同处一层时会出现：浅层清单被静默截断后，丢掉的子目录
+    不会进入递归，最终清单必缺件。
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        root = params.get("Root")
+        recursive = params.get("Recursive") == "true"
+        if root is None and recursive:
+            return _resp([_blob(f"a/f{i}.bin") for i in range(MODELSCOPE_LISTING_LIMIT)])
+        if root is None and not recursive:
+            # 根下一层同样到上限（真实服务端行为：静默截断，无任何标记）
+            entries = [_blob("README.md")] + [_tree(f"d{i}") for i in range(MODELSCOPE_LISTING_LIMIT - 1)]
+            return _resp(entries)
+        raise AssertionError(f"意外请求 root={root} recursive={recursive}")
+
+    with pytest.raises(ModelScopeListingError, match="非递归列出也被截断"):
+        await _listing(handler)
+
+
 async def test_business_error_code_raises():
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

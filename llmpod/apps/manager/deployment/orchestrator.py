@@ -747,8 +747,9 @@ class DeploymentOrchestrator:
         adapter = get_adapter(dep.engine)
         # 防御性校验（路由已 422；此处覆盖 controller/直调等绕过路由的路径）
         adapter.validate_category(model.model_type)
-        # 节点目录模型：创建路由已钉定过，但 recovery/控制器重驱动/直调绕过路由，持久化 spec 里
-        # 可能是空选择器——不钉定会落到绑定节点之外（权重不在，staging 必失败）。写回避免下轮退回去。
+        # 节点目录模型：创建路由已把选择器锁定到绑定节点，但 recovery/控制器重驱动/直调
+        # 绕过路由，持久化 spec 里可能是空选择器——不锁定会落到绑定节点之外（权重不在，
+        # staging 必失败）。写回避免下轮退回去。
         # 与创建路由同序（先于结构校验），使注入的选择器同样参与后续校验。
         if await deployment_service.enforce_node_source_spec(db, model, config):
             dep.spec = config.model_dump()

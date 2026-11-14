@@ -25,6 +25,7 @@ from llmpod.models.balance_transaction import BalanceTransaction
 from llmpod.models.cluster import Cluster
 from llmpod.models.gpu import Gpu
 from llmpod.models.node import Node
+from llmpod.models.node_model import NodeModel
 from llmpod.models.permission import Permission
 from llmpod.models.request_log import RequestLog
 from llmpod.models.role import Role
@@ -116,7 +117,7 @@ RoleOut: type[BaseModel] = orm_schema(Role, exclude=["created_at", "updated_at"]
 ModelOut: type[BaseModel] = orm_schema(Model, exclude=["source_auth_encrypted"])
 
 
-class ModelListItemOut(ModelOut):  # type: ignore[misc]
+class ModelListItemOut(ModelOut):
     """模型列表项：额外给出已下载该模型的节点数量。"""
 
     node_count: int = Field(0, description="已下载该模型的节点数量（NodeModel.status=present）")
@@ -124,6 +125,21 @@ class ModelListItemOut(ModelOut):  # type: ignore[misc]
 
 ModelDeploymentOut: type[BaseModel] = orm_schema(ModelDeployment, jsonb_types={"spec": DeploymentConfig})
 InstanceOut: type[BaseModel] = orm_schema(Instance, jsonb_types={"spec": InstanceSpec})
+
+
+class ModelNodeCopyOut(orm_schema(NodeModel, exclude=["model_id", "status", "created_at"])):
+    """模型在某节点上的副本视图（``node_model`` 行 + 关联节点的展示信息）。
+
+    ``status`` 列在此改名 ``model_status``：与 ``node_status``（节点在线状态）并排
+    出现，原名会让两端语义混淆；``model_id``/``created_at`` 对该视图无信息量，排除。
+    """
+
+    model_status: str = Field(
+        ..., description="节点回报的模型状态：absent | downloading | verifying | present | failed"
+    )
+    hostname: str | None = Field(default=None, description="节点主机名（节点行缺失为 None）")
+    ip: str | None = Field(default=None, description="节点 IP（节点行缺失为 None）")
+    node_status: str | None = Field(default=None, description="节点在线状态：online | offline | maintenance | busy | drained（节点行缺失为 None）")
 
 
 class ModelEndpointOut(orm_schema(ModelEndpoint, exclude=["api_key"])):
@@ -499,6 +515,7 @@ __all__ = [
     "ModelListItemOut",
     "ModelDeploymentOut",
     "InstanceOut",
+    "ModelNodeCopyOut",
     "ModelEndpointOut",
     "UserDetailOut",
     "RoleDetailOut",

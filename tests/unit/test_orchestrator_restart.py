@@ -227,8 +227,8 @@ def _expected_vram() -> float:
 class TestRestartNodeSource:
     """节点目录模型（source=node）：绑定节点优先于原实例落点。
 
-    重启默认复用原实例、不重新调度，所以先前落到别的节点（空选择器绕过钉定的历史数据）只会
-    沿错节点重跑 staging 并失败——必须清规划重排。
+    重启默认复用原实例、不重新调度，所以先前落到别的节点（空选择器绕过「锁定到绑定
+    节点」检查的历史数据）只会沿错节点重跑 staging 并失败——必须清规划重排。
     """
 
     def _seed_node_source(self, session, *, inst_node: str = "n1", spec_selector=None):
@@ -252,7 +252,7 @@ class TestRestartNodeSource:
         dep = await session.get(ModelDeployment, "dep-1")
         assert dep.status == "creating"
         assert dep.phase == "PENDING"  # 控制器只驱动 STAGING_PHASES
-        assert dep.spec["gpu_selector"]["node_id"] == "n1"  # 钉定写回
+        assert dep.spec["gpu_selector"]["node_id"] == "n1"  # 锁定到绑定节点的选择器写回
         assert session.all(Instance) == []  # 四层规划产物清空，交 _plan 重排
         assert orch.ledger.get_reserved_for_deployment("dep-1") == {}
 

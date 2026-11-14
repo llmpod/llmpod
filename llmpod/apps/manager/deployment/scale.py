@@ -168,7 +168,8 @@ async def preview_scale(db, deployment_id: str) -> dict:
     （含存量卡排重），直到装不下；调度预览取再扩一份的调度。容量口径与真实调度同源
     （``GpuScheduler.card_fits``：账本可用量 vs 该卡预留上限），故预览给出的份数在
     ``assign`` 阶段不会因别家预留而失败。异构副本不支持伸缩（request_scale 同口径
-    拒绝），预检同样拒绝；CPU 部署同样拒绝（扩容走 GPU 调度口径）。
+    拒绝），预检同样拒绝；CPU 部署同样拒绝（扩容走 GPU 调度口径）。节点目录模型
+    同样过 ``enforce_node_source_spec`` 并把卡池收缩到绑定节点——预览与真实扩容同口径。
     """
     dep, model, config, replicas = await load_scale_context(db, deployment_id)
     if dep.status != DeploymentStatus.RUNNING:
@@ -182,12 +183,21 @@ async def preview_scale(db, deployment_id: str) -> dict:
     # 纯 CPU 部署与在线扩容不兼容（扩容无部署形态求解与内存记账）：判据是**实例事实**，不是
     # config.allow_cpu——「允许落 CPU」但模型装得下卡的部署仍走显存，扩缩容应当放行
     existing = await _reject_cpu_lane(db, deployment_id, "调整副本")
+    # 节点目录模型：新份只能落在绑定节点（权重只在那台机器上）。判据与创建/重启同源
+    # （enforce_node_source_spec），可见卡池收缩到该节点后，预览的空闲卡数/可扩上限/
+    # 建议调度才与真实扩容一致——不收缩会把别的节点算成「可扩」，真扩时新份落过去
+    # 只会在 staging 阶段以「节点上模型目录不可用」失败回滚
+    bound = deployment_service.bound_node_of_model(model)
+    if bound is not None:
+        await deployment_service.enforce_node_source_spec(db, model, config)
     if topo.replicas != current:
         # spec 份数与实际行数漂移（扩容中途的瞬态）：以行数为准呈现
         topo = topo.with_updates(replicas=current)
 
     adapter = get_adapter(dep.engine)
     gpu_pool = await deployment_service.load_online_gpus(db)
+    if bound is not None:
+        gpu_pool = [g for g in gpu_pool if g.node_id == bound]
     # 生效占比与真实扩容同口径（存量份落盘值优先），预览容量才不会「预览说能扩、
     # 真扩按继承占比判不够」
     util = adapter.effective_memory_utilization(
@@ -385,6 +395,11 @@ async def request_scale(db, deployment_id: str, copies: int, *, trigger: str = "
     await _reject_cpu_lane(db, deployment_id, "调整副本")
     if copies == current:
         return  # 已是目标态：无操作
+    # 节点目录模型**扩容**：受理即校验绑定节点约束（副本已不在该节点/选择器越界当场
+    # 拒绝），而不是等 controller 驱动时才失败回滚——那时的错误文案指向 staging，误导
+    # 排查。缩容只摘份、不新落位，不受此限（副本缺失时也允许缩容）
+    if copies > current and deployment_service.bound_node_of_model(model) is not None:
+        await deployment_service.enforce_node_source_spec(db, model, config)
     # 新意图覆盖旧簿记（可能是上次放弃后的重试）
     _scale_fail_streak.pop(deployment_id, None)
     dep.scale_target = copies
@@ -486,6 +501,8 @@ async def _scale_up(deployment_id: str, target: int, trigger: str) -> None:
 
     纯 CPU 部署暂不支持在线扩容：扩容走 GPU 调度口径（无 RAM 记账），
     会把新份静默变成显存部署且不记内存 claim。明确拒绝，让用户改副本数重新部署。
+
+    节点目录模型的新份只调度到绑定节点（卡池收缩，见 1.5 与 3 的注释）。
     """
     orch = get_orchestrator()
     async with get_db_context() as db:
@@ -497,6 +514,14 @@ async def _scale_up(deployment_id: str, target: int, trigger: str) -> None:
         # 纯 CPU 部署分片带 ram_claim_gb + cpu arch（与 preview/受理同一谓词）
         existing_shards = await deployment_service.list_instances(db, deployment_id)
         _reject_cpu_lane_shards(existing_shards, "扩容")
+
+        # 1.5 节点目录模型：新份只允许绑定节点（权重只在那台机器上，落别的节点
+        # staging 必失败）。受理侧已校验过选择器，这里再校验一次副本状态——受理
+        # 到驱动之间副本可能被解绑/删除（controller 续跑/manager 重启后的恢复路径
+        # 也不经过受理侧）
+        bound = deployment_service.bound_node_of_model(model)
+        if bound is not None:
+            await deployment_service.enforce_node_source_spec(db, model, config)
 
         # 2. 补展开缺失份（绝对 seq）：同形副本各份形状一致，展开产物按序映射到缺失序号
         present_seqs = {r.seq for r in replicas}
@@ -521,6 +546,10 @@ async def _scale_up(deployment_id: str, target: int, trigger: str) -> None:
         if insts:
             # 3. 调度 + 预留（全自动调度；存量卡排除）
             gpu_pool = await deployment_service.load_online_gpus(db)
+            if bound is not None:
+                # 卡池收缩到绑定节点：调度、arch 推断与容量判定都只看该节点，
+                # 与 preview 同口径（否则「预览说落这台、真扩落别处」）
+                gpu_pool = [g for g in gpu_pool if g.node_id == bound]
             vram_per_gpu = adapter.vram_per_gpu(
                 model, topo, engine_params=config.engine_params, kv_cache=config.kv_cache
             )

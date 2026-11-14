@@ -161,11 +161,16 @@ def bound_node_of_model(model: Model) -> str | None:
     return model.node_id
 
 
+# 「节点上没有可用副本」的统一文案：重启/扩容受理（require_node_model_present）与
+# 预检/创建（node_source_scope_errors）共用，两处各写一份迟早漂移
+NO_PRESENT_COPY_MESSAGE = "该节点上没有此模型的可用副本，无法部署（请先从节点目录导入或等待分发完成）"
+
+
 async def require_node_model_present(db: AsyncSession, model_id: int, node_id: str) -> None:
     """要求 ``node_model`` 显示该节点已持有此模型（present），否则拒绝部署。"""
     rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == model_id))).scalars())
     if not any(r.node_id == node_id and r.status == NodeModelState.PRESENT for r in rows):
-        raise Conflict("该节点上没有此模型的可用副本，无法部署（请先从节点目录导入或等待分发完成）")
+        raise Conflict(NO_PRESENT_COPY_MESSAGE)
 
 
 async def node_source_scope_errors(db: AsyncSession, model: Model, topology, selector) -> list[tuple[str, str]]:
@@ -183,9 +188,7 @@ async def node_source_scope_errors(db: AsyncSession, model: Model, topology, sel
         errors.append(("multi_node", "节点目录导入的模型只能在单台节点部署（nnodes 必须为 1）"))
     rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == model.id))).scalars())
     if not any(r.node_id == bound and r.status == NodeModelState.PRESENT for r in rows):
-        errors.append(
-            ("no_copy", "该节点上没有此模型的可用副本，无法部署（请先从节点目录导入或等待分发完成）")
-        )
+        errors.append(("no_copy", NO_PRESENT_COPY_MESSAGE))
     if selector is not None:
         if selector.node_id and selector.node_id != bound:
             errors.append(("other_node", f"节点目录导入的模型只能部署到绑定节点 {bound}"))
@@ -203,20 +206,21 @@ def _selector_is_empty(selector: GpuSelector | None) -> bool:
     """GPU 选择器实质为空（node_id / gpu_uuids / node_ids 三字段全 falsy）。
 
     下游按真值判「是否指定了节点/卡」，空 ``GpuSelector()`` 等效于自动调度——只判
-    ``is not None`` 会让空选择器绕过节点目录模型的钉定。
+    ``is not None`` 会让空选择器绕过节点目录模型的「锁定到绑定节点」。
     """
     return selector is None or not (selector.node_id or selector.gpu_uuids or selector.node_ids)
 
 
 async def enforce_node_source_spec(db: AsyncSession, model: Model, spec: DeploymentConfig) -> bool:
-    """节点目录模型的部署硬限制（预检、创建、重规划、重启共用同一份判据）。
+    """节点目录模型的部署硬限制（预检、创建、重规划、重启、在线扩缩共用同一份判据）。
 
     - 只允许绑定节点持有副本，且副本必须 present；
     - 只允许单机部署；
     - 显式指定节点/卡时逐一校验；
-    - 未指定（含空选择器）时把选择器钉到绑定节点，防止自动调度落到别的机器（含 CPU 逐份钉定）。
+    - 未指定（含空选择器）时把选择器锁定到绑定节点，防止自动调度落到别的机器（含 CPU
+      部署按副本逐份锁定）。
 
-    返回是否注入了钉定选择器——重规划/重启路径据此决定要不要写回持久化 spec。
+    返回是否注入了锁定选择器——重规划/重启路径据此决定要不要写回持久化 spec。
     """
     bound = bound_node_of_model(model)
     if bound is None:
@@ -233,7 +237,7 @@ async def enforce_node_source_spec(db: AsyncSession, model: Model, spec: Deploym
         replicas = max(1, spec.topology.replicas or 1)
         spec.gpu_selector = GpuSelector(node_ids=[bound] * replicas)
     else:
-        # 单节点钉定：GPU 调度只会选该节点；allow_cpu 回退到 CPU 档时
+        # 锁定到绑定节点单台：GPU 调度只会选该节点；allow_cpu 回退到 CPU 档时
         # ``_resolve_lane`` / ``_assign_cpu_lane`` 同样只在该节点求解
         spec.gpu_selector = GpuSelector(node_id=bound)
     return True

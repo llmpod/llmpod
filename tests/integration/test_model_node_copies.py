@@ -56,6 +56,7 @@ def _copy(model_id: int, node_id: str, *, status: str = "present") -> NodeModel:
         bytes_total=1024,
         bytes_done=1024,
         last_checked_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
     )
 
 

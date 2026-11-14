@@ -12,7 +12,7 @@ positional token ``[引导脚本, "bash"]``，经 entrypoint ``/bin/bash -c`` �
   ``cann-*/share/info/ascendnpu-ir/bin/set_env.sh`` 是 aie_ops / torch 库路径的唯一
   来源，覆盖入口会缺它导致 daemon 启动即崩）→ 后台拉起 daemon + ``wait``——daemon
   若为容器 PID 1，其 setpgid(0,0) 必 EPERM 崩溃（容器 255）。
-- config 结构对齐 3.1.0 出厂模板（M1 真机核验）：``ModelConfig`` 嵌套于
+- config 结构对齐 3.1.0 出厂模板（310P3 真机核验）：``ModelConfig`` 嵌套于
   ``BackendConfig.ModelDeployConfig`` 下、worldSize 只在模型条目上（BackendConfig
   无此键）、daemon 只认 ``--config-file``（无 ``--config``/``-c``）。系统层写死
   ``httpsEnabled/interCommTLSEnabled/interNodeTLSEnabled:false``（平台是 http 反代、
@@ -20,7 +20,7 @@ positional token ``[引导脚本, "bash"]``，经 entrypoint ``/bin/bash -c`` �
   容器外不可达）；management/metrics 端口由业务端口 +1/+2 派生（host 网络下同节点
   多实例不撞固定端口）。
 
-健康检查用业务口 ``/v1/models``（M1 真机实测）：MindIE 的权威就绪探针 ``/v2/health/ready``
+健康检查用业务口 ``/v1/models``（310P 真机实测）：MindIE 的权威就绪探针 ``/v2/health/ready``
 只在管理口（``managementPort=port+1``，绑 127.0.0.2），而平台探活 URL 由 reconciler 固定按
 业务口拼装、适配器只能声明 path——业务口上唯一可探的就是 ``/v1/models``。其语义弱于权威
 探针：实测「HTTP 起服务」早于「模型加载完」约 10~20s，该窗口内标 READY 放进的请求会失败，
@@ -73,7 +73,7 @@ def _bootstrap_script(conf: dict, model_path: str) -> str:
         "mkdir -p /tmp/llmpod-mindie\n"
         f"cat > {_CONF_PATH} <<'LLMPOD_CONF_EOF'\n{payload}\nLLMPOD_CONF_EOF\n"
         f"chmod 640 {_CONF_PATH}\n"
-        # 310P 不支持 bfloat16（M1 实测：daemon 在模型加载期 NotImplementedError 崩溃），
+        # 310P 不支持 bfloat16（真机实测：daemon 在模型加载期 NotImplementedError 崩溃），
         # Qwen 系官方权重 bf16 落盘——幂等改写模型 config.json 为 fp16（已是 fp16 则无操作）。
         # 模型卷 rw 挂载可写；意外只读时 || true 吸收，daemon 会以原始报错暴露
         f'sed -i \'s/"torch_dtype": *"bfloat16"/"torch_dtype": "float16"/\' '
@@ -121,7 +121,7 @@ class MindIEAdapter(EngineAdapter):
     trust_remote_code_flag = None  # 无 CLI flag——由 config 的 trustRemoteCode 表达
     supported_features = []
     # 系统必控 flag：config 路径由引导脚本持有，用户 extra_args 同名会被忽略
-    # （daemon 只认 --config-file，无 --config/-c——M1 真机 strings 实证）
+    # （daemon 只认 --config-file，无 --config/-c——310P 真机 strings 实证）
     protected_flags = ["--config-file"]
     param_suggestions = []  # MindIE 调参项是 config 字段非 CLI flag，不诱导用户塞 flag
 
@@ -204,7 +204,8 @@ class MindIEAdapter(EngineAdapter):
         # 只曝设备可见性。绝不能注入 ASCEND_SLOG_PRINT_TO_STDOUT=1：它让 libascend_hal.so
         # 往 stdout 写驱动日志，污染 ATB set_env.sh 的 ABI 探测命令替换（见 _ENV_SOURCES
         # 注释），误加载 cxx_abi_0 版 libatb.so 导致 warmup 建图 SIGSEGV（容器 134，
-        # NPU 节点 A/B 实验实锤）——当初为「容器日志可见性」加的这行正是五环 134 的根因。
+        # NPU 节点 A/B 实验实锤）——当初为「容器日志可见性」加的这行正是容器退出码
+        # 134 的根因。
         # CANN/mindie 日志走默认文件路径（容器可写层 /root/ascend/log），daemon 的 Python
         # 级错误仍走 stderr 进容器日志，排障能力不降
         return {
@@ -214,7 +215,7 @@ class MindIEAdapter(EngineAdapter):
 
     @classmethod
     def health_check(cls) -> tuple[str, Callable[[Any], bool]]:
-        # 业务口上的事实唯一探针（M1 实测：/health、/healthz、/readyz 在业务口恒 404，
+        # 业务口上的事实唯一探针（真机实测：/health、/healthz、/readyz 在业务口恒 404，
         # 权威探针 /v2/health/ready 只在管理口 127.0.0.2:port+1，平台探活 URL 够不着）。
         # 弱语义：/v1/models 比「模型加载完」早约 10~20s 返回 200，早放流量由代理侧
         # 故障切换/冷却兜底——接受该窗口是「不动 reconciler 共用逻辑」的取舍
@@ -242,7 +243,7 @@ class MindIEAdapter(EngineAdapter):
         port = int(instance.port or self.default_port)
         world = len(instance.assigned_gpus or [0])
         served = instance.served_model_name or instance.model_path
-        # 出厂模板**全量键集**，只覆写平台管控项（M1 真机核验教训：ConfigManager 按
+        # 出厂模板**全量键集**，只覆写平台管控项（真机核验教训：ConfigManager 按
         # 模板逐键取值，省略的键内部合并成 null，读到布尔键直接 type_error.302 崩溃，
         # 故 TLS 证书路径等惰性键也原样保留——TLS 三开关关闭时它们不被使用）。
         # 平台覆写：0.0.0.0 监听 + https/interComm/interNode TLS 关（http 反代）、

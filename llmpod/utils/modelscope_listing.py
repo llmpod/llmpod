@@ -129,7 +129,6 @@ async def list_repo_files(
     # 补枚举一律钉到首轮拿到的 commit：分支在两次请求之间可能前进，那样补回来的
     # 文件可能不在我们最终用于下载的 revision 上（列得出来、下不到，404）
     walk_rev = (short_commit or "").strip() or revision
-    budget = [_MAX_LISTING_REQUESTS]
     walked = await _walk_by_root(
         client,
         endpoint,
@@ -138,7 +137,7 @@ async def list_repo_files(
         root=None,
         headers=headers,
         label=shown,
-        budget=budget,
+        budget=[_MAX_LISTING_REQUESTS],
         subpath=subpath,
     )
     # 补枚举回来的清单同样要去重（Root 列出的 path 已带目录前缀，正常不会重叠，
@@ -192,9 +191,21 @@ async def _walk_by_root(
         client, endpoint, repo_id, revision, root=root, recursive=False, headers=headers, label=label
     )
     entries = (shallow.get("Data") or {}).get("Files") or []
-    out: list[ModelScopeFile] = [
-        item for item in extract_modelscope_files(shallow) if item.path
-    ]
+    if listing_may_be_truncated(shallow):
+        # 直属条目（文件 + 子目录）本身达到上限：非递归清单同样被服务端静默截断，
+        # 被丢掉的子目录不会进入下方递归，最终清单必缺件。先试子路径收窄，
+        # 收不了就明确失败——与「拆不动」同口径，绝不返回残缺清单
+        narrowed = await _narrow_by_subpath(
+            client, endpoint, repo_id, revision, root=root, subpath=subpath, headers=headers, label=label
+        )
+        if narrowed is not None:
+            return narrowed
+        raise ModelScopeListingError(
+            f"ModelScope 仓库 {label} 的目录 {root or '/'} 直属条目数达到服务端单次上限"
+            f"（{MODELSCOPE_LISTING_LIMIT}），非递归列出也被截断，无法完整取得子目录集；"
+            "请改用子路径（source_subpath）收窄范围"
+        )
+    out: list[ModelScopeFile] = extract_modelscope_files(shallow)
     subdirs = [
         str(entry.get("Path") or "").strip().lstrip("/")
         for entry in entries

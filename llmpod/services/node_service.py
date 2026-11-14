@@ -614,7 +614,8 @@ async def _force_remove_node(node: Node, db: AsyncSession) -> DecommissionResult
 
     - **不做实例状态守卫**。正常注销要求节点上只剩 STOPPED 实例，而报废机器上的实例
       永远停在 RUNNING/READY/CRASHED——节点再也回不来，那些部署也永远起不来，
-      恢复正常路径等于永久锁死这条记录。这里是管理员确认过的破窗操作。
+      恢复正常路径等于永久锁死这条记录。这里是管理员确认后才允许的例外：跳过守卫
+      强制删除。
     - **只允许离线节点**：节点 WS 还连着说明机器活着，走正常注销（会通知节点自清理
       容器与具名数据卷）。在线强行删记录会把容器和卷留在活机器上成为孤儿。
     - **连带删除部署**：该节点上有实例的部署整条级联删（实例 / 副本 / 引擎 / 端点 /
@@ -647,7 +648,7 @@ async def _force_remove_node(node: Node, db: AsyncSession) -> DecommissionResult
     )
 
     # 先置 deleting 再提交：控制器不再为这些部署新起 staging / 运行期自愈协程，
-    # 后续级联删除不会与编排写同一批行打架（与「删除部署」路由同一落位手法）。
+    # 后续级联删除不会与编排写同一批行打架（做法与「删除部署」路由相同：先占状态再删行）。
     for deployment_id in deployment_ids:
         dep = await db.get(ModelDeployment, deployment_id)
         if dep is not None:
@@ -686,7 +687,8 @@ async def _force_remove_node(node: Node, db: AsyncSession) -> DecommissionResult
         except Exception as e:
             log.warning("强制移除节点：释放部署 %s 的预留失败: %s", deployment_id[:8], e)
 
-    # 模型分发需求重算：失主模型在其它节点上的下载需求可能随之消失
+    # 模型分发需求重算：绑定到这台节点的目录导入模型没了宿主，在其它节点上的
+    # 下载需求可能随之消失
     try:
         await PlacementService().recompute_demand()
     except Exception:

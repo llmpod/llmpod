@@ -130,9 +130,8 @@ def probe_model_dir_sync(
     """只读探测节点上的模型目录（同步实现，调用方负责跳线程）。"""
     roots = _allowed_roots(store_dir, import_roots)
     resolved, error = _validate(path, roots)
-    if error:
-        return ModelDirProbe(exists=False, message=error)
-    assert resolved is not None
+    if resolved is None:
+        return ModelDirProbe(exists=False, message=error or "路径不可解析")
     if not resolved.exists():
         return ModelDirProbe(exists=False, message="目录不存在或不可达")
     if not resolved.is_dir():
@@ -170,9 +169,8 @@ def remove_model_dir_sync(
     """受控删除节点上的模型目录（同步实现，调用方负责跳线程）。"""
     roots = _allowed_roots(store_dir, import_roots)
     resolved, error = _validate(path, roots)
-    if error:
-        return RemoveModelDirResult(removed=False, path=path, message=error)
-    assert resolved is not None
+    if resolved is None:
+        return RemoveModelDirResult(removed=False, path=path, message=error or "路径不可解析")
     if not resolved.exists():
         return RemoveModelDirResult(removed=False, path=str(resolved), message="目录不存在")
     if not resolved.is_dir():

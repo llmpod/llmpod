@@ -123,9 +123,9 @@ async def download_modelscope(
                 raise ModelScopeDownloadError(f"路径越界，拒绝写入：{rel}")
             dest_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # 已存在且大小一致：视为上一轮下完的文件。清单给了哈希时仍要验一次——
-            # 只比大小的话，一个长度恰好相同的旧版本文件（或位翻转）会被永久接受，
-            # 而那正是 verify 阶段唯一会放过的东西。
+            # 已存在且哈希一致：视为上一轮下完的文件。清单没给哈希时不跳过（重下，
+            # 响应头 X-Linked-Etag 仍兜底）——只比大小会让同长度的旧版本/位翻转
+            # 永久通过，判据见 _existing_file_ok
             if dest_file.is_file() and await _existing_file_ok(dest_file, size, sha256):
                 bytes_done += size
                 await reporter.report(bytes_done, force=True)
@@ -166,17 +166,19 @@ def _auth_headers(token: str | None) -> dict[str, str]:
 async def _existing_file_ok(path: Path, size: int, sha256: str | None) -> bool:
     """已存在的目标文件能否当作「已完成」跳过。
 
-    大小不符一律跳过重下；清单给了哈希时再整份算一次——只比大小的跳过会让长度
-    恰好相同的旧版本文件（或位翻转为同长度）永久通过。哈希由调用方从清单取，
-    没有时退回大小判定（此时没有更好的依据）。
+    大小不符一律重下；**清单没给哈希时同样不跳过**——只比大小的跳过会让长度恰好
+    相同的旧版本文件（或位翻转为同长度）永久通过，而那正是校验阶段唯一会放过的
+    东西。重下走 download_resumable：其响应头 ``X-Linked-Etag`` 兜底（LFS 对象）
+    仍然生效。清单不带合法 sha256 的基本只有非 LFS 小文件（LFS 对象恒带 sha256），
+    重下成本可忽略。
     """
+    if sha256 is None:
+        return False
     try:
         if path.stat().st_size != size:
             return False
     except OSError:
         return False
-    if not sha256:
-        return True
     digest = hashlib.sha256()
     await asyncio.to_thread(hash_file, digest, path)
     return digest.hexdigest() == sha256

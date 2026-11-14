@@ -331,6 +331,33 @@ async def test_existing_file_matching_sha_is_skipped(tmp_path):
     assert not requested, "哈希一致的已存在文件应跳过下载"
 
 
+async def test_existing_file_without_manifest_sha_is_redownloaded(tmp_path):
+    """清单没给哈希时，同长度的已存在文件不得按大小跳过。
+
+    只比大小的跳过会让同长度旧版本/位翻转永久通过。重下后由响应头 X-Linked-Etag
+    兜底校验（LFS 对象）——本例服务端不给哈希头，落盘以实收内容为准。
+    """
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "m.bin").write_bytes(b"XXXXXXX")  # 与清单同长、内容是旧的
+    requested: list[str] = []
+
+    async def handler(request: httpx.Request):
+        if request.url.path.endswith("/repo/files"):
+            entries = [{"Path": "m.bin", "Size": 7, "Type": "blob"}]  # 无 Sha256
+            return httpx.Response(
+                200,
+                json={"Code": 200, "Success": True, "Data": {"Files": entries, "LatestCommitter": {"ShortId": "abc"}}},
+            )
+        requested.append(request.url.path)
+        return httpx.Response(200, content=b"PAYLOAD")
+
+    await _run(dest, handler)
+
+    assert requested, "清单无哈希时同长度旧文件不应被跳过"
+    assert (dest / "m.bin").read_bytes() == b"PAYLOAD"
+
+
 async def test_sha256_passed_to_downloader(tmp_path):
     """清单里的 Sha256 要一路传到下载器，否则内容损坏拦不住。"""
     declared = hashlib.sha256(b"PAYLOAD").hexdigest()
