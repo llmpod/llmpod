@@ -35,6 +35,7 @@ from llmpod.tunnel.schemas import (
     GpuInfo,
     ModelDirProbe,
     NodeReport,
+    PortCheckResult,
     RemoveModelDirResult,
     RemoveResult,
     ShellResult,
@@ -396,6 +397,20 @@ async def remove_model_dir(node_id: str, path: str) -> RemoveModelDirResult:
     log.info("Dispatching remove_model_dir to node=%s path=%s", node_id, path)
     try:
         return await proxy.remove_model_dir(path=path)
+    except (NodeOffline, RemoteError) as e:
+        raise _wrap_rpc_error(e, node_id)
+
+
+async def check_ports_free(node_id: str, ports: list[int]) -> PortCheckResult:
+    """让节点试绑探测端口占用（调用 NodeService.check_ports_free，发号前外部占用预检）。
+
+    节点离线/通道异常按领域异常抛出；fail-open（预检失败退回纯账本发号）由调用方
+    （``deployment_service`` 的端口分配）决定，本层如实上抛。
+    """
+    hub, _ = _require_node(node_id)
+    proxy = hub.proxy(node_id, NodeService)
+    try:
+        return await proxy.check_ports_free(ports=ports)
     except (NodeOffline, RemoteError) as e:
         raise _wrap_rpc_error(e, node_id)
 

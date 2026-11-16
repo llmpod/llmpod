@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import time
 from typing import AsyncIterator
 
@@ -24,7 +25,13 @@ from llmpod.apps.node.deployers.docker import (
 from llmpod.apps.node.exceptions import TaskExecutionError
 from llmpod.config.settings import Settings
 from llmpod.tunnel.contract import NodeService
-from llmpod.tunnel.schemas import ModelDirProbe, NodeReport, RemoveModelDirResult, ShellResult
+from llmpod.tunnel.schemas import (
+    ModelDirProbe,
+    NodeReport,
+    PortCheckResult,
+    RemoveModelDirResult,
+    ShellResult,
+)
 
 log = logging.getLogger("llmpod.apps.node.service.node")
 
@@ -40,6 +47,27 @@ _TAIL_REVIVE_WINDOW_S = 600.0
 
 # 容器未创建时的诊断文案（部署准备/重建窗口；降频轮询期间节流输出）
 _TAIL_WAIT_MESSAGE = "尚未创建（部署准备中）"
+
+
+def _bind_check_ports(ports: list[int]) -> list[int]:
+    """逐口在 0.0.0.0 试绑 TCP 后立即关闭，返回被占用的口（线程池运行，勿在事件循环直接跑）。
+
+    不设 SO_REUSEADDR：设了会把 TIME_WAIT 状态的口也报可绑，预检失真。引擎自身对
+    TIME_WAIT 口能否重绑因实现而异（asyncio 系默认设 SO_REUSEADDR 可重绑，原生 bind
+    则会撞），预检按保守口径把这类口判为不可绑——宁可少发一个口，不冒撞车风险。
+    bind 成功即视为空闲——bind 与引擎真正监听之间仍有秒级窗口，外部进程恰在此窗口
+    抢绑的概率接受为残余风险。
+    """
+    occupied: list[int] = []
+    for p in ports:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("0.0.0.0", p))
+        except OSError:
+            occupied.append(p)
+        finally:
+            s.close()
+    return occupied
 
 
 def _format_pull_chunk(chunk) -> str:
@@ -98,7 +126,7 @@ class NodeServiceImpl(NodeService):
             return ShellResult(exit_code=-1, stdout="", stderr=str(e))
 
     async def probe_model_dir(self, path: str) -> ModelDirProbe:
-        """只读探测节点上的模型目录（目录事实 + GGUF 头元数据）。"""
+        """只读探测节点上的模型目录（目录事实 + 配置文件内容，不做模型语义判断）。"""
         from llmpod.apps.node.ops.model_dir import probe_model_dir_sync
 
         return await asyncio.to_thread(
@@ -107,6 +135,13 @@ class NodeServiceImpl(NodeService):
             store_dir=self.settings.model_store_dir,
             import_roots=self.settings.model_import_roots,
         )
+
+    async def check_ports_free(self, ports: list[int]) -> PortCheckResult:
+        """逐口试绑探测占用（0.0.0.0 bind 后立即 close，host 网络即引擎真实口径）。"""
+        occupied = await asyncio.to_thread(_bind_check_ports, ports)
+        if occupied:
+            log.warning("端口预检：被占用 %s", occupied)
+        return PortCheckResult(occupied=occupied)
 
     async def remove_model_dir(self, path: str) -> RemoveModelDirResult:
         """受控删除节点上的模型目录（安全边界与探测一致）。"""

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import NamedTuple
@@ -71,6 +72,8 @@ from llmpod.models.route_binding import RouteBinding
 from llmpod.services import deploy_log_service, deployment_projection
 from llmpod.services.publish_service import delete_route
 from llmpod.utils.crypto import generate_uuid
+
+log = logging.getLogger("llmpod.services.deployment_service")
 
 
 # ---- 读 ----
@@ -969,6 +972,27 @@ async def _load_assignments_and_deployments(db: AsyncSession, gpu_uuids):
     return rows, deps
 
 
+# 外部占用预检：逐候选 RPC 试绑时连跳 N 个被占候选后放弃预检（退回纯账本发号），
+# 防节点端口池低段被外部进程大量占用时发号拖成逐口轮询
+_PORT_PRECHECK_EXTERNAL_SKIP_LIMIT = 8
+
+
+async def _probe_ports_occupied(node_id: str, ports: list[int]) -> set[int] | None:
+    """节点试绑预检（经反向 WS 隧道）：返回被占端口集合；节点通道异常返回 None。
+
+    None 交给调用方 fail-open——本次分配退回纯账本发号，不因预检通道故障阻塞调度
+    （外部占用的残余风险由启动失败的端口归因兜底）。
+    """
+    from llmpod.apps.manager import dispatch
+
+    try:
+        res = await dispatch.check_ports_free(node_id, ports)
+    except Exception as e:
+        log.warning("节点 %s 端口预检 RPC 失败（本次分配退回纯账本发号）: %s", node_id, e)
+        return None
+    return set(res.occupied)
+
+
 async def allocate_node_port(
     db: AsyncSession, node_id: str, kind: str, *, engine: str | None = None, local_taken: set[int] | None = None
 ) -> int:
@@ -987,6 +1011,13 @@ async def allocate_node_port(
     ``local_taken``：本批尚未落库的已占口（调用方跨次调用持有）——DB 里看不到本轮刚分
     配的端口，缺它会让同批第二个实例重复拿到同一个口。整段按 band 参与避让判定，
     与 DB 行的登记口径一致（不会出现「本地只记主口、库里记主口+带」两套语义）。
+
+    发号前对候选口段做**外部占用预检**（节点在线时逐候选 RPC 试绑，node 与引擎同为
+    host 网络、口径一致）：账本只认平台自己分出去的口，宿主机上其他进程占的口账本
+    看不见。被占候选跳过并记入避让集（本批后续分配不再试）；节点不可达 / 预检 RPC
+    失败 / 连跳超 ``_PORT_PRECHECK_EXTERNAL_SKIP_LIMIT`` 个被占候选 → 退回纯账本发号
+    （fail-open，不阻塞调度）。检后到引擎真正监听之间仍有秒级抢绑窗口，属接受的
+    残余风险（撞上时由启动失败的端口归因兜底）。
     """
     band = _port_band(kind, engine)
     pool = SERVICE_PORT_RANGE if kind == "service" else RENDEZVOUS_PORT_RANGE
@@ -999,10 +1030,39 @@ async def allocate_node_port(
         val = spec.get(key)
         if val is not None:
             base = int(val)
-            # 存量行的占口范围按该行自己的带宽（分配时落进 spec 的 port_band，旧行无此键=1）
-            row_band = int(spec.get("port_band") or 1) if kind == "service" else band
+            # 存量行的占口范围按该行自己的带宽（分配时落进 spec 的 port_band，旧行无此键=1）；
+            # rendezvous 主口带宽恒为隔离带宽度，行间无差异
+            if kind == "service":
+                row_band = int(spec.get("port_band") or 1)
+            else:
+                row_band = band
             taken.update(range(base, base + row_band))
-    free = next((p for p in pool if all(q not in taken for q in range(p, p + band))), None)
+    # 外部占用预检开关：节点在线才逐候选试绑；通道故障/连跳超限即关（fail-open）
+    from llmpod.apps.manager import dispatch
+
+    precheck = dispatch.node_online(node_id)
+    external_skips = 0
+    free = None
+    for p in pool:
+        if any(q in taken for q in range(p, p + band)):
+            continue
+        if precheck:
+            occupied = await _probe_ports_occupied(node_id, list(range(p, p + band)))
+            if occupied is None:
+                precheck = False
+            elif occupied:
+                taken.update(occupied)
+                external_skips += 1
+                if external_skips >= _PORT_PRECHECK_EXTERNAL_SKIP_LIMIT:
+                    log.warning(
+                        "节点 %s 端口池低段被外部进程大量占用（连跳 %d 个候选），本次退回纯账本发号",
+                        node_id,
+                        external_skips,
+                    )
+                    precheck = False
+                continue
+        free = p
+        break
     if free is None:
         raise Conflict(f"节点 {node_id} 的 {kind} 端口池已耗尽（{pool.start}-{pool.stop - 1}）")
     return free

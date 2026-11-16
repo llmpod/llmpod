@@ -42,6 +42,10 @@ class TestRegistry:
     def test_registered(self):
         assert "mindie" in registered_engines()
 
+    def test_service_port_band_declared(self):
+        """一个实例占业务+管理+指标三个相邻口——端口分配按此整组登记（消融改 1 即红）。"""
+        assert MindIEAdapter.service_port_band == 3
+
 
 class TestGenerateStartArgs:
     def test_single_gpu_config(self, adapter):
@@ -57,7 +61,13 @@ class TestGenerateStartArgs:
         assert "--config-file" in script  # daemon 只认 --config-file（310P 真机 strings 实证）
         conf = _conf_from_script(script)
         # 出厂模板顶层四段（310P 真机核验的结构，嵌套错误 daemon 拒启或静默空配）
-        assert set(conf) == {"Version", "ServerConfig", "BackendConfig", "LogConfig", "EnableDynamicAdjustTimeoutConfig"}
+        assert set(conf) == {
+            "Version",
+            "ServerConfig",
+            "BackendConfig",
+            "LogConfig",
+            "EnableDynamicAdjustTimeoutConfig",
+        }
         server = conf["ServerConfig"]
         assert server["port"] == 1025
         assert server["ipAddress"] == "0.0.0.0"

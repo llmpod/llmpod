@@ -39,6 +39,7 @@ from llmpod.tunnel.schemas import (
     InstanceStatusPayload,
     ModelDirProbe,
     NodeReport,
+    PortCheckResult,
     RemoveModelDirResult,
     RemoveResult,
     ShellResult,
@@ -139,8 +140,9 @@ class NodeService(ABC):
     async def probe_model_dir(self, path: str) -> ModelDirProbe:
         """只读探测节点上的模型目录（一元 RPC）。
 
-        返回目录原始事实（配置文件、普通文件清单、总字节、GGUF 头元数据），
-        **不做模型语义判断**；权重过滤/``ModelFiles`` 装配留在 manager。
+        返回目录原始事实（配置文件、普通文件清单、总字节），**不做模型语义判断**；
+        权重过滤/``ModelFiles`` 装配留在 manager。GGUF 头元数据不在此返回——manager
+        读不到节点盘上的权重文件，按缺失降级处理。
         路径必须绝对且落在节点允许的模型根目录内，越界/符号链接返回软失败。
         """
 
@@ -150,6 +152,17 @@ class NodeService(ABC):
 
         同一套路径安全边界；只删目录且目录内需有 config 或权重文件。
         返回 :class:`~llmpod.tunnel.schemas.RemoveModelDirResult`。
+        """
+
+    @abstractmethod
+    async def check_ports_free(self, ports: list[int]) -> PortCheckResult:
+        """试绑探测节点端口占用（一元 RPC，端口发号前的外部占用预检）。
+
+        node 与推理容器同为 host 网络，宿主机上其他进程占用的端口与引擎将要绑定的
+        口同一命名空间——本探测即引擎视角的真实口径。逐口在 0.0.0.0 上 bind 后立即
+        close（不设 SO_REUSEADDR：设了会把 TIME_WAIT 状态的口也报可绑，探测失真）。
+        返回 :class:`~llmpod.tunnel.schemas.PortCheckResult`；节点侧探测通道异常直接抛
+        （manager 按 fail-open 跳过预检）。
         """
 
     @abstractmethod

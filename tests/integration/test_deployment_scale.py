@@ -206,10 +206,12 @@ def scale_stack(monkeypatch):
     monkeypatch.setattr(deployment_service, "load_node_ips", _ips)
     # 扩容 staging 放行以复核任务终态为准（node_model.status 只是缓存）→ 预置 SUCCESS 桩任务
     stub_model_verify(monkeypatch, session, 1, ["n1"])
-    # 端口分配 stub：递增（签名对齐 allocate_node_port 的 local_taken/engine 形参）
+    # 端口分配 stub：递增（签名对齐 allocate_node_port 的 local_taken/engine 形参）；
+    # 内联断言钉住编排入口确实传了 engine（消融掉调用点实参此处即红）
     counter = {"n": 9000}
 
     async def _alloc(db, node_id, kind, *, engine=None, local_taken=None):
+        assert engine == "vllm"
         counter["n"] += 1
         return counter["n"]
 
@@ -389,10 +391,9 @@ class TestNodeSourceScale:
         async def _gpus(db):
             # g0/g1 本部署占用；n1 还有 g2/g3 空闲；ncann 另有 4 张空闲卡——不受限时
             # 调度完全可能落过去
-            return (
-                [_G(f"g{i}", "n1", index=i) for i in range(4)]
-                + [_G(f"c{i}", "ncann", index=i, arch="cann") for i in range(4)]
-            )
+            return [_G(f"g{i}", "n1", index=i) for i in range(4)] + [
+                _G(f"c{i}", "ncann", index=i, arch="cann") for i in range(4)
+            ]
 
         async def _ips(db, node_ids):
             return {**{f"g{i}": "10.0.1.5" for i in range(4)}, "ncann": "10.9.9.9", **{}}
@@ -458,6 +459,8 @@ class TestNodeSourceScale:
         assert len(new) == 1
         assert new[0].assigned_node == "n1"
         assert new[0].spec["assigned_gpu_uuids"][0] in {"g2", "g3"}
+        # 端口随 _stamp_assigned_instances 盖章整组占口带宽（vllm=1）——消融掉盖章行此断言即红
+        assert new[0].spec["port_band"] == 1
         dep2 = await session.get(ModelDeployment, dep.deployment_id)
         assert dep2.spec["topology"]["replicas"] == 3
 

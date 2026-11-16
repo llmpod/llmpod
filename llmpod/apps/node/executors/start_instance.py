@@ -221,9 +221,12 @@ class StartInstanceExecutor(Executor):
                     if rc > 0:
                         # 保留崩溃容器（只 stop 不 rm）供 RPC 取全量日志。
                         await self._stop_container(container_name)
+                        note = await self._port_conflict_from_logs(container_name)
                         await report(
                             TaskStatus.FAILED,
-                            message=(f"容器 {container_name} 反复重启（RestartCount={rc}）—— 容器已保留，详见容器日志"),
+                            message=(
+                                f"容器 {container_name} 反复重启（RestartCount={rc}）—— 容器已保留，详见容器日志" + note
+                            ),
                             instance_status=InstanceStatus.FAILED,
                         )
                         return

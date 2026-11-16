@@ -23,6 +23,7 @@ from llmpod.tunnel.schemas.model_store import MANIFEST_FILE_NAME, Manifest, Mani
 from llmpod.tunnel.schemas.node import (
     ModelDirEntry,
     ModelDirProbe,
+    PortCheckResult,
     RemoveModelDirResult,
     ShellResult,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "ModelDirEntry",
     "ModelDirProbe",
     "RemoveModelDirResult",
+    "PortCheckResult",
     # system
     "SystemInfo",
     "GpuInfo",

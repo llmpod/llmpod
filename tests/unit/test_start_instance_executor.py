@@ -547,6 +547,21 @@ class TestExecuteStable:
         assert dep.stop_calls == ["llmpod-dep-i1"]
         assert dep.remove_calls == []
 
+    async def test_stable_restart_port_conflict_attributed(self):
+        """restart-loop 失败也接端口归因：日志含 Address already in use → 追加中文提示。"""
+        dep = FakeDeployer(
+            inspect_seq=[_stable_state(), _stable_state(restart_count=1)],
+            logs_text="listen tcp 0.0.0.0:8000: bind: address already in use",
+        )
+        ex = StartInstanceExecutor(dep)
+        events, report = _collect()
+        readiness = dict(_STABLE_READINESS)
+        readiness["timeout_sec"] = 999
+        await ex.execute(_task(readiness=readiness), None, report, asyncio.Event())
+        assert events[-1]["status"] == "FAILED"
+        assert "反复重启" in events[-1]["message"]
+        assert "端口被占用" in events[-1]["message"]
+
     async def test_stable_crash_keeps_container(self):
         """存活判定优先于稳定判定：容器退出 → 崩溃 FAILED；保留容器供 RPC 取全量日志。"""
         dep = FakeDeployer(inspect_seq=[_stable_state(), _stable_state(running=False)], logs_text="WORKER-CRASH-LOG")

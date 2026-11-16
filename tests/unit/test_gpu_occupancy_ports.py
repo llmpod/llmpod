@@ -301,3 +301,78 @@ class TestServicePortBand:
         )
         with pytest.raises(Conflict):
             await deployment_service.allocate_node_port(session, "n1", "service", engine="mindie")
+
+
+class TestPortExternalPrecheck:
+    """发号前的外部占用预检：节点在线时逐候选 RPC 试绑，被占候选跳过；通道故障 fail-open。"""
+
+    @staticmethod
+    def _patch_probe(monkeypatch, check):
+        """预检替身三板斧：节点置在线 + dispatch.check_ports_free 换桩（各用例共用）。"""
+        monkeypatch.setattr("llmpod.apps.manager.dispatch.node_online", lambda _nid: True, raising=False)
+        import llmpod.apps.manager.dispatch as dispatch_mod
+
+        monkeypatch.setattr(dispatch_mod, "check_ports_free", check)
+
+    async def test_occupied_candidate_skipped(self, session, monkeypatch):
+        """外部进程占 8000 → 账本外预检发现并跳过，发 8001。"""
+
+        async def _fake_check(node_id, ports):
+            from llmpod.tunnel.schemas import PortCheckResult
+
+            return PortCheckResult(occupied=[p for p in ports if p == 8000])
+
+        self._patch_probe(monkeypatch, _fake_check)
+        assert await deployment_service.allocate_node_port(session, "n1", "service") == 8001
+
+    async def test_probe_failure_falls_back_to_ledger(self, session, monkeypatch):
+        """预检 RPC 抛错（节点瞬断等）→ fail-open：退回纯账本发号，不阻塞调度。"""
+
+        async def _boom(node_id, ports):
+            raise RuntimeError("node gone")
+
+        self._patch_probe(monkeypatch, _boom)
+        assert await deployment_service.allocate_node_port(session, "n1", "service") == 8000
+
+    async def test_node_offline_skips_precheck(self, session, monkeypatch):
+        """节点离线：不发起预检 RPC，纯账本发号（离线节点本来也起不了容器）。"""
+        monkeypatch.setattr("llmpod.apps.manager.dispatch.node_online", lambda _nid: False, raising=False)
+
+        async def _unexpected(node_id, ports):
+            raise AssertionError("离线节点不应发起预检 RPC")
+
+        import llmpod.apps.manager.dispatch as dispatch_mod
+
+        monkeypatch.setattr(dispatch_mod, "check_ports_free", _unexpected)
+        assert await deployment_service.allocate_node_port(session, "n1", "service") == 8000
+
+    async def test_band_group_probed_together(self, session, monkeypatch):
+        """带宽 3 的候选：整组三口一次预检，组内任一口被占即整组跳过。"""
+        seen: list[list[int]] = []
+
+        async def _fake_check(node_id, ports):
+            from llmpod.tunnel.schemas import PortCheckResult
+
+            seen.append(list(ports))
+            # 第一个候选组 8000..8002 的派生口 8002 被外部占用
+            return PortCheckResult(occupied=[8002] if 8002 in ports else [])
+
+        self._patch_probe(monkeypatch, _fake_check)
+        assert await deployment_service.allocate_node_port(session, "n1", "service", engine="mindie") == 8003
+        assert seen[0] == [8000, 8001, 8002]  # 整组探测而非只探主口
+
+    async def test_skip_limit_falls_back_to_ledger(self, session, monkeypatch):
+        """连跳上限：外部占用候选达到上限后放弃预检，退回纯账本发号（发最小空闲口）。"""
+        calls = {"n": 0}
+
+        async def _fake_check(node_id, ports):
+            from llmpod.tunnel.schemas import PortCheckResult
+
+            calls["n"] += 1
+            return PortCheckResult(occupied=ports)  # 一律报被占
+
+        self._patch_probe(monkeypatch, _fake_check)
+        port = await deployment_service.allocate_node_port(session, "n1", "service")
+        # 连跳 8 个候选（8000..8007 已进避让集）后放弃预检 → 纯账本：8008 无账本行占用，发 8008
+        assert port == 8008
+        assert calls["n"] == deployment_service._PORT_PRECHECK_EXTERNAL_SKIP_LIMIT

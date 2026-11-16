@@ -55,3 +55,11 @@ class RemoveModelDirResult(BaseModel):
     removed: bool = Field(False, description="是否已删除")
     path: str = Field("", description="目标路径")
     message: str | None = Field(None, description="失败原因，可直接展示")
+
+
+class PortCheckResult(BaseModel):
+    """``check_ports_free()`` 返回值：端口试绑预检结果（发号前查外部占用）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    occupied: list[int] = Field(default_factory=list, description="试绑失败（被占用）的端口清单；不在清单 = 可绑")

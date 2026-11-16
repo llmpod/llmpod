@@ -502,6 +502,8 @@ class TestRestart:
         await orch.restart("dep-1")
         inst = await session.get(Instance, "i-0")
         assert inst.spec["port"] == 8002
+        # 重分配同时盖章整组占口带宽（vllm=1）——消融掉盖章行此断言即红
+        assert inst.spec["port_band"] == 1
 
     async def test_restart_rejects_non_restartable(self, orch, patched_db):
         """非 stopped/failed（如 running）→ Conflict。"""
