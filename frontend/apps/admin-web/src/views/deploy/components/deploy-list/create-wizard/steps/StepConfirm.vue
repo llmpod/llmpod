@@ -370,7 +370,7 @@ defineExpose({
         <n-collapse>
           <n-collapse-item title="镜像与启动参数" name="advanced">
             <!-- 展开限高:仅高视口(≥40rem,媒体查询 rem 按初始字号 16px 计)限高内部滚动;小屏不限制,避免内外双滚动条 -->
-            <!-- 加入启动命令 textarea 与参数区后内容变高,限高相应放宽到 52rem -->
+            <!-- 加入启动命令 textarea 与参数区后内容变高,限高相应放宽到 52rem;启动命令已自适应增高,超长命令由这层滚动兜底 -->
             <div
               class="flex flex-col gap-[1.6rem] pt-[.4rem] [@media(max-height:100rem)]:max-h-[52rem] [@media(max-height:100rem)]:overflow-y-auto"
             >
@@ -493,6 +493,7 @@ defineExpose({
               </div>
 
               <!-- 启动命令:用户手改/逐行参数写入的唯一权威文本;留空 = 回退平台自动生成 -->
+              <!-- 高度自适应:autosize 按内容(含折行)撑高,minRows 只做下限,不给上限——长命令一次看全,不再内部滚动 -->
               <div class="flex flex-col gap-[.8rem]">
                 <div class="flex items-center justify-between gap-[.8rem]">
                   <span class="text-small text-secondary">启动命令(command)</span>
@@ -513,7 +514,7 @@ defineExpose({
                 <n-input
                   v-model:value="editCommand"
                   type="textarea"
-                  :rows="4"
+                  :autosize="{ minRows: 6 }"
                   class="font-mono"
                   placeholder="留空 = 平台自动生成;也可直接粘贴一条完整命令"
                   @update:value="store.markCommandDirty()"
