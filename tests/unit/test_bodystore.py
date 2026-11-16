@@ -2,8 +2,8 @@
 
 - put：SHA-256 寻址，gzip 落盘 blocks/{hash前2位}/{hash}.gz，幂等去重；
 - get：解压还原原文；未知哈希 → None；
-- GC 两步：expired_candidates 列超期候选（引用判定不在存储层）、remove_blocks 只删
-  调用方核查后确认无引用的块——「超保留期 且 无引用」双条件由两步合成。
+- list_blocks / remove_blocks：策略中立的清点与带复核的删除，「该不该删」
+  的判断不在存储层（见 retention.py 与 test_retention_policy.py）。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import gzip
 import os
 import time
 
-from llmpod.apps.proxyserver.bodystore import LocalFileBodyStore
+from llmpod.apps.proxyserver.bodystore import BlockInfo, LocalFileBodyStore
 
 
 class TestPutAndGet:
@@ -37,7 +37,7 @@ class TestPutAndGet:
 
         h2 = store.put("same content")
         assert h1 == h2
-        assert block.stat().st_mtime_ns > old  # 幂等复用刷新 mtime（防 sweep 误删被新行引用的块）
+        assert block.stat().st_mtime_ns > old  # 幂等复用刷新 mtime（防轮转误删被新行引用的块）
 
     def test_different_content_different_hash(self, tmp_path):
         store = LocalFileBodyStore(root=tmp_path)
@@ -54,73 +54,83 @@ class TestPutAndGet:
         assert store.get("ff" * 32) is None
 
 
-class TestGcTwoStep:
-    def _mk(self, tmp_path, content: str, age_seconds: float) -> str:
+class TestListAndRemove:
+    def _mk(self, tmp_path, content: str, age_seconds: float) -> BlockInfo:
+        """写入一个块并回拨 mtime，返回清点口径的 BlockInfo。"""
         store = LocalFileBodyStore(root=tmp_path)
         h = store.put(content)
         block = tmp_path / "blocks" / h[:2] / f"{h}.gz"
         old = time.time() - age_seconds
         os.utime(block, (old, old))
-        return h
+        st = block.stat()
+        return BlockInfo(hash=h, mtime=st.st_mtime, size=st.st_size)
 
-    def test_candidates_only_expired_then_remove_skips_referenced(self, tmp_path):
-        expired_unref = self._mk(tmp_path, "old-unref", age_seconds=15 * 86400)
-        expired_ref = self._mk(tmp_path, "old-ref", age_seconds=15 * 86400)
-        fresh_unref = self._mk(tmp_path, "fresh-unref", age_seconds=60)
+    def test_list_blocks_reports_hash_mtime_size(self, tmp_path):
+        info = self._mk(tmp_path, "some-body", age_seconds=60)
+
+        listed = LocalFileBodyStore(root=tmp_path).list_blocks()
+
+        assert len(listed) == 1
+        assert listed[0].hash == info.hash
+        assert listed[0].mtime == info.mtime
+        assert listed[0].size > 0
+
+    def test_remove_deletes_listed_blocks_only(self, tmp_path):
+        doomed = self._mk(tmp_path, "old", age_seconds=15 * 86400)
+        kept = self._mk(tmp_path, "fresh", age_seconds=60)
 
         store = LocalFileBodyStore(root=tmp_path)
-        candidates = store.expired_candidates(retention_seconds=14 * 86400)
-
-        assert set(candidates) == {expired_unref, expired_ref}
-        # 引用核查由调用方做（app._sweep_body_store_once 按批回查 PG）；存储层只删指定块
-        removed = store.remove_blocks([h for h in candidates if h != expired_ref], retention_seconds=14 * 86400)
+        removed = store.remove_blocks([doomed])
 
         assert removed == 1
-        assert store.get(expired_unref) is None  # 过期且未引用 → 删
-        assert store.get(expired_ref) is not None  # 过期但被引用 → 留（双条件）
-        assert store.get(fresh_unref) is not None  # 未过期 → 留
+        assert store.get(doomed.hash) is None
+        assert store.get(kept.hash) is not None
 
-    def test_remove_rechecks_mtime_after_reference_window(self, tmp_path):
-        """候选与删除之间的引用核查窗口内被 put 复用（mtime 刷新、新引用行在途）
-        的块不得删——put 的 mtime 刷新防护依赖删除前的这次复核。"""
-        stale_hash = self._mk(tmp_path, "stale-then-reused", age_seconds=15 * 86400)
+    def test_remove_skips_block_reused_after_listing(self, tmp_path):
+        """清点与删除之间被 put 复用（mtime 刷新、新引用行在途）的块不得删。"""
+        stale = self._mk(tmp_path, "stale-then-reused", age_seconds=15 * 86400)
         store = LocalFileBodyStore(root=tmp_path)
-        candidates = store.expired_candidates(retention_seconds=14 * 86400)
-        assert candidates == [stale_hash]
 
-        # 模拟核查窗口内同内容复用：put 幂等命中并刷新 mtime
+        # 模拟清点后同内容复用：put 幂等命中并刷新 mtime
         store.put("stale-then-reused")
 
-        removed = store.remove_blocks(candidates, retention_seconds=14 * 86400)
+        removed = store.remove_blocks([stale])
         assert removed == 0
-        assert store.get(stale_hash) is not None  # 复用块幸存
+        assert store.get(stale.hash) is not None  # 复用块幸存
 
     def test_remove_skips_non_hash_names(self, tmp_path):
         """目录里混入非哈希名 .gz（外部干扰/损坏）时跳过它，不中止整批。"""
         good = self._mk(tmp_path, "good-block", age_seconds=15 * 86400)
-        shard = tmp_path / "blocks" / good[:2]
+        shard = tmp_path / "blocks" / good.hash[:2]
         stray = shard / "not-a-hash.gz"
         stray.write_bytes(b"junk")
 
         store = LocalFileBodyStore(root=tmp_path)
-        removed = store.remove_blocks([good, "not-a-hash"], retention_seconds=14 * 86400)
+        removed = store.remove_blocks(
+            [good, BlockInfo(hash="not-a-hash", mtime=time.time(), size=4)]
+        )
 
         assert removed == 1
-        assert store.get(good) is None
+        assert store.get(good.hash) is None
         assert stray.exists()
 
-    def test_candidates_empty_dir_ok(self, tmp_path):
+    def test_remove_missing_block_is_noop(self, tmp_path):
+        """清点后块已消失（并发删除/手工清理）→ 幂等跳过，不抛。"""
+        info = self._mk(tmp_path, "gone", age_seconds=15 * 86400)
         store = LocalFileBodyStore(root=tmp_path)
-        assert store.expired_candidates(retention_seconds=60) == []
-        assert store.remove_blocks([], retention_seconds=60) == 0
+        (tmp_path / "blocks" / info.hash[:2] / f"{info.hash}.gz").unlink()
+
+        assert store.remove_blocks([info]) == 0
+
+    def test_empty_dir_ok(self, tmp_path):
+        store = LocalFileBodyStore(root=tmp_path)
+        assert store.list_blocks() == []
+        assert store.remove_blocks([]) == 0
 
 
-def test_candidates_cleans_stale_tmp_residue(tmp_path):
-    """put 崩溃残留的 .gz.tmp（os.replace 之前）超保留期后在扫候选时被清理；新鲜 tmp 保留；
-    仅剩超期 tmp 的分片目录顺带移除（候选为空时调用方短路，须在扫描侧兜住）。"""
-    import os
-    import time
-
+def test_list_cleans_stale_tmp_residue(tmp_path):
+    """put 崩溃残留的 .gz.tmp（os.replace 之前）超龄后在清点时被清理；新鲜 tmp 保留；
+    仅剩超龄 tmp 的分片目录顺带移除（残留不进清点结果，删除方触达不到）。"""
     store = LocalFileBodyStore(tmp_path)
     shard = tmp_path / "blocks" / "ab"
     shard.mkdir(parents=True)
@@ -128,15 +138,15 @@ def test_candidates_cleans_stale_tmp_residue(tmp_path):
     stale_tmp.write_bytes(b"half")
     fresh_tmp = shard / "ab...fresh.gz.tmp"
     fresh_tmp.write_bytes(b"half")
-    ancient = time.time() - 3600
+    ancient = time.time() - 2 * 86400  # 超过一天的 tmp 残留龄
     os.utime(stale_tmp, (ancient, ancient))
     only_stale = tmp_path / "blocks" / "cd"
     only_stale.mkdir(parents=True)
     gone_tmp = only_stale / "cd...gone.gz.tmp"
     gone_tmp.write_bytes(b"half")
     os.utime(gone_tmp, (ancient, ancient))
-    candidates = store.expired_candidates(retention_seconds=600)
-    assert candidates == []
+    listed = store.list_blocks()
+    assert listed == []
     assert not stale_tmp.exists()
     assert fresh_tmp.exists()
     assert shard.exists()

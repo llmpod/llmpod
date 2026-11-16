@@ -241,6 +241,30 @@ class TestThreeWayMerge:
         assert db.row.value["telemetryEnabled"] is True
 
 
+class TestBodySnapshotSwitch:
+    """「记录请求体快照」开关（默认关，API 网关落账路径消费）。"""
+
+    def test_default_off(self):
+        assert sanitize_settings({}).bodySnapshot is False  # 未配置 = 关
+
+    def test_non_bool_dropped_falls_back_off(self):
+        for bad in ("yes", 1, "true"):
+            assert sanitize_settings({"bodySnapshot": bad}).bodySnapshot is False
+
+    async def test_update_accepts_true_and_false(self):
+        db = _FakeSession(_Row({}))
+        out = await update_settings(db, {"bodySnapshot": True}, updated_by=1)
+        assert out.bodySnapshot is True
+        out = await update_settings(db, {"bodySnapshot": False}, updated_by=1)
+        assert out.bodySnapshot is False
+
+    async def test_update_non_bool_raises(self):
+        db = _FakeSession(_Row({"bodySnapshot": True}))
+        with pytest.raises(LLMPodValidationError):
+            await update_settings(db, {"bodySnapshot": "on"}, updated_by=1)
+        assert db.row.value["bodySnapshot"] is True  # 拒非法值不清库
+
+
 class TestCache:
     async def test_ttl_hit(self):
         clear_settings_cache()

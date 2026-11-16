@@ -1,9 +1,10 @@
 """管道末尾异步记账（写入路径）。
 
-流程：截断 → put 请求/响应两块（gzip 内容寻址）→ 写 PG 计量行。
+流程：截断 → （快照开关开启时）put 请求/响应两块（gzip 内容寻址）→ 写 PG
+计量行。开关关闭只落计量行（snapshot_disabled=true），不产生块文件。
 原文按需排障口径直接落块（含用户嵌在 body 里的自家凭据），不做脱敏。
 容错：块写失败 → 计量行仍落库（refs 置空 + 告警）——计量不丢；
-行写失败 → 块留着无害（无引用块由 GC 兜底）。
+行写失败 → 块留着无害（无引用块由轮转兜底）。
 调用方以 fire-and-forget task 执行（不阻塞已产出响应）。
 """
 
@@ -14,7 +15,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 
 from llmpod.apps.proxyserver.bodystore import BodyStore
 from llmpod.apps.proxyserver.routing import compute_conv_prefix_hash
@@ -123,12 +124,26 @@ def _truncate_strings(obj: Any, max_bytes: int) -> tuple[Any, bool]:
 
 
 class RequestLogger:
-    """异步记账器（BodyStore 块 + PG 计量行；db_factory 生产用，db 直传测试用）。"""
+    """异步记账器（BodyStore 块 + PG 计量行；db_factory 生产用，db 直传测试用）。
 
-    def __init__(self, db_factory, store: BodyStore, *, max_field_bytes: int = DEFAULT_MAX_FIELD_BYTES):
+    ``snapshot_enabled``（同步回调，返回 bool）为 False 时只落计量行、不写 body
+    块（request_log.snapshot_disabled=true）——管理端「记录请求体」开关（系统
+    设置，默认关）经此生效，生产接线读配置快照的内存字段。缺省 None 同样视为
+    关（fail-safe：漏接开关的调用点宁可少一份排障快照，不默认写明文 body）。
+    """
+
+    def __init__(
+        self,
+        db_factory,
+        store: BodyStore,
+        *,
+        max_field_bytes: int = DEFAULT_MAX_FIELD_BYTES,
+        snapshot_enabled: Callable[[], bool] | None = None,
+    ):
         self._db_factory = db_factory
         self._store = store
         self._max_field_bytes = max_field_bytes
+        self._snapshot_enabled = snapshot_enabled
 
     async def log(self, record: RequestLogRecord, db=None) -> None:
         """落账一次调用；块失败降级、行失败告警，均不抛（fire-and-forget 语义）。
@@ -137,7 +152,13 @@ class RequestLogger:
         循环上同步跑会卡住所有在途流式响应——整段备料挪 to_thread，回到循环后
         只剩 PG 行写入。
         """
-        prepared = await asyncio.to_thread(self._prepare, record)
+        snapshot_on = False
+        if self._snapshot_enabled is not None:
+            try:
+                snapshot_on = bool(self._snapshot_enabled())
+            except Exception:  # noqa: BLE001 — 开关读取失败按关处理，不丢计量
+                log.exception("snapshot switch read failed (request_id=%s)", record.request_id)
+        prepared = await asyncio.to_thread(self._prepare, record, snapshot_on)
 
         row = RequestLog(
             request_id=record.request_id,
@@ -188,19 +209,25 @@ class RequestLogger:
         except Exception:  # noqa: BLE001 — 行写失败块留着无害
             log.exception("request_log insert failed (request_id=%s)", record.request_id)
 
-    def _prepare(self, record: RequestLogRecord) -> _PreparedRow:
-        """截断 → 块写 → 用量/亲和哈希抽取（同步；log 已挪 to_thread，勿在循环内直调）。"""
-        req_obj, req_trunc = _truncate_strings(record.request_payload, self._max_field_bytes)
-        resp_obj, resp_trunc = _truncate_strings(record.response_payload, self._max_field_bytes)
+    def _prepare(self, record: RequestLogRecord, snapshot_enabled: bool) -> _PreparedRow:
+        """截断 → 块写 → 用量/亲和哈希抽取（同步；log 已挪 to_thread，勿在循环内直调）。
 
+        snapshot_enabled=False 时截断与块写都跳过（truncated 标记只描述落盘快照，
+        不落块即无从截断），计量行照落。
+        """
         request_ref = response_ref = None
-        try:
-            if req_obj is not None:
-                request_ref = self._store.put(lenient_utf8(canonical_json(req_obj)))
-            if resp_obj is not None:
-                response_ref = self._store.put(lenient_utf8(canonical_json(resp_obj)))
-        except Exception:  # noqa: BLE001 — 块写失败不丢计量
-            log.exception("body store put failed (request_id=%s)", record.request_id)
+        req_trunc = resp_trunc = False
+        if snapshot_enabled:
+            req_obj, req_trunc = _truncate_strings(record.request_payload, self._max_field_bytes)
+            resp_obj, resp_trunc = _truncate_strings(record.response_payload, self._max_field_bytes)
+            try:
+                if req_obj is not None:
+                    request_ref = self._store.put(lenient_utf8(canonical_json(req_obj)))
+                if resp_obj is not None:
+                    response_ref = self._store.put(lenient_utf8(canonical_json(resp_obj)))
+            except Exception:  # noqa: BLE001 — 块写失败不丢计量
+                log.exception("body store put failed (request_id=%s)", record.request_id)
+                request_ref = response_ref = None
 
         prompt, completion, total = usage_totals(record.usage)
 

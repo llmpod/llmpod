@@ -134,3 +134,19 @@ class AffinityFailoverPolicy(StrEnum):
     def values(cls) -> list[str]:
         """全部合法取值（声明顺序，供启动期校验与对账单测统一取值）。"""
         return [m.value for m in cls]
+
+
+class BodyRetentionMode(StrEnum):
+    """调用日志 body 块的轮转方式（= ``settings.body_retention_mode``）。
+
+    - ``SIZE``（默认）：按容量——块目录总量超 ``body_max_bytes`` 时从最旧删到
+      80% 水位，不设年龄豁免；
+    - ``TIME``：按时间——mtime 早于 ``body_retention_days`` 的块全删。
+
+    取值写错在 Settings 装配期即报错（区别于亲和策略的容错告警）：轮转方式
+    决定磁盘占用的形态（封顶 vs 随流量浮动），静默回落等于部署者以为自己配了
+    按时间清理、实际跑着按容量，配置意图被吞掉。
+    """
+
+    SIZE = "size"
+    TIME = "time"

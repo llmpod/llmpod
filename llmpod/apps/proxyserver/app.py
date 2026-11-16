@@ -33,6 +33,7 @@ from llmpod.apps.proxyserver.protocol import (  # noqa: F401  re-export 供测�
     get_openai_client,
     get_rerank_http_client,
 )
+from llmpod.apps.proxyserver.background import register_background_tasks
 
 log = logging.getLogger("llmpod.proxyserver")
 
@@ -165,7 +166,6 @@ def create_proxy_app(cfg: Settings | None = None) -> FastAPI:
             from pathlib import Path
 
             from llmpod.apps.proxyserver.bodystore import LocalFileBodyStore
-            from llmpod.apps.proxyserver.hold_reaper import reap_expired_holds
             from llmpod.apps.proxyserver.limits import rebuild_quota_counters
             from llmpod.apps.proxyserver.request_logger import RequestLogger
             from llmpod.db import get_db_context
@@ -189,24 +189,21 @@ def create_proxy_app(cfg: Settings | None = None) -> FastAPI:
                 except Exception:
                     log.exception("quota counter rebuild failed (startup)")
             body_store = LocalFileBodyStore(Path(cfg.body_dir))
-            runtime.logger = RequestLogger(db_factory=get_db_context, store=body_store)
+
+            def _snapshot_switch() -> bool:
+                """管理端「记录请求体」开关（系统设置，默认关）。随配置快照下发
+                （3s 轮询重建），读内存快照即可——与维护态同一载体，无独立缓存。"""
+                return runtime.snapshot.body_snapshot
+
+            runtime.logger = RequestLogger(
+                db_factory=get_db_context, store=body_store, snapshot_enabled=_snapshot_switch
+            )
             # 钱包扣费接线（PG 独占记账，短事务）
             runtime.billing = BillingService(db_factory=get_db_context)
-            # 三个后台循环：config 热更新 / BodyStore GC / 悬空冻结回收（见 hold_reaper.py）
-            background_tasks.every(
-                lambda: _poll_config_once(runtime),
-                name="proxy-config-poll",
-                interval=cfg.poll_interval_seconds,
-            )
-            background_tasks.every(
-                lambda: _sweep_body_store_once(body_store, cfg.body_retention_seconds),
-                name="body-store-sweep",
-                interval=cfg.body_sweep_interval_seconds,
-            )
-            background_tasks.every(
-                lambda: reap_expired_holds(get_db_context, runtime.active_request_ids),
-                name="hold-reaper",
-                interval=cfg.hold_reap_interval_seconds,
+            # 定时任务（config 热更新 / BodyStore 轮转 / 悬空冻结回收）集中登记
+            # 在 background.py，任务清单见 register_background_tasks
+            register_background_tasks(
+                background_tasks, runtime=runtime, cfg=cfg, body_store=body_store, db_context=get_db_context
             )
             yield
         finally:
@@ -251,59 +248,6 @@ def create_proxy_app(cfg: Settings | None = None) -> FastAPI:
     app.include_router(inference_router)
 
     return app
-
-
-async def _poll_config_once(runtime: ProxyRuntime) -> None:
-    """重建配置快照；周期由 BackgroundTaskManager 管理。"""
-    from llmpod.db import get_db_context
-
-    async with get_db_context() as db:
-        await runtime.rebuild(db)
-
-
-# 引用核查的 IN 批大小（64 位哈希 × 2 列，1000/批对 asyncpg 参数上限余量充足）
-_SWEEP_REFERENCED_BATCH = 1000
-
-
-async def _sweep_body_store_once(store, retention_seconds: int) -> None:
-    """BodyStore 保守 GC 单轮：仅清「超保留期且无计量行引用」的块。
-
-    引用集不整表物化（request_log 只增不删，全量 refs 集合随运行时长无界膨胀）：
-    先扫盘拿超期候选（无候选即短路，常态零 PG 查询），再按批回查两列 ref 的 IN
-    命中，只删核查后确认无引用的块；remove_blocks 删除前还会按 mtime 复核一遍
-    「仍超期」——核查窗口内被 put 复用的块（mtime 已刷新、新引用行在途）借此
-    挡掉。request_ref/response_ref 无索引，回查是顺扫但按批推进、内存有界；
-    文件遍历/删除走 to_thread 不阻塞事件循环。store/参数由 lifespan 传入
-    （与写侧同一实例、同一配置源）。
-    """
-    from sqlalchemy import or_, select
-
-    from llmpod.db import get_db_context
-    from llmpod.models import RequestLog
-
-    candidates = await asyncio.to_thread(store.expired_candidates, retention_seconds)
-    if not candidates:
-        return
-    referenced: set[str] = set()
-    async with get_db_context() as db:
-        for i in range(0, len(candidates), _SWEEP_REFERENCED_BATCH):
-            chunk = candidates[i : i + _SWEEP_REFERENCED_BATCH]
-            rows = await db.execute(
-                select(RequestLog.request_ref, RequestLog.response_ref).where(
-                    or_(RequestLog.request_ref.in_(chunk), RequestLog.response_ref.in_(chunk))
-                )
-            )
-            for request_ref, response_ref in rows:
-                if request_ref:
-                    referenced.add(request_ref)
-                if response_ref:
-                    referenced.add(response_ref)
-    doomed = [h for h in candidates if h not in referenced]
-    if not doomed:
-        return
-    removed = await asyncio.to_thread(store.remove_blocks, doomed, retention_seconds=retention_seconds)
-    if removed:
-        log.info("body store sweep removed %s blocks", removed)
 
 
 # 全局应用实例（uvicorn: llmpod.apps.proxyserver.app:app）

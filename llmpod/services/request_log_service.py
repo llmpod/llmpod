@@ -97,8 +97,8 @@ def get_body_store():
 def decode_body_block(store, block_hash: str | None):
     """按块哈希还原调用 body（JSON 解析；坏块降级为 _raw 文本，缺失返回 None）。
 
-    管理端与租户端的调用详情路由共用；块 GC 已删/写失败（snapshot_disabled）时
-    还原值为 None，由响应层表现为 body 缺失。
+    管理端与租户端的调用详情路由共用；快照开关关闭 / 块写失败
+    （snapshot_disabled）/ 块已轮转删除时还原值为 None，由响应层表现为 body 缺失。
     """
     if not block_hash:
         return None

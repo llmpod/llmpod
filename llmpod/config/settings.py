@@ -8,7 +8,7 @@ Node 端只需要 node_* 配置；PG/Redis/CH 的默认值不会产生影响，
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from llmpod.config.enums import AffinityFailoverPolicy
+from llmpod.config.enums import AffinityFailoverPolicy, BodyRetentionMode
 
 # 官方镜像仓库默认值：CNB 制品库（国内直连），发版时同一镜像同步推 Docker Hub 作海外备份。
 DEFAULT_OFFICIAL_IMAGE = "docker.cnb.cool/btpanel/llmpod"
@@ -64,10 +64,17 @@ class Settings(BaseSettings):
     proxy_max_body_bytes: int = 10485760  # 10 MB
     # 调用日志 body 块目录：API 网关写、管理端读，compose 同卷
     body_dir: str = "data/request_logs"
-    # body 块 GC 轮询周期（秒）：清超保留期且无计量行引用的块
-    body_sweep_interval_seconds: int = 3600
-    # body 块保留期（秒）：新写的块即使无引用也不会被提前清（防竞态误删）
-    body_retention_seconds: int = 86400
+    # body 块轮转扫描周期（秒）。默认一天一轮：单轮只是目录清点（stat 全部块），
+    # 秒级完成；快照关闭的部署目录基本为空，更密的频率没有收益
+    body_sweep_interval_seconds: int = 86400
+    # body 块轮转方式：size=按容量（总量超 body_max_bytes 从最旧删到 80% 水位，
+    # 不设年龄豁免）；time=按时间（超 body_retention_days 即删）。取值合法性由
+    # BodyRetentionMode 枚举把守（拼错启动即报）
+    body_retention_mode: BodyRetentionMode = BodyRetentionMode.SIZE
+    # 按容量轮转的总量上限（字节，默认 5 GiB）
+    body_max_bytes: int = 5 * 1024**3
+    # body 块保留天数：仅 time 模式消费（保留期）；size 模式不使用本值
+    body_retention_days: int = 3
     # 冻结租约时长（秒）：hold 时写入 balance_hold.expires_at，hold_reaper 据此判定过期悬空冻结
     fixed_lease_ttl_seconds: int = 7200
     # 管理员引导凭据：仅首次建库（平台尚无超管）时生效——有值用值，空则随机生成并落

@@ -51,7 +51,9 @@ class TestLog:
     async def test_writes_row_with_block_refs_and_prefix_hash(self, tmp_path):
         db = FakeSession()
         store = LocalFileBodyStore(root=tmp_path)
-        logger = RequestLogger(db_factory=None, store=store)
+        logger = RequestLogger(
+            db_factory=None, store=store, snapshot_enabled=lambda: True
+        )
 
         await logger.log(_record(), db=db)
 
@@ -97,7 +99,12 @@ class TestLog:
     async def test_long_field_truncated_with_flag(self, tmp_path):
         db = FakeSession()
         store = LocalFileBodyStore(root=tmp_path)
-        logger = RequestLogger(db_factory=None, store=store, max_field_bytes=100)
+        logger = RequestLogger(
+            db_factory=None,
+            store=store,
+            max_field_bytes=100,
+            snapshot_enabled=lambda: True,
+        )
 
         big = "x" * 500
         await logger.log(
@@ -255,3 +262,65 @@ class TestLog:
         row = db.all(RequestLog)[0]
         assert row.ttft_ms is None
         assert row.finish_reason is None
+
+
+class TestSnapshotSwitch:
+    """管理端「记录请求体」开关（系统设置 bodySnapshot，默认关）。
+
+    关：只落计量行，不写块文件（snapshot_disabled=true），会话指纹/用量照常，
+    截断遍历也跳过；开关读取异常与回调漏接（None）都按关处理——宁可少快照，
+    不默认写明文。回调是同步的（生产读配置快照内存字段，测试传 lambda）。
+    """
+
+    async def test_disabled_writes_metering_row_only(self, tmp_path):
+        db = FakeSession()
+        store = LocalFileBodyStore(root=tmp_path)
+        logger = RequestLogger(db_factory=None, store=store, snapshot_enabled=lambda: False)
+
+        await logger.log(_record(), db=db)
+
+        row = db.all(RequestLog)[0]
+        assert row.request_ref is None and row.response_ref is None  # 无块引用
+        assert row.snapshot_disabled is True
+        assert store.list_blocks() == []  # 目录里一个块都没写
+        assert row.conv_prefix_hash  # 会话指纹仍计算（亲和/分析不受开关影响）
+        assert row.total_tokens == 5  # 计量不受开关影响
+        assert row.truncated is False  # 无快照即无从截断
+
+    async def test_enabled_writes_blocks(self, tmp_path):
+        db = FakeSession()
+        store = LocalFileBodyStore(root=tmp_path)
+        logger = RequestLogger(db_factory=None, store=store, snapshot_enabled=lambda: True)
+
+        await logger.log(_record(), db=db)
+
+        row = db.all(RequestLog)[0]
+        assert row.request_ref and row.response_ref
+        assert row.snapshot_disabled is False
+
+    async def test_switch_read_error_treated_as_disabled(self, tmp_path):
+        def broken() -> bool:
+            raise RuntimeError("settings read failed")
+
+        db = FakeSession()
+        store = LocalFileBodyStore(root=tmp_path)
+        logger = RequestLogger(db_factory=None, store=store, snapshot_enabled=broken)
+
+        await logger.log(_record(), db=db)
+
+        row = db.all(RequestLog)[0]
+        assert row.snapshot_disabled is True
+        assert store.list_blocks() == []
+        assert row.total_tokens == 5  # 计量行仍在
+
+    async def test_switch_not_wired_defaults_to_disabled(self, tmp_path):
+        """回调漏接（None）= 关：fail-safe，防新调用点漏传开关悄悄写明文。"""
+        db = FakeSession()
+        store = LocalFileBodyStore(root=tmp_path)
+        logger = RequestLogger(db_factory=None, store=store)  # 故意不传开关
+
+        await logger.log(_record(), db=db)
+
+        row = db.all(RequestLog)[0]
+        assert row.snapshot_disabled is True
+        assert store.list_blocks() == []

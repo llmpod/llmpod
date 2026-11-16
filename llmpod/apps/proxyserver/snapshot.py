@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from llmpod.models import ModelEndpoint, Route, RouteBinding, Tenant, TenantModelBlock
 from llmpod.models.route import FAILOVER_ENABLED_DEFAULT, FAILOVER_MAX_RETRIES_DEFAULT
 from llmpod.services.publish_service import get_route_by_name, list_bindings
-from llmpod.services.settings_service import MaintenanceState, get_maintenance
+from llmpod.services.settings_service import MaintenanceState, get_maintenance, get_settings
 
 
 @dataclass(frozen=True)
@@ -79,6 +79,9 @@ class ConfigSnapshot:
     tenant_blocked_routes: dict[int, set[int]] = field(default_factory=dict)
     tenant_statuses: dict[int, str] = field(default_factory=dict)
     maintenance: MaintenanceState = field(default_factory=MaintenanceState)
+    # 「记录请求体」开关（全局设置 bodySnapshot，默认关）：维护态同款载体——
+    # 随快照下发复用 3s 轮询周期热更新，落账路径读内存即可，不另设轮询/缓存
+    body_snapshot: bool = False
 
     def get(self, name: str) -> RouteEntry | None:
         return self.routes.get(name)
@@ -141,6 +144,7 @@ async def build_config_snapshot(db: AsyncSession, *, version: int = 0) -> Config
     tenants = await _load_all(db, Tenant)
     blocks = await _load_all(db, TenantModelBlock)
     maintenance = await get_maintenance(db)
+    body_snapshot = (await get_settings(db)).bodySnapshot
 
     bindings_by_route: dict[int, list[RouteBinding]] = {}
     for b in bindings:
@@ -165,6 +169,7 @@ async def build_config_snapshot(db: AsyncSession, *, version: int = 0) -> Config
         tenant_blocked_routes=tenant_blocked_routes,
         tenant_statuses=tenant_statuses,
         maintenance=maintenance,
+        body_snapshot=body_snapshot,
     )
 
 

@@ -1,13 +1,15 @@
 """BodyStore：调用日志 body 快照的内容寻址块存储抽象。
 
-接口四方法：put（幂等，同内容同哈希）/ get / expired_candidates + remove_blocks
-（GC 拆两步——先扫盘出候选、调用方分批核查引用、再删核查通过的块；引用集不整表
-物化，见 proxyserver/app._sweep_body_store_once）。
+接口四方法：put（幂等，同内容同哈希）/ get / list_blocks（策略中立的清点，
+一次遍历拿齐 hash+mtime+size）/ remove_blocks（按清点结果删除，删前复核
+mtime 未变）。存储层不做任何「该不该删」的判断——按时间 / 按容量等轮转
+策略见 retention.py，由 sweep 循环（proxyserver/background）驱动：清点 →
+策略选块 → 限速删除。
+
 PG 计量行只存块哈希（内容寻址 key），不感知后端——v1 本地文件实现，
 v1.5+ 可平滑替换 S3/MinIO（接口与表结构不变）。
 
-v1 块粒度 = 整条请求体 / 响应体各一块；v1.5 增量存储仅细化切块粒度 +
-行内引用变块清单，本接口零改动（内容寻址第一性）。
+v1 块粒度 = 整条请求体 / 响应体各一块。
 """
 
 from __future__ import annotations
@@ -18,11 +20,25 @@ import os
 import re
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 # 块哈希格式闸（64 位小写十六进制）：put/get 入口断言，防止非哈希字符串
 # （带 ../ 等）经路径拼接越出 root——当前调用链全内生（sha256 自算 + DB 列），
 # 此为纵深防御。
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+# put 崩溃残留的 .gz.tmp 半块（os.replace 之前中断）按此龄清理：正常并发
+# put 的 tmp 只存活毫秒级，超过一天必是孤儿残留，与轮转策略无关
+_TMP_RESIDUE_SECONDS = 86400
+
+
+@dataclass(slots=True)
+class BlockInfo:
+    """块目录清点出的一个条目（一次 stat 拿齐，轮转策略各取所需）。"""
+
+    hash: str
+    mtime: float
+    size: int
 
 
 class BodyStore(ABC):
@@ -37,15 +53,17 @@ class BodyStore(ABC):
         """读取块原文；不存在返回 None。"""
 
     @abstractmethod
-    def expired_candidates(self, retention_seconds: int) -> list[str]:
-        """列出超保留期的块哈希（GC 删除候选；引用判定由调用方做）。"""
+    def list_blocks(self) -> list[BlockInfo]:
+        """清点全部块（哈希 / mtime / 大小）。顺带两类维护：清超龄 .gz.tmp 残留、
+        移除只剩残留的空分片目录（只读清点与这两类维护在同一趟目录遍历里完成，
+        省一次单独扫描）。"""
 
     @abstractmethod
-    def remove_blocks(self, hashes: list[str], *, retention_seconds: int) -> int:
+    def remove_blocks(self, blocks: list[BlockInfo]) -> int:
         """删除指定块（含所属分片目录顺带清空）；返回删除数。
 
-        删除前须按 mtime 复核「仍超保留期」：候选集与真正删除之间隔着调用方的
-        引用核查窗口，期间被 ``put`` 幂等复用的块 mtime 已刷新，不能删。
+        删前按「当前 mtime == 清点时 mtime」复核：清点到删除的窗口里被
+        ``put`` 幂等复用的块 mtime 已刷新（新引用行在途），不能删。
         """
 
 
@@ -66,13 +84,13 @@ class LocalFileBodyStore(BodyStore):
         path = self._block_path(block_hash)
         if path.is_file():
             # 幂等复用也刷新 mtime：内容寻址下同一块可能被新计量行复用，若沿用旧 mtime，
-            # sweep 可能在其引用行 commit 前按「超保留期」误删（保留期计时重新起算）
+            # 轮转策略可能在选块与删除之间按旧时间把它选走（复用即保留期重新起算）
             os.utime(path, None)
             return block_hash
         path.parent.mkdir(parents=True, exist_ok=True)
         # 临时名带随机后缀：同内容被两个请求并发 put 时各写各的 tmp，互不覆盖
-        # mkdir 与 replace 之间分片目录可能被 GC 的空分片 rmdir 抽走（见
-        # expired_candidates），replace 抛 FileNotFoundError——重试一轮重建重写
+        # mkdir 与 replace 之间分片目录可能被 list_blocks 的空分片 rmdir 抽走（见
+        # list_blocks），replace 抛 FileNotFoundError——重试一轮重建重写
         for attempt in range(2):
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.parent / f"{block_hash}.{os.urandom(6).hex()}.gz.tmp"
@@ -92,50 +110,64 @@ class LocalFileBodyStore(BodyStore):
         with gzip.open(path, "rb") as f:
             return f.read()
 
-    def expired_candidates(self, retention_seconds: int) -> list[str]:
-        """mtime 超保留期的块哈希清单；顺带清掉超期的 .gz.tmp 半块残留。"""
+    def list_blocks(self) -> list[BlockInfo]:
+        """清点全部块；顺带清超龄 .gz.tmp 残留与只剩残留的空分片目录。"""
         blocks_dir = self._root / "blocks"
         if not blocks_dir.is_dir():
             return []
         now = time.time()
-        candidates = []
+        blocks: list[BlockInfo] = []
         for shard in blocks_dir.iterdir():
             if not shard.is_dir():
                 continue
+            # 本趟目录枚举同时判定分片是否已空（块/新鲜 tmp/杂散条目在 → 不空），
+            # 不再用 any(iterdir()) 对每个分片多读一遍目录
+            has_entries = False
             for block in shard.iterdir():
                 if block.name.endswith(".gz"):
-                    if now - block.stat().st_mtime > retention_seconds:
-                        candidates.append(block.name[:-3])
-                elif block.name.endswith(".gz.tmp"):
-                    # put 崩溃残留（os.replace 之前的半块）：无引用方，按同保留期清理，防缓慢累积
-                    if now - block.stat().st_mtime > retention_seconds:
-                        block.unlink(missing_ok=True)
-            # 仅剩 tmp 残留被清空的分片，块候选为空时调用方短路、触达不到
-            # remove_blocks 的目录清理——扫到这里顺带 rmdir，防空目录永久滞留
-            if not any(shard.iterdir()):
+                    st = block.stat()
+                    blocks.append(BlockInfo(hash=block.name[:-3], mtime=st.st_mtime, size=st.st_size))
+                    has_entries = True
+                elif block.name.endswith(".gz.tmp") and now - block.stat().st_mtime > _TMP_RESIDUE_SECONDS:
+                    # put 崩溃残留：无引用方，超龄直接清，防缓慢累积（清走的
+                    # 不置 has_entries——分片因此变空时可顺带 rmdir）
+                    block.unlink(missing_ok=True)
+                else:
+                    has_entries = True
+            # 分片只剩已被清掉的 tmp 残留时，块的删除方（remove_blocks）触达不到
+            # ——扫到这里顺带 rmdir，防空目录永久滞留
+            if not has_entries:
                 shard.rmdir()
-        return candidates
+        return blocks
 
-    def remove_blocks(self, hashes: list[str], *, retention_seconds: int) -> int:
-        """删除给定块（幂等）；分片目录空了顺带清掉（残留文件在也不会误删目录）。
+    def remove_blocks(self, blocks: list[BlockInfo]) -> int:
+        """删除给定块（幂等）；本批删过的分片若已空顺带清掉。
 
-        删除前按 mtime 复核一遍「仍超保留期」：候选集与真正 unlink 之间隔着调用方的
-        引用核查（若干 DB 往返），期间被 ``put`` 幂等复用的块会刷新 mtime——它即将有
-        新引用行，此时删掉会让新行指向已删块（详见 ``put`` 的 mtime 注释），复核把这
-        个窗口挡掉。非哈希名的杂散文件跳过不中止整批（哈希闸会 raise）。
+        删前按「当前 mtime == 清点时 mtime」复核一遍：清点与真正 unlink 之间
+        隔着策略选块与限速分批，期间被 ``put`` 幂等复用的块会刷新 mtime——它即将有
+        新引用行，此时删掉会让新行指向已删块（详见 ``put`` 的 mtime 注释），复核把
+        这个窗口挡掉。非哈希名的杂散条目跳过不中止整批（哈希闸会 raise）。
+        空分片只在本批触达过的分片里找（rmdir 对非空目录自然失败即跳过）——全树
+        重扫等于把删除成本再付一遍整库遍历；其他分片的常规维护由 list_blocks 承担。
         """
         removed = 0
-        now = time.time()
-        for block_hash in hashes:
-            if not _HASH_RE.fullmatch(block_hash or ""):
+        touched_shards = set()
+        for info in blocks:
+            if not _HASH_RE.fullmatch(info.hash or ""):
                 continue
-            path = self._block_path(block_hash)
-            if path.is_file() and now - path.stat().st_mtime > retention_seconds:
-                path.unlink(missing_ok=True)
-                removed += 1
-        blocks_dir = self._root / "blocks"
-        if blocks_dir.is_dir():
-            for shard in blocks_dir.iterdir():
-                if shard.is_dir() and not any(shard.iterdir()):
-                    shard.rmdir()
+            path = self._block_path(info.hash)
+            try:
+                st = path.stat()
+            except OSError:
+                continue  # 已不在（并发删除/手工清理），幂等跳过
+            if st.st_mtime != info.mtime:
+                continue  # 清点后被 put 复用（mtime 刷新、新引用行在途）→ 幸存
+            path.unlink(missing_ok=True)
+            removed += 1
+            touched_shards.add(path.parent)
+        for shard in touched_shards:
+            try:
+                shard.rmdir()
+            except OSError:
+                pass  # 分片还有块 / 杂散文件 / 并发 put 刚写入 → 留着
         return removed

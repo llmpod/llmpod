@@ -72,7 +72,8 @@ async def log_detail(
 ):
     """单条调用详情：计量行 + 从 BodyStore 读块还原的完整请求/响应体。
 
-    ``snapshot_disabled=true``（当时块写失败）或块已被 GC 时 body 为 null。
+    ``snapshot_disabled=true``（记录快照的开关当时是关 / 块写失败）或块已被
+    轮转删除时 body 为 null。
     """
     row = await get_request_log(db, request_id=request_id)
     store = get_body_store()

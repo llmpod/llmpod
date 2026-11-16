@@ -102,9 +102,16 @@ class SettingsPayload(BaseModel):
     # 部署级总闸仍为 env LLMPOD_TELEMETRY_ENABLED（false 时后台任务不启动，本开关无效）
     telemetryEnabled: bool = True
 
+    # 调用日志请求体快照：false = API 网关只落计量行、不写 body 块文件（详情页
+    # 看不到出入参原文）。快照含明文出入参（排障口径，不脱敏），默认关闭；
+    # 排障窗口内临时打开（网关 ≤1 个轮询周期热生效）。块文件的轮转由
+    # LLMPOD_BODY_RETENTION_MODE / LLMPOD_BODY_MAX_BYTES / LLMPOD_BODY_RETENTION_DAYS
+    # 环境变量控制（按容量或按天数轮转），与本开关正交
+    bodySnapshot: bool = False
+
 
 # 布尔字段（两态：缺省=不动 / 真值=覆写；读侧只认真 bool，写侧非 bool raise）
-_BOOL_FIELDS = frozenset({"maintenanceMode", "telemetryEnabled"})
+_BOOL_FIELDS = frozenset({"maintenanceMode", "telemetryEnabled", "bodySnapshot"})
 
 
 def _safe_url_or_text(value: str) -> bool:

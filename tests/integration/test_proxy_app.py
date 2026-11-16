@@ -177,11 +177,15 @@ def _fake_upstream_ok(fail_hosts: tuple[str, ...] = ()):
 
 
 def _attach_logger(app, db, tmp_path):
-    """接线 fire-and-forget 记账到测试 db + tmp_path 块存储。"""
+    """接线 fire-and-forget 记账到测试 db + tmp_path 块存储（快照恒开：测试默认要写块）。"""
     from llmpod.apps.proxyserver.bodystore import LocalFileBodyStore
     from llmpod.apps.proxyserver.request_logger import RequestLogger
 
-    app.state.proxy.logger = RequestLogger(db_factory=None, store=LocalFileBodyStore(root=tmp_path))
+    app.state.proxy.logger = RequestLogger(
+        db_factory=None,
+        store=LocalFileBodyStore(root=tmp_path),
+        snapshot_enabled=lambda: True,
+    )
     app.state.proxy.log_db = db
 
 
