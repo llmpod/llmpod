@@ -179,3 +179,29 @@ describe('portal login 维护感知', () => {
     expect(goToPlatform).not.toHaveBeenCalled()
   })
 })
+
+describe('portal login 自动填充', () => {
+  it('凭据字段落在真实 input 上:稳定 name + autocomplete + required', () => {
+    const { form } = mountLogin()
+
+    const username = form.find('input[placeholder="用户名"]')
+    expect(username.attributes('name')).toBe('username')
+    expect(username.attributes('autocomplete')).toBe('username')
+    expect(username.attributes('spellcheck')).toBe('false')
+    expect(username.attributes('required')).toBeDefined()
+
+    const password = form.find('input[type="password"]')
+    expect(password.attributes('name')).toBe('password')
+    expect(password.attributes('autocomplete')).toBe('current-password')
+    expect(password.attributes('required')).toBeDefined()
+  })
+
+  it('外层表单带 id 且关闭原生校验提示(必填校验只由 rules 给)', () => {
+    const { form } = mountLogin()
+
+    const formEl = form.find('form')
+    expect(formEl.attributes('id')).toBe('portal-login-form')
+    // novalidate:避免 Enter 隐式提交时浏览器原生气泡与 n-form 校验提示叠加
+    expect(formEl.attributes('novalidate')).toBeDefined()
+  })
+})

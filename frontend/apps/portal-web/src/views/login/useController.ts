@@ -13,6 +13,8 @@ import { isHttpError } from '@repo/http-client'
 import { login } from '@/api/auth'
 
 const REMEMBER_KEY = 'portal-login-username'
+/** 登录表单 id:表单外的登录按钮用 form 属性挂回 <form>,浏览器据此识别为「带提交按钮的登录表单」才会存密码 */
+const LOGIN_FORM_ID = 'portal-login-form'
 
 interface LoginFormModel {
   username: string
@@ -33,14 +35,40 @@ export function useController() {
       password: '',
       remember: Boolean(remembered),
     }),
+    // novalidate:必填校验统一由下方 rules 给出,避免 Enter 隐式提交时再叠一层浏览器原生气泡
+    formProps: { id: LOGIN_FORM_ID, novalidate: true },
     options: () => [
       FormInput('', 'username', {
-        attrs: { placeholder: '用户名', size: 'large' },
+        attrs: {
+          placeholder: '用户名',
+          size: 'large',
+          // inputProps 才透传到内层 <input>:浏览器/密码管理器靠 autocomplete + 稳定 name 建立「账号」语义,
+          // 写在外层 attrs 上只会落到 n-input 的包裹 div(不参与自动填充识别)
+          inputProps: {
+            name: 'username',
+            autocomplete: 'username',
+            required: true,
+            spellcheck: 'false',
+            autocapitalize: 'off',
+            enterkeyhint: 'next',
+          },
+        },
         itemProps: { showLabel: false, class: 'mb-[2rem]' },
         rules: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
       }),
       FormPassword('', 'password', {
-        attrs: { placeholder: '密码', size: 'large', showPasswordOn: 'click' },
+        attrs: {
+          placeholder: '密码',
+          size: 'large',
+          showPasswordOn: 'click',
+          // current-password:声明「已有的密码」,浏览器才会带出已保存的凭据并提示保存
+          inputProps: {
+            name: 'password',
+            autocomplete: 'current-password',
+            required: true,
+            enterkeyhint: 'done',
+          },
+        },
         itemProps: { showLabel: false, class: 'mb-[1.6rem]' },
         rules: [{ required: true, message: '请输入密码', trigger: 'blur' }],
       }),
@@ -95,5 +123,13 @@ export function useController() {
     message.info('企业SSO登录即将上线')
   }
 
-  return { LmForm, submit, submitting, handleSsoLogin, maintenanceActive, maintenanceMessage }
+  return {
+    LmForm,
+    submit,
+    submitting,
+    formId: LOGIN_FORM_ID,
+    handleSsoLogin,
+    maintenanceActive,
+    maintenanceMessage,
+  }
 }

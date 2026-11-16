@@ -3,8 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 声明明暗双方案:bundle 执行前浏览器即可按 color-scheme 渲染原生滚动条/控件与首屏画布 -->
+    <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/x-icon" href="/logo.ico" />
     <title>LLMPod</title>
+    <style>
+      /* 双方案声明放在 :root(指南要求落在 html/:root 才覆盖整个视口的原生 UI);
+         theme.boot.js 随后把 html 内联 color-scheme 覆盖成最终明暗 */
+      :root {
+        color-scheme: light dark;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>

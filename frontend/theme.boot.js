@@ -163,10 +163,11 @@
     (mode === 'auto' &&
       window.matchMedia &&
       window.matchMedia('(prefers-color-scheme: dark)').matches)
-  if (dark) {
-    root.classList.add('dark')
-    root.style.colorScheme = 'dark'
-  }
+  // class 只标记深色;color-scheme 必须无条件写终态值:
+  // 首屏 splash 的 light-dark() 与原生 UI 都按它解析,"显式浅色 + 系统深色"时不写就会落在
+  // :root 的 light dark 上、被按系统偏好判成深色,先闪一屏深色 splash 再变浅。
+  if (dark) root.classList.add('dark')
+  root.style.colorScheme = dark ? 'dark' : 'light'
   // 与 naive-ui commonLight/commonDark 的 bodyColor、baseColor/textColor2 一致,
   // 挂载后 addCssVarsToHtml 会用同值覆盖,不产生跳变
   root.style.setProperty('--n-body-color', dark ? '16,16,20' : '255,255,255')

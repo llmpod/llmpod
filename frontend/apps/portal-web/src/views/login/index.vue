@@ -3,7 +3,8 @@ import { useTheme } from '@repo/hooks'
 import LoginBackground from './components/LoginBackground.vue'
 import { useController } from './useController'
 
-const { LmForm, submit, submitting, maintenanceActive, maintenanceMessage } = useController()
+const { LmForm, submit, submitting, formId, maintenanceActive, maintenanceMessage } =
+  useController()
 // 后端下发登录页背景(缓存于 app_remote_theme,刷新不闪);未下发时保持默认星空背景
 const { loginBackground, loginPrimary, remoteTheme } = useTheme()
 // 背景优先级:背景图 > 登录页主色(纯色) > 默认星空;主色仅显式配置时启用纯色背景
@@ -49,11 +50,15 @@ const bgType = computed(() => {
 
         <LmForm @keyup.enter="submit" />
 
+        <!-- attr-type + form:让按钮成为表单的真实提交按钮(挂回 LmForm 的 <form>),
+             浏览器/密码管理器才会把这次登录识别为可保存的凭据提交;点击行为仍由 @click 驱动 -->
         <n-button
           type="primary"
           class="mt-[6.5rem]"
           size="large"
           block
+          attr-type="submit"
+          :form="formId"
           :loading="submitting"
           @click="submit"
         >
