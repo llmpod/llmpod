@@ -4,9 +4,11 @@
  * - 服务端注入 index.html 的 window.__LLMPOD_SETTINGS__（theme.boot.js 桥接消费，
  *   注入侧额外携带只读附加键 serverVersion / first_guide，见 LlmpodSettingsSeed）
  *
- * 12 字段全量、键序固定（后端测试锁定）；除 maintenanceMode / telemetryEnabled 外
- * 均可空，null / 空串 = 未配置，前端回落各自默认值。字段约束（hex / mode 枚举 /
- * scheme 白名单 / 限长）由后端写路径净化，前端拿到即合法值。
+ * 基础 12 字段全量、键序固定（后端测试锁定），末尾 4 个调用日志键为后加的可选键
+ * （旧版后端 / 旧缓存种子不带，消费侧按缺省语义回落）；除 maintenanceMode /
+ * telemetryEnabled / bodySnapshot 外均可空，null / 空串 = 未配置，前端回落各自
+ * 默认值。字段约束（hex / mode 枚举 / scheme 白名单 / 限长 / 容量下限）由后端写
+ * 路径净化，前端拿到即合法值。
  */
 export interface LlmpodSettings {
   /** 站点名（浏览器标题优先来源；通用设置空白保存自动回落「LLMPod」） */
@@ -36,6 +38,17 @@ export interface LlmpodSettings {
    * 旧缓存种子/旧版后端可能不带此键，消费方按 `?? true` 回落默认开启。
    */
   telemetryEnabled: boolean
+  /**
+   * 调用日志请求体快照开关：true = 记录请求 / 响应原文（含明文出入参，仅排障用），
+   * false = 仅记计量。默认关闭；旧版后端 / 旧缓存种子不带此键，消费侧按 `?? false` 回落。
+   */
+  bodySnapshot?: boolean
+  /** body 块轮转方式：`size` = 按容量 / `time` = 按时间；null = 未配置（回落部署环境变量默认） */
+  bodyRetentionMode?: 'size' | 'time' | null
+  /** body 块保留天数（仅 time 模式消费）；null = 未配置（回落部署默认），正整数 ≥ 1 */
+  bodyRetentionDays?: number | null
+  /** body 块容量上限，字节（仅 size 模式消费）；null = 未配置（回落部署默认），≥ 1 MiB */
+  bodyMaxBytes?: number | null
 }
 
 declare global {

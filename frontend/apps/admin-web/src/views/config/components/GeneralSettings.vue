@@ -2,7 +2,7 @@
 import TelemetrySettings from './TelemetrySettings.vue'
 import { useController } from '../useController'
 
-const { LmForm, MaintenanceForm } = useController()
+const { LmForm, MaintenanceForm, BodyLogForm } = useController()
 </script>
 
 <template>
@@ -12,6 +12,9 @@ const { LmForm, MaintenanceForm } = useController()
     </LmCard>
     <LmCard title="维护模式" segmented>
       <MaintenanceForm class="pt-[.5rem]" />
+    </LmCard>
+    <LmCard title="调用日志" segmented>
+      <BodyLogForm class="pt-[.5rem]" />
     </LmCard>
     <LmCard title="数据与隐私" segmented>
       <TelemetrySettings />

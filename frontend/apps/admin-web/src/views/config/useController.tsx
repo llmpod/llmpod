@@ -1,6 +1,8 @@
 import {
   useForm,
   FormInput,
+  FormInputNumber,
+  FormRadioGroup,
   FormSwitch,
   FormCustom,
   FormButton,
@@ -10,10 +12,21 @@ import {
   SITE_STORAGE_KEY,
   type LlmpodSettings,
 } from '@repo/hooks'
-import { useStore } from './useStore'
+import {
+  useStore,
+  isValidBodyMaxGib,
+  type BodyLogModel,
+  type BodyRetentionMode,
+} from './useStore'
 
 /** 默认站点名(与三端 index.html <title> 及 theme.boot 保持同值) */
 const DEFAULT_SITE_TEXT = 'LLMPod'
+
+/** body 块轮转方式选项（后端枚举，非法值 422） */
+const RETENTION_MODE_OPTIONS: { label: string; value: BodyRetentionMode }[] = [
+  { label: '按时间', value: 'time' },
+  { label: '按大小', value: 'size' },
+]
 
 /**
  * 站点字段写 app_site 缓存,供 theme.boot 刷新兜底:
@@ -27,8 +40,15 @@ function writeSiteCache(data: Pick<LlmpodSettings, 'siteName' | 'siteDescription
 }
 
 export function useController() {
-  const { settingsStore, toGeneralModel, toMaintenanceModel, saveGeneral, saveMaintenance } =
-    useStore()
+  const {
+    settingsStore,
+    toGeneralModel,
+    toMaintenanceModel,
+    toBodyLogModel,
+    saveGeneral,
+    saveMaintenance,
+    saveBodyLog,
+  } = useStore()
   const { setBrandConfig } = useBrand()
 
   const { LmForm, setValues } = useForm({
@@ -112,7 +132,112 @@ export function useController() {
     },
   })
 
-  // 首次进入拉取回显,load 完成后把服务端值回填进两个表单
+  /** 记录开关镜像：关闭时只保留开关，轮转设置整块不渲染 */
+  const bodyLogEnabled = ref(toBodyLogModel(settingsStore.settings).bodySnapshot)
+
+  /**
+   * 轮转方式镜像:数值行随它整行替换(time → 保留天数 / size → 容量上限)。
+   * 回显 mode 为 null 时按「按时间」展示,但不回写后端,除非用户真的切了 radio。
+   */
+  const bodyLogMode = ref<BodyRetentionMode>(
+    toBodyLogModel(settingsStore.settings).bodyRetentionMode,
+  )
+
+  const {
+    LmForm: BodyLogForm,
+    setValues: setBodyLogValues,
+    params: bodyLogParams,
+  } = useForm<BodyLogModel>({
+    data: () => toBodyLogModel(settingsStore.settings),
+    options: () =>
+      computed(() => {
+        const isTimeMode = bodyLogMode.value === 'time'
+        return [
+          FormSwitch('记录请求体', 'bodySnapshot'),
+          // 关闭记录时不展示轮转设置(规则仍作用于存量块,重新开启即可编辑)
+          ...(bodyLogEnabled.value
+            ? [
+                FormRadioGroup('轮转方式', 'bodyRetentionMode', RETENTION_MODE_OPTIONS),
+                // 数值行整体替换:仅 time 消费天数 / 仅 size 消费容量,清空即回落系统默认
+                ...(isTimeMode
+                  ? [
+                      FormInputNumber('保留天数', 'bodyRetentionDays', {
+                        attrs: {
+                          class: 'w-[12rem]',
+                          min: 1,
+                          precision: 0,
+                          clearable: true,
+                          placeholder: '系统默认',
+                        },
+                        controlSlots: { suffix: () => '天' },
+                        rules: [
+                          {
+                            validator: (_rule: unknown, value: number | null) =>
+                              value == null || (Number.isInteger(value) && value >= 1)
+                                ? true
+                                : new Error('保留天数至少 1 天'),
+                            trigger: ['blur', 'change'],
+                          },
+                        ],
+                      }),
+                    ]
+                  : [
+                      FormInputNumber('容量上限', 'bodyMaxBytes', {
+                        attrs: {
+                          class: 'w-[12rem]',
+                          min: 0,
+                          precision: 1,
+                          clearable: true,
+                          placeholder: '系统默认',
+                        },
+                        controlSlots: { suffix: () => 'GiB' },
+                        rules: [
+                          {
+                            validator: (_rule: unknown, value: number | null) =>
+                              isValidBodyMaxGib(value) ? true : new Error('容量上限至少 1 MiB'),
+                            trigger: ['blur', 'change'],
+                          },
+                        ],
+                      }),
+                    ]),
+              ]
+            : []),
+          FormButton('保存调用日志设置', {
+            attrs: { type: 'primary', secondary: false },
+            onClick: (ctx) => ctx.submit().catch(() => {}),
+          }),
+        ]
+      }),
+    submit: async (model, validate) => {
+      await validate()
+      const saving = saveBodyLog(model)
+      if (!saving) {
+        message.info('没有需要保存的改动')
+        return
+      }
+      await saving
+      // 网关按配置轮询热加载(默认 3 秒),无需重启
+      message.success('调用日志设置已保存,网关将在数秒内热生效')
+    },
+  })
+
+  // 开关/radio 变更跟随表单值(回填/复位同样驱动轮转设置显隐与数值行切换)
+  watch(
+    () => bodyLogParams().bodySnapshot,
+    (enabled) => {
+      bodyLogEnabled.value = enabled
+    },
+    { immediate: true },
+  )
+  watch(
+    () => bodyLogParams().bodyRetentionMode,
+    (mode) => {
+      bodyLogMode.value = mode
+    },
+    { immediate: true },
+  )
+
+  // 首次进入拉取回显,load 完成后把服务端值回填进三个表单
   void settingsStore.load()
   watch(
     () => settingsStore.settings,
@@ -120,8 +245,9 @@ export function useController() {
       if (!settings) return
       setValues(toGeneralModel(settings))
       setMaintenanceValues(toMaintenanceModel(settings))
+      setBodyLogValues(toBodyLogModel(settings))
     },
   )
 
-  return { LmForm, MaintenanceForm }
+  return { LmForm, MaintenanceForm, BodyLogForm }
 }

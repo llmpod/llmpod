@@ -13,22 +13,28 @@ vi.mock('@repo/hooks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@repo/hooks')>()
   return {
     ...actual,
-    message: { success: vi.fn(), error: vi.fn() },
+    message: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
     useConfirm: vi.fn(),
     useDialog: vi.fn(),
   }
 })
 
 import { message, useBrand, useConfirm, useDialog } from '@repo/hooks'
-import { getAdminSettings, updateAdminSettings } from '@/api/settings'
+import { getAdminSettings, updateAdminSettings, type AdminSettingsData } from '@/api/settings'
 import { useSettingsStore } from '@/store/settings'
 import { routes } from '@/router/routes'
 import { useController } from '@/views/config/useController'
+import {
+  bytesToGib,
+  gibToBytes,
+  isValidBodyMaxGib,
+  MIN_BODY_MAX_BYTES,
+} from '@/views/config/useStore'
 import TelemetrySettings from '@/views/config/components/TelemetrySettings.vue'
 import { searchTabs } from '@/views/config/tabs'
 
-/** 回显 fixture:通用组有值,维护关闭,遥测默认开启 */
-const SETTINGS_FIXTURE = {
+/** 回显 fixture:通用组有值,维护关闭,遥测默认开启,调用日志四项全部未配置 */
+const SETTINGS_FIXTURE: AdminSettingsData = {
   siteName: 'LLMPod 平台',
   siteDescription: '企业级推理网关',
   platformName: null,
@@ -41,12 +47,16 @@ const SETTINGS_FIXTURE = {
   maintenanceMode: false,
   maintenanceMessage: null,
   telemetryEnabled: true,
+  bodySnapshot: false,
+  bodyRetentionMode: null,
+  bodyRetentionDays: null,
+  bodyMaxBytes: null,
   updated_by: 1,
   updated_at: '2026-09-02T00:00:00Z',
 }
 
 /** 回显行:模拟后端当前状态(POST 后 GET 返回新值),避免 save 内 load 刷回旧值 */
-let settingsRow = { ...SETTINGS_FIXTURE }
+let settingsRow: AdminSettingsData = { ...SETTINGS_FIXTURE }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -355,5 +365,181 @@ describe('设置页子 tab 合并(通用设置 + 模块管理 + 品牌配置)', 
     ) => { name: string; query: Record<string, string> } | true
     expect(beforeEnter({ query: { tab: 'about', x: '1' } })).toEqual({ name: 'about', query: { x: '1' } })
     expect(beforeEnter({ query: { tab: 'brand' } })).toBe(true)
+  })
+})
+
+/** 挂载调用日志表单:controller 单例 + 表单实例(回显回填完成后使用) */
+async function mountBodyLog() {
+  const { controller, wrapper, store } = mountController()
+  const form = mount(controller.BodyLogForm, { attachTo: document.body })
+  await waitForSettingsLoaded(store)
+  await nextTick()
+  return { form, wrapper, store }
+}
+
+/** 定位保存按钮(表单里唯一的文字按钮) */
+function saveBodyLogBtn(form: VueWrapper) {
+  return form.findAll('button').find((btn) => btn.text().includes('保存调用日志设置'))!
+}
+
+describe('config 调用日志', () => {
+  it('容量换算与下限:GiB↔字节四舍五入,低于 1 MiB 判非法', () => {
+    expect(MIN_BODY_MAX_BYTES).toBe(1048576)
+    expect(gibToBytes(5)).toBe(5368709120)
+    expect(gibToBytes(0.5)).toBe(536870912)
+    expect(bytesToGib(5368709120)).toBe(5)
+    // 非整 GiB 回显收敛到一位小数,与原值比对口径一致,不会被误判成改动
+    expect(bytesToGib(1000000000)).toBe(0.9)
+    // null = 用系统默认,合法;有值必须 ≥ 1 MiB
+    expect(isValidBodyMaxGib(null)).toBe(true)
+    expect(isValidBodyMaxGib(1)).toBe(true)
+    expect(isValidBodyMaxGib(0.0009)).toBe(false)
+  })
+
+  it('默认回显:关闭记录时只保留开关,轮转设置整块不渲染', async () => {
+    const { form, wrapper } = await mountBodyLog()
+
+    expect(switchChecked(form)).toBe('false')
+    expect(form.findAll('input[type="radio"]')).toHaveLength(0)
+    expect(form.find('input[placeholder="系统默认"]').exists()).toBe(false)
+    expect(form.text()).not.toContain('轮转方式')
+    expect(form.text()).not.toContain('保留天数')
+    expect(form.text()).not.toContain('容量上限')
+    wrapper.unmount()
+  })
+
+  it('打开开关后展示轮转设置:按时间默认选中,保留天数留空即系统默认', async () => {
+    const { form, wrapper } = await mountBodyLog()
+
+    await form.find('.n-switch').trigger('click')
+    await nextTick()
+
+    expect(form.text()).toContain('轮转方式')
+    const radios = form.findAll('input[type="radio"]')
+    expect(radios).toHaveLength(2)
+    expect((radios[0].element as HTMLInputElement).checked).toBe(true)
+    // time 模式只渲染「保留天数」行,空值以 placeholder 提示系统默认
+    expect(form.text()).toContain('保留天数')
+    expect(form.text()).not.toContain('容量上限')
+    expect(form.find('input[placeholder="系统默认"]').exists()).toBe(true)
+    // 轮转设置不随开关禁用(仅按显隐控制)
+    expect(form.find('input[type="radio"]').attributes('disabled')).toBeUndefined()
+    expect(form.find('input[placeholder="系统默认"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('只开记录开关:只提交 bodySnapshot,未配置的轮转模式与数值不回写', async () => {
+    const { form, wrapper } = await mountBodyLog()
+
+    await form.find('.n-switch').trigger('click')
+    await saveBodyLogBtn(form).trigger('click')
+
+    await vi.waitFor(() =>
+      expect(message.success).toHaveBeenCalledWith('调用日志设置已保存,网关将在数秒内热生效'),
+    )
+    expect(vi.mocked(updateAdminSettings).mock.calls[0][0]).toEqual({ bodySnapshot: true })
+    wrapper.unmount()
+  })
+
+  it('切按大小:数值行整体替换为容量上限,提交 GiB→字节,不带上未动的天数', async () => {
+    const { form, wrapper } = await mountBodyLog()
+
+    // 轮转设置跟随记录开关显隐:先开启再切模式
+    await form.find('.n-switch').trigger('click')
+    await nextTick()
+    await form.findAll('input[type="radio"]')[1].setValue(true)
+    await nextTick()
+
+    expect(form.text()).toContain('容量上限')
+    expect(form.text()).toContain('GiB')
+    expect(form.text()).not.toContain('保留天数')
+
+    const capacity = form.find('input[placeholder="系统默认"]')
+    await capacity.setValue('5')
+    await capacity.trigger('blur')
+    await saveBodyLogBtn(form).trigger('click')
+
+    await vi.waitFor(() => expect(message.success).toHaveBeenCalled())
+    // 开启记录才能编辑轮转设置,同一次提交带上开关;天数未动不进载荷
+    expect(vi.mocked(updateAdminSettings).mock.calls[0][0]).toEqual({
+      bodySnapshot: true,
+      bodyRetentionMode: 'size',
+      bodyMaxBytes: 5368709120,
+    })
+    wrapper.unmount()
+  })
+
+  it('回显已有容量:开启态按 GiB 一位小数展示,关掉记录只提交开关变化', async () => {
+    settingsRow = {
+      ...settingsRow,
+      bodySnapshot: true,
+      bodyRetentionMode: 'size',
+      bodyMaxBytes: 5368709120,
+    }
+    const { form, wrapper } = await mountBodyLog()
+
+    expect(switchChecked(form)).toBe('true')
+    expect((form.findAll('input[type="radio"]')[1].element as HTMLInputElement).checked).toBe(true)
+    const capacity = form.find('input[placeholder="系统默认"]')
+    expect(Number((capacity.element as HTMLInputElement).value)).toBe(5)
+
+    // 关掉记录:轮转设置隐藏但表单值保留,载荷只带开关
+    await form.find('.n-switch').trigger('click')
+    await nextTick()
+    expect(form.find('input[placeholder="系统默认"]').exists()).toBe(false)
+    await saveBodyLogBtn(form).trigger('click')
+
+    await vi.waitFor(() => expect(message.success).toHaveBeenCalled())
+    // 字节回显→GiB→字节 换算不产生漂移,容量上限与轮转方式都不进载荷
+    expect(vi.mocked(updateAdminSettings).mock.calls[0][0]).toEqual({ bodySnapshot: false })
+    wrapper.unmount()
+  })
+
+  it('填保留天数:仅提交 bodyRetentionDays,未切的轮转方式不回写', async () => {
+    const { form, wrapper } = await mountBodyLog()
+
+    await form.find('.n-switch').trigger('click')
+    await nextTick()
+    const days = form.find('input[placeholder="系统默认"]')
+    await days.setValue('7')
+    await days.trigger('blur')
+    await saveBodyLogBtn(form).trigger('click')
+
+    await vi.waitFor(() => expect(message.success).toHaveBeenCalled())
+    // 开启记录才能编辑轮转设置,同一次提交带上开关;轮转方式未切不回写
+    expect(vi.mocked(updateAdminSettings).mock.calls[0][0]).toEqual({
+      bodySnapshot: true,
+      bodyRetentionDays: 7,
+    })
+    wrapper.unmount()
+  })
+
+  it('清空容量上限:提交 null 回落部署默认', async () => {
+    settingsRow = {
+      ...settingsRow,
+      bodySnapshot: true,
+      bodyRetentionMode: 'size',
+      bodyMaxBytes: 5368709120,
+    }
+    const { form, wrapper } = await mountBodyLog()
+
+    const capacity = form.find('input[placeholder="系统默认"]')
+    await capacity.setValue('')
+    await capacity.trigger('blur')
+    await saveBodyLogBtn(form).trigger('click')
+
+    await vi.waitFor(() => expect(message.success).toHaveBeenCalled())
+    expect(vi.mocked(updateAdminSettings).mock.calls[0][0]).toEqual({ bodyMaxBytes: null })
+    wrapper.unmount()
+  })
+
+  it('无改动保存:不发请求,只提示没有改动', async () => {
+    const { form, wrapper } = await mountBodyLog()
+
+    await saveBodyLogBtn(form).trigger('click')
+
+    await vi.waitFor(() => expect(message.info).toHaveBeenCalledWith('没有需要保存的改动'))
+    expect(updateAdminSettings).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 })
