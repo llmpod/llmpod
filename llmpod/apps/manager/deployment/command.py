@@ -122,6 +122,9 @@ def validate_command_for_topology(
         has_multinode=has_multinode,
         required=adapter.multinode_command_placeholders if has_multinode else [],
     )
+    # JSON 值 flag 的完整性校验（值以 {/[ 开头却解析不了 JSON = 编辑往返丢了引号）
+    if command is not None:
+        adapter.validate_command_json_values(command)
     # 命令模式下 extra_args 不参与执行（见 DeploymentConfig.command 的契约）。对 flag 由
     # 引导脚本 "$@" 透传的引擎，脚本被整条命令替换后 flag 无处落地——静默丢弃是最差的
     # 失败模式，直接拒。

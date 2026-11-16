@@ -105,6 +105,31 @@ describe('writeFlagGroup 按 flag 名写入', () => {
     const broken = 'vllm serve --name "unclosed'
     expect(writeFlagGroup(broken, ['--port', '9000'], ['--port'])).toBe(broken)
   })
+
+  it('编辑往返恢复引号:含空白的 JSON 值不再被拆碎(--compilation-config 事故回归)', () => {
+    const command = `vllm serve --model {model_path} --port {port} --compilation-config '{"cudagraph_mode": "FULL_DECODE_ONLY"}'`
+    // 第一轮改别的参数:JSON 值必须以带引号形态保留
+    const once = writeFlagGroup(command, ['--gpu-memory-utilization', '0.9'], [
+      '--gpu-memory-utilization',
+    ])
+    expect(once).toContain(`--compilation-config '{"cudagraph_mode": "FULL_DECODE_ONLY"}'`)
+    // 第二轮再改:仍完整(此前两轮往返后变成 {cudagraph_mode: FULL_DECODE_ONLY} 致引擎拒启)
+    const twice = writeFlagGroup(once, ['--max-num-seqs', '64'], ['--max-num-seqs'])
+    expect(tokenize(twice)).toContain('{"cudagraph_mode": "FULL_DECODE_ONLY"}')
+  })
+
+  it('值内含单引号按 POSIX 转义,往返解析回原值', () => {
+    const command = `vllm serve --port {port}`
+    const once = writeFlagGroup(command, ['--name', "it's a model"], ['--name'])
+    expect(once).toContain(`--name 'it'\\''s a model'`)
+    const twice = writeFlagGroup(once, ['--max-num-seqs', '8'], ['--max-num-seqs'])
+    expect(tokenize(twice)).toContain("it's a model")
+  })
+
+  it('无空白的普通值不加引号(命令文本保持可读)', () => {
+    const next = writeFlagGroup(VLLM_COMMAND, ['--dtype', 'bfloat16'], ['--dtype'])
+    expect(next).toContain('--dtype bfloat16')
+  })
 })
 
 describe('isCustomEntry 默认入口前缀判定', () => {

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -209,6 +210,10 @@ class EngineAdapter(ABC):
     # 非空 = 本引擎的 extra_args 靠引导脚本 ``"$@"`` 透传，命令模式下无处落地；
     # 值即拒绝时的报错文案（创建/预检/规划三处共用）。
     command_extra_args_error: str = ""
+    # 完整命令里吃 JSON 值的引擎 flag（如 vLLM 的 ``--compilation-config``）。值以
+    # ``{`` / ``[`` 开头时必须是完整 JSON：命令文本在编辑往返中丢引号后，值会在空格
+    # 处断开，引擎拿到半截 JSON 启动期才崩——创建/预检期先拦（validate_command_for_topology）。
+    command_json_value_flags: set[str] = set()
 
     # 多机分片启动顺序（reconciler 消费，不硬编码）：head_first（默认——head 当
     # rendezvous 服务端，workers 连它）| workers_first（特殊引擎用：head 启动即注册
@@ -729,6 +734,28 @@ class EngineAdapter(ABC):
     def command_placeholder_values(self, inst: InstanceSpec) -> dict[str, str]:
         """本引擎特有的完整命令占位符取值（可覆盖通用占位符）；其余由 command.render_command_template 给。"""
         return {}
+
+    def validate_command_json_values(self, command: str) -> None:
+        """校验 JSON 值 flag 的值完整性（见 ``command_json_value_flags`` 注释）。
+
+        只拦「值以 ``{`` / ``[`` 开头却解析不了 JSON」这一确定坏形态；数字档位
+        （如 ``-O 3``）、纯字符串值不在此列，引擎自己的 argparse 会兜底。
+        """
+        if not self.command_json_value_flags:
+            return
+        flags = StartArgs.parse(command_argv(command)).flags
+        for flag in self.command_json_value_flags:
+            value = flags.get(flag)
+            if value is None or value[:1] not in "{[":
+                continue
+            try:
+                json.loads(value)
+            except ValueError as e:
+                raise LLMPodValidationError(
+                    f"完整启动命令中 {flag} 的值不是合法 JSON（{e}）。"
+                    "JSON 需整体用引号包成一个参数，"
+                    f"如 --compilation-config '{{\"cudagraph_mode\": \"FULL_DECODE_ONLY\"}}'"
+                ) from e
 
     def split_command(self, tokens: list[str], arch: str) -> tuple[list[str] | None, list[str]]:
         """把用户的完整命令拆成 ``(容器入口, 启动参数)``。

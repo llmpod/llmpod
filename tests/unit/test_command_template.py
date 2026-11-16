@@ -156,6 +156,45 @@ class TestValidateCommandForTopology:
             "vllm serve {model_path} --port {port}", topology, get_adapter("vllm"), {"extra_args": ["--x"]}
         )
 
+    def test_broken_json_flag_value_rejected(self):
+        """JSON 值 flag 丢了引号（编辑往返拆碎）在预检期拦下，报错带正确写法。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        broken = (
+            "vllm serve {model_path} --port {port} "
+            "--compilation-config {cudagraph_mode: FULL_DECODE_ONLY}"
+        )
+        with pytest.raises(LLMPodValidationError) as exc:
+            validate_command_for_topology(broken, topology, get_adapter("vllm"))
+        assert "不是合法 JSON" in str(exc.value)
+        assert "--compilation-config" in str(exc.value)
+
+    def test_quoted_json_flag_value_accepted(self):
+        """引号完整的 JSON 值照常通过。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        good = (
+            "vllm serve {model_path} --port {port} "
+            "--compilation-config '{\"cudagraph_mode\": \"FULL_DECODE_ONLY\"}'"
+        )
+        validate_command_for_topology(good, topology, get_adapter("vllm"))
+
+    def test_numeric_optimization_level_accepted(self):
+        """--compilation-config 的数字档位写法（-O 3 语义）不按 JSON 校验。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        validate_command_for_topology(
+            "vllm serve {model_path} --port {port} --compilation-config 3",
+            topology,
+            get_adapter("vllm"),
+        )
+
+    def test_engine_without_json_flags_skips_check(self):
+        """未声明 JSON flag 的引擎不做该校验（守卫只对声明引擎生效）。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        validate_command_for_topology(
+            "llama-server --model {model_path} --port {port} --compilation-config {broken",
+            topology,
+            get_adapter("llamacpp"),
+        )
+
 
 class TestRenderCommandTemplate:
     def test_all_placeholders(self):

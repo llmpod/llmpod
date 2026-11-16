@@ -103,6 +103,9 @@ class VLLMAdapter(EngineAdapter):
     }
     command_prefix = ["vllm", "serve"]
     multinode_command_placeholders = ["headless"]
+    # 吃 JSON 值的引擎 flag：完整命令模式下值丢了引号会在引擎启动期崩，预检期先拦
+    # （--compilation-config 的短写 -O 允许纯数字档位，由用户自行保证）
+    command_json_value_flags = {"--compilation-config", "--hf-overrides"}
 
     param_suggestions = [
         ParamSuggestion(name="--trust-remote-code", hint="信任远程代码（自定义模型架构）"),

@@ -34,7 +34,8 @@ export function hasShellSyntax(command: string): boolean {
 }
 
 /**
- * 按空白拆分并尊重单/双引号(双引号内反斜杠转义);返回去引号后的纯 token。
+ * 按空白拆分并尊重单/双引号(引号内保留字面值,双引号内反斜杠转义,单引号外反斜杠
+ * 转义下一字符);返回去引号后的纯 token。
  * 引号不配对返回 null(调用方据此禁用解析)。
  */
 export function tokenize(command: string): string[] | null {
@@ -54,6 +55,11 @@ export function tokenize(command: string): string[] | null {
         continue
       }
       current += char
+      continue
+    }
+    // 引号外的反斜杠转义下一字符:引号恢复写出的 '\'' 等序列才能被再次解析回原值
+    if (char === '\\' && index + 1 < command.length) {
+      current += command[++index]
       continue
     }
     if (char === '"' || char === "'") {
@@ -148,18 +154,38 @@ export function commandPlaceholderIssues(
   return issues
 }
 
-/** token 里是否含平台托管占位符(参数区写入守卫:占位符只能留在用户命令里) */
+/** 单个 token 是否含平台托管占位符 */
+function tokenHasPlaceholder(token: string): boolean {
+  return PLATFORM_PLACEHOLDERS.some((placeholder) => token.includes(placeholder))
+}
+
+/** token 组里是否含平台托管占位符(参数区写入守卫:占位符只能留在用户命令里) */
 function hasPlaceholder(tokens: string[]): boolean {
-  return tokens.some((token) =>
-    PLATFORM_PLACEHOLDERS.some((placeholder) => token.includes(placeholder)),
-  )
+  return tokens.some(tokenHasPlaceholder)
+}
+
+/** token 不加引号就保不住完整性:值内含空白/引号/反斜杠,或以注释符 # 开头(拼回后会被当注释吃掉) */
+function tokenNeedsQuote(token: string): boolean {
+  return /[\s"'\\]/.test(token) || token.startsWith('#')
+}
+
+/**
+ * token 拼回命令文本时的引号规则:平台占位符原样;必须加引号的值整体包成单引号
+ * (值内单引号按 POSIX 写成 '\'');其余 token(含 $VAR 等依赖 shell 展开的写法)原样。
+ * 不恢复引号的话,含空白的值(如 --compilation-config 的 JSON 配置)会在下一轮编辑
+ * 或部署期解析时被拆碎,引擎拿到半截 JSON 直接拒启。
+ */
+function quoteToken(token: string): string {
+  if (tokenHasPlaceholder(token) || !tokenNeedsQuote(token)) return token
+  return `'${token.replaceAll("'", "'\\''")}'`
 }
 
 /**
  * 按 flag 整组写入命令:
  * 1) 先移除 relatedFlags 的全部既有出现(`--k v` / `--k=v`,同 flag 多次只保留一个);
  * 2) 再把 group 插回首个被移除出现的位置,无命中则追加到末尾(保持原有顺序);
- * 3) group 为空 = 纯删除(如删掉某条参数行)。
+ * 3) group 为空 = 纯删除(如删掉一条参数行);
+ * 4) 重拼时对需要引号的 token 恢复引号(quoteToken),值不在编辑往返中丢引号被拆碎。
  * 命令不可解析(引号不配对)或 group 含平台占位符时原样返回。
  */
 export function writeFlagGroup(command: string, group: string[], relatedFlags: string[]): string {
@@ -185,5 +211,5 @@ export function writeFlagGroup(command: string, group: string[], relatedFlags: s
     out.push(token)
   }
   if (!inserted) out.push(...group)
-  return out.join(' ')
+  return out.map(quoteToken).join(' ')
 }
