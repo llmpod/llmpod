@@ -41,7 +41,7 @@ from llmpod.models.model import Model
 from llmpod.models.model_deployment import ModelDeployment
 from llmpod.models.node import Node
 from llmpod.models.node_model import NodeModel
-from llmpod.apps.manager.deployment.constants import NodeModelState
+from llmpod.apps.manager.deployment.constants import NodeModelDesiredState, NodeModelState
 from llmpod.core.secrets import encrypt as _encrypt_source_auth
 from llmpod.utils.safe_path import safe_resolve
 from llmpod.permission.permissions import (
@@ -458,8 +458,8 @@ async def _try_merge_node_import(
             NodeModel(
                 model_id=m.id,
                 node_id=request.node_id,
-                desired_state="present",
-                status="present",
+                desired_state=NodeModelDesiredState.PRESENT,
+                status=NodeModelState.PRESENT,
                 local_dir=node_dir,
                 model_path=model_path,
                 bytes_total=total_bytes,
@@ -469,8 +469,8 @@ async def _try_merge_node_import(
         )
     else:
         # 同节点重复导入：目录路径变了就跟随新探测值（旧路径已失效），观测状态重置
-        copy.desired_state = "present"
-        copy.status = "present"
+        copy.desired_state = NodeModelDesiredState.PRESENT
+        copy.status = NodeModelState.PRESENT
         copy.local_dir = node_dir
         copy.model_path = model_path
         copy.bytes_total = total_bytes
@@ -540,6 +540,18 @@ async def create_model(
         if merged is not None:
             return success(merged)
 
+    # 非 node 源建模型时的同名守卫：node 源同名在库层有唯一索引（按名合并的锚点），
+    # 别的来源占用同一名字会让后续节点目录导入把两者错误地对上号
+    if node_dir is None:
+        same_name = list(
+            (await db.execute(select(Model).where(Model.name == request.name))).scalars()
+        )
+        if any(ModelSource.is_node_source(r.source) for r in same_name):
+            raise Conflict(
+                f"名称「{request.name}」已被节点目录导入的模型占用，请换一个名称；"
+                "不同来源的模型不合并"
+            )
+
     m = Model(
         name=request.name,
         source=request.source,
@@ -607,8 +619,8 @@ async def create_model(
             NodeModel(
                 model_id=m.id,
                 node_id=request.node_id,
-                desired_state="present",
-                status="present",
+                desired_state=NodeModelDesiredState.PRESENT,
+                status=NodeModelState.PRESENT,
                 local_dir=node_dir,
                 model_path=model_path,
                 bytes_total=node_total_bytes,
@@ -845,6 +857,15 @@ async def update_model(
     # 需要重新从节点目录导入，而不是原地改配方
     if "source" in updates and updates["source"] == ModelSource.NODE.value and not ModelSource.is_node_source(m.source):
         raise LLMPodValidationError("不能把已有模型改为节点目录来源；请从节点目录重新导入")
+    # 改名撞名前置：node 源同名在库层有唯一索引，撞上会 IntegrityError→500；非 node 源
+    # 也要避免与既有 node 源模型同名（同名不同来源的组合会让按名合并的导入路径混乱）
+    if "name" in updates and updates["name"] is not None and updates["name"] != m.name:
+        same_name = list(
+            (await db.execute(select(Model).where(Model.name == updates["name"]))).scalars()
+        )
+        clash = next((r for r in same_name if r.id != m.id and ModelSource.is_node_source(r.source)), None)
+        if clash is not None:
+            raise Conflict(f"名称「{updates['name']}」已被节点目录导入的模型占用，请换一个名称")
     if ModelSource.is_node_source(m.source):
         if "source" in updates and updates["source"] != ModelSource.NODE.value:
             raise LLMPodValidationError("节点目录导入的模型不能修改来源")

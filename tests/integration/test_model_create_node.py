@@ -285,6 +285,130 @@ class TestMergeNodeImport:
         copies = [c for c in session.all(NodeModel) if c.node_id == "n2"]
         assert copies == []
 
+    async def test_concurrent_name_clash_falls_back_to_merge(self, client: AsyncClient, monkeypatch):
+        """并发同名导入撞唯一索引：回滚保存点后并入赢家行，不 500。
+
+        时序模拟：查重时赢家尚不可见（合并分支落空）→ 本事务插入 Model 时撞
+        uq_model_node_name（真实 PG 由索引触发）→ 赢家提交可见 → 重查并入赢家。
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        session = _Session()
+        session.preload(_node("n1"))
+        session.preload(_node("n2"))
+        _override_db(session)
+        _override_user()
+        _patch_probe(monkeypatch, _probe())
+        orig_flush = session.flush
+        state = {"clash": True}
+
+        async def _flush():
+            if not state["clash"]:
+                await orig_flush()
+                return
+            # 撞索引的同时赢家事务提交：库中可见同名 node 模型行（含其 n1 副本）
+            state["clash"] = False
+            session.preload(_existing(node_id="n1"))
+            session.preload(
+                NodeModel(model_id=1, node_id="n1", desired_state="present", status="present")
+            )
+            raise IntegrityError("INSERT INTO model ...", {}, Exception("duplicate key"))
+
+        session.flush = _flush
+
+        resp = await client.post("/api/v1/admin/models", json=_payload(node_id="n2"))
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["id"] == 1  # 并发输家并入赢家行
+        assert len(session.all(Model)) == 1
+        assert {c.node_id for c in session.all(NodeModel)} == {"n1", "n2"}
+
+
+class TestDeleteModelCascadesNodeModel:
+    async def test_delete_model_removes_copy_rows(self, client: AsyncClient, monkeypatch):
+        """删模型连带清理 node_model 副本行（逻辑外键无级联，不清就是孤儿）。"""
+        session = _Session()
+        session.preload(_existing(node_id="n1"))
+        session.preload(
+            NodeModel(
+                model_id=1,
+                node_id="n1",
+                desired_state="present",
+                status="present",
+                local_dir="/data/models/qwen",
+            )
+        )
+        session.preload(
+            NodeModel(
+                model_id=1,
+                node_id="n2",
+                desired_state="present",
+                status="present",
+                local_dir="/data/models/qwen",
+            )
+        )
+        _override_db(session)
+        _override_user()
+
+        resp = await client.post("/api/v1/admin/models/1/delete")
+
+        assert resp.status_code == 200, resp.text
+        assert session.all(Model) == []
+        assert session.all(NodeModel) == []
+
+
+class TestRenameGuard:
+    async def test_rename_onto_node_source_name_rejected(self, client: AsyncClient):
+        """改名撞既有节点目录模型名 → 409（不走库层唯一索引的 IntegrityError→500）。"""
+        session = _Session()
+        session.preload(_existing(node_id="n1"))  # id=1, name=Qwen2.5-7B
+        session.preload(
+            Model(
+                id=2,
+                name="hf-model",
+                model_type="llm",
+                source="huggingface",
+                source_url="Qwen/Qwen2.5-7B",
+            )
+        )
+        _override_db(session)
+        _override_user()
+
+        resp = await client.post("/api/v1/admin/models/2/update", json={"name": "Qwen2.5-7B"})
+
+        assert resp.status_code == 409, resp.text
+
+    async def test_rename_to_free_name_allowed(self, client: AsyncClient):
+        session = _Session()
+        session.preload(_existing(node_id="n1"))
+        _override_db(session)
+        _override_user()
+
+        resp = await client.post("/api/v1/admin/models/1/update", json={"name": "Qwen2.5-7B-v2"})
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["name"] == "Qwen2.5-7B-v2"
+
+    async def test_create_other_source_onto_node_name_rejected(self, client: AsyncClient):
+        """反向守卫：非 node 源建模型撞既有 node 模型名 → 409（名字是按名合并的锚点）。"""
+        session = _Session()
+        session.preload(_existing(node_id="n1"))
+        _override_db(session)
+        _override_user()
+
+        resp = await client.post(
+            "/api/v1/admin/models",
+            json={
+                "name": "Qwen2.5-7B",
+                "source": "huggingface",
+                "source_url": "Qwen/Qwen2.5-7B",
+                "model_type": "llm",
+            },
+        )
+
+        assert resp.status_code == 409, resp.text
+
 
 class TestUpdateNodeModelGuard:
     """节点目录模型的绑定不可原地改（改来源/目录需重新导入）。"""

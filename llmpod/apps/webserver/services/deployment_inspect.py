@@ -272,9 +272,8 @@ async def _scope_node_source(db: AsyncSession, c: InspectState) -> None:
 
 
 def _restrict_pool_to_copy_nodes(c: InspectState) -> None:
-    """把可见节点池/卡池/CPU 资源收缩为持有副本的节点集合。"""
-    assert c.copy_nodes is not None
-    copies = c.copy_nodes
+    """把可见节点池/卡池/CPU 资源收缩为持有副本的节点集合（调用前提 copy_nodes 非 None）。"""
+    copies = c.copy_nodes or set()
     c.node_rows = [node for node in c.node_rows if node.id in copies]
     c.cluster_gpus = [gpu for gpu in c.cluster_gpus if gpu.node_id in copies]
     c.node_resources = [res for res in c.node_resources if res.node_id in copies]

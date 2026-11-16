@@ -369,15 +369,16 @@ class TestRequestScale:
 
 
 class TestNodeSourceScale:
-    """节点目录模型（source=node）的在线扩缩：新份只落在绑定节点。
+    """节点目录模型（source=node）的在线扩缩：新份只落在持有副本的节点。
 
-    权重只存在于绑定节点：扩容调度若不收窄，新份会落到别的节点、在 staging 阶段以
-    「节点上模型目录不可用」失败回滚——受理/预览/驱动三口同判（enforce_node_source_spec）。
+    权重只存在于持有副本的节点（不会自动下载）：扩容调度若不收窄，新份会落到别的
+    节点、在 staging 阶段以「节点上模型目录不可用」失败回滚——受理/预览/驱动三口
+    同判（validate_node_source_spec）。
     """
 
     @staticmethod
     def _make_node_source(scale_stack, monkeypatch):
-        """把 stack 模型改造成 source=node（绑 n1），并让 ncann 节点出现空闲 cann 卡。"""
+        """把 stack 模型改造成 source=node（副本在 n1），并让 ncann 节点出现空闲 cann 卡。"""
         session, dep, model = scale_stack
         model.source, model.node_id = "node", "n1"
         from llmpod.services import deployment_service
@@ -402,8 +403,8 @@ class TestNodeSourceScale:
         monkeypatch.setattr(deployment_service, "load_node_ips", _ips)
         return session, dep, model
 
-    async def test_preview_pool_restricted_to_bound_node(self, scale_stack, monkeypatch):
-        """预览的空闲卡/建议调度只看绑定节点——与真实扩容同口径。"""
+    async def test_preview_pool_restricted_to_copy_nodes(self, scale_stack, monkeypatch):
+        """预览的空闲卡/建议调度只看持有副本的节点——与真实扩容同口径。"""
         session, dep, model = self._make_node_source(scale_stack, monkeypatch)
         data = await scale_mod.preview_scale(session, dep.deployment_id)
 
@@ -413,7 +414,7 @@ class TestNodeSourceScale:
         assert data["max_feasible_copies"] == 4  # n1 上 g0..g3 四卡各占一份的极限
 
     async def test_preview_rejects_when_copy_not_present(self, scale_stack, monkeypatch):
-        """副本不在绑定节点（被解绑/清除）→ 预览当场拒绝，不给会失败的扩容建议。"""
+        """副本行被删除（没有任何节点持有副本）→ 预览当场拒绝，不给会失败的扩容建议。"""
         from llmpod.models.node_model import NodeModel
 
         session, dep, model = self._make_node_source(scale_stack, monkeypatch)
@@ -442,8 +443,8 @@ class TestNodeSourceScale:
         dep2 = await session.get(ModelDeployment, dep.deployment_id)
         assert dep2.scale_target == 1 and dep2.phase == "SCALING"
 
-    async def test_scale_up_assigns_new_copy_to_bound_node(self, scale_stack, monkeypatch):
-        """真实扩容：新份落在绑定节点——ncann 有 4 张空闲卡也不得成为候选。"""
+    async def test_scale_up_assigns_new_copy_to_copy_nodes(self, scale_stack, monkeypatch):
+        """真实扩容：新份落在持有副本的节点——ncann 有 4 张空闲卡也不得成为候选。"""
         session, dep, model = self._make_node_source(scale_stack, monkeypatch)
 
         async def _drive_ok(deployment_id, trigger):

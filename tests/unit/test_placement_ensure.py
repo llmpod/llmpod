@@ -67,6 +67,74 @@ class TestTrailingFailCount:
         assert trailing_fail_count(rows) == 3  # >= MAX_AUTO_ATTEMPTS → 调用方标 FAILED 拒建
 
 
+class TestEnsurePresentNodeSourceDir:
+    """node 源的 local_dir 不覆写：每节点路径是导入时各自登记的，不跟 manager 侧配方走。"""
+
+    def _setup(self, source: str, source_url: str, nm_local_dir: str | None):
+        session = FakeSession()
+        m = Model(
+            name="x",
+            model_type="llm",
+            source=source,
+            source_url=source_url,
+            source_kind="transformers_folder",
+            hash_mode="none",
+        )
+        m.id = 7
+        session.preload(m)
+        nm = session.preload(
+            NodeModel(
+                model_id=7,
+                node_id="n1",
+                desired_state="absent",
+                status="present",
+                local_dir=nm_local_dir,
+            )
+        )
+        return session, nm
+
+    async def _ensure(self, session, dispatched):
+        @asynccontextmanager
+        async def _ctx():
+            yield session
+
+        orig = pl.get_db_context
+        pl.get_db_context = lambda: _ctx()
+        try:
+            svc = PlacementService()
+
+            async def _disp(node_id, payload, secrets=None):
+                dispatched.append((node_id, payload))
+
+            svc._dispatch_ensure_payload = _disp
+            return await svc.ensure_present(7, "n1")
+        finally:
+            pl.get_db_context = orig
+
+    async def test_node_source_keeps_imported_local_dir(self):
+        """node 源：nm.local_dir 保持导入登记值，复核任务按该路径下发（多副本各走各的路径）。"""
+        session, nm = self._setup("node", "/first/node/model-7", "/this/node/model-7")
+        dispatched: list = []
+
+        await self._ensure(session, dispatched)
+
+        assert nm.local_dir == "/this/node/model-7"  # 不被 source_url（首导入路径）覆写
+        # wire 载荷是 TaskPayload 信封，ENSURE_MODEL 配方在其 payload 字段里
+        assert dispatched[0][1].payload["local_dir"] == "/this/node/model-7"
+
+    async def test_other_source_refreshes_canonical_dir(self):
+        """非 node 源维持原行为：新建任务时按 canonical 刷新（模型行改源后新任务落新目录）。"""
+        session, nm = self._setup("huggingface", "x/model-7", "/store/model-7-old")
+        dispatched: list = []
+
+        await self._ensure(session, dispatched)
+
+        # huggingface 源 canonical = {store}/{name-slug}：FakeSession 下 store 取默认配置，
+        # 只断言「不再是旧值」（被 canonical 刷新）；node 源不覆写的行为由上一例钉住
+        assert nm.local_dir != "/store/model-7-old"
+        assert dispatched[0][1].payload["local_dir"] == nm.local_dir
+
+
 class TestEnsurePresentReverify:
     def _setup(self, nm_status: str, history: list[Task]):
         session = FakeSession()

@@ -130,6 +130,15 @@ class FakeSession:
     async def refresh(self, *_a, **_k):
         pass
 
+    @property
+    def new(self) -> list:
+        """待写入对象（真实 session 的 .new；供 ``obj in session.new`` 成员判定）。"""
+        return self._staged
+
+    def expunge(self, obj) -> None:
+        """把对象从待写入清单移除（真实 session 的 .expunge 对 pending 对象的语义）。"""
+        self._staged = [o for o in self._staged if o is not obj]
+
     async def execute(self, stmt):
         if isinstance(stmt, Update):
             return self._execute_update(stmt)
