@@ -87,7 +87,10 @@ class TestSelfScheduling:
         manager = BackgroundTaskManager()
         try:
             background._start_body_sweep(
-                manager, store, TimeRetentionPolicy(days=7), interval_seconds=3600
+                manager,
+                store,
+                interval_seconds=3600,
+                policy_factory=lambda: TimeRetentionPolicy(days=7),
             )
             await asyncio.sleep(0.5)  # 3 块 × 上限 1/轮 × 10ms 重试 → 秒级清完
             assert len(store.list_blocks()) == 0

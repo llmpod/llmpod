@@ -70,12 +70,21 @@ class SizeRetentionPolicy(RetentionPolicy):
         return doomed
 
 
-def build_retention_policy(cfg: Settings) -> RetentionPolicy:
-    """按配置装配轮转策略（proxyserver lifespan 调用）。
+def build_retention_policy(
+    cfg: Settings,
+    *,
+    mode: str | None = None,
+    days: int | None = None,
+    max_bytes: int | None = None,
+) -> RetentionPolicy:
+    """按配置装配轮转策略（sweep 循环每轮调用）；管理端覆盖值优先于 env。
 
-    mode 的合法性由 Settings 的 ``BodyRetentionMode`` 枚举在配置装配期把守
-    （拼错即启动报错），此处不重复设防。
+    ``mode`` 合法性双闸：env 侧由 Settings 的 ``BodyRetentionMode`` 枚举在配置
+    装配期把守（拼错启动即报）；覆盖值来自管理端设置（settings_service 写路径
+    已校验 size/time 与下限），此处不重复设防。``None`` 覆盖值 = 未配置，
+    回落 env 缺省。
     """
-    if cfg.body_retention_mode == BodyRetentionMode.TIME:
-        return TimeRetentionPolicy(days=cfg.body_retention_days)
-    return SizeRetentionPolicy(max_bytes=cfg.body_max_bytes)
+    effective_mode = mode or cfg.body_retention_mode
+    if effective_mode == BodyRetentionMode.TIME:
+        return TimeRetentionPolicy(days=days or cfg.body_retention_days)
+    return SizeRetentionPolicy(max_bytes=max_bytes or cfg.body_max_bytes)

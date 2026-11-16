@@ -85,3 +85,22 @@ class TestFactory:
         """拼错的轮转方式在 Settings 装配期即报错（不静默回落 size）。"""
         with pytest.raises(ValidationError):
             Settings(body_retention_mode="bogus")
+
+    def test_admin_override_mode_beats_env(self):
+        """管理端覆盖 mode=time，压过 env 的 size 默认。"""
+        cfg = Settings(body_retention_mode="size")
+        policy = build_retention_policy(cfg, mode="time", days=14)
+        assert isinstance(policy, TimeRetentionPolicy)
+        assert policy._seconds == 14 * 86400
+
+    def test_admin_override_values_beat_env(self):
+        cfg = Settings(body_retention_mode="time", body_retention_days=7, body_max_bytes=4096)
+        assert build_retention_policy(cfg, days=14)._seconds == 14 * 86400
+        assert build_retention_policy(cfg, mode="size", max_bytes=2048)._max_bytes == 2048
+
+    def test_none_overrides_fall_back_to_env(self):
+        """覆盖值全 None = 管理端未配置，回落 env 缺省。"""
+        cfg = Settings(body_retention_mode="size", body_max_bytes=4096)
+        policy = build_retention_policy(cfg, mode=None, days=None, max_bytes=None)
+        assert isinstance(policy, SizeRetentionPolicy)
+        assert policy._max_bytes == 4096

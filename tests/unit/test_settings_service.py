@@ -265,6 +265,50 @@ class TestBodySnapshotSwitch:
         assert db.row.value["bodySnapshot"] is True  # 拒非法值不清库
 
 
+class TestBodyRetentionFields:
+    """轮转方式/数值字段：读侧丢弃非法回落 env，写侧非法 422、null 清空回落 env。"""
+
+    def test_sanitize_drops_invalid_mode(self):
+        assert sanitize_settings({"bodyRetentionMode": "hourly"}).bodyRetentionMode is None
+
+    def test_sanitize_keeps_valid_mode(self):
+        assert sanitize_settings({"bodyRetentionMode": "time"}).bodyRetentionMode == "time"
+
+    def test_sanitize_drops_non_int_and_below_floor(self):
+        out = sanitize_settings({"bodyRetentionDays": "7", "bodyMaxBytes": 1024})
+        assert out.bodyRetentionDays is None  # 字符串丢弃
+        assert out.bodyMaxBytes is None  # 低于 1 MiB 下限丢弃
+
+    def test_sanitize_drops_bool(self):
+        assert sanitize_settings({"bodyRetentionDays": True}).bodyRetentionDays is None
+
+    async def test_update_accepts_values(self):
+        db = _FakeSession(_Row({}))
+        out = await update_settings(db, {"bodyRetentionMode": "time", "bodyRetentionDays": 14}, updated_by=1)
+        assert out.bodyRetentionMode == "time"
+        assert out.bodyRetentionDays == 14
+        out = await update_settings(db, {"bodyMaxBytes": 10 * 1024**3}, updated_by=1)
+        assert out.bodyMaxBytes == 10 * 1024**3
+
+    async def test_update_null_clears_to_env_fallback(self):
+        db = _FakeSession(_Row({"bodyRetentionDays": 14}))
+        out = await update_settings(db, {"bodyRetentionDays": None}, updated_by=1)
+        assert out.bodyRetentionDays is None
+
+    async def test_update_invalid_raises(self):
+        db = _FakeSession(_Row({"bodyRetentionMode": "size", "bodyMaxBytes": 5 * 1024**3}))
+        with pytest.raises(LLMPodValidationError):
+            await update_settings(db, {"bodyRetentionMode": "weekly"}, updated_by=1)
+        with pytest.raises(LLMPodValidationError):
+            await update_settings(db, {"bodyRetentionDays": 0}, updated_by=1)
+        with pytest.raises(LLMPodValidationError):
+            await update_settings(db, {"bodyMaxBytes": 1024}, updated_by=1)
+        with pytest.raises(LLMPodValidationError):
+            await update_settings(db, {"bodyMaxBytes": "5GiB"}, updated_by=1)
+        # 拒非法值不清库
+        assert db.row.value["bodyRetentionMode"] == "size"
+
+
 class TestCache:
     async def test_ttl_hit(self):
         clear_settings_cache()

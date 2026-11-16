@@ -54,6 +54,7 @@ _MAX_LEN = {
     "loginBackground": 256 * 1024,
     "loginPrimary": 7,
     "maintenanceMessage": 200,
+    "bodyRetentionMode": 4,
 }
 
 # 进程内 TTL 缓存：写后失效，多 worker 各自缓存（更新最多延迟一个 TTL 可见）
@@ -104,14 +105,22 @@ class SettingsPayload(BaseModel):
 
     # 调用日志请求体快照：false = API 网关只落计量行、不写 body 块文件（详情页
     # 看不到出入参原文）。快照含明文出入参（排障口径，不脱敏），默认关闭；
-    # 排障窗口内临时打开（网关 ≤1 个轮询周期热生效）。块文件的轮转由
-    # LLMPOD_BODY_RETENTION_MODE / LLMPOD_BODY_MAX_BYTES / LLMPOD_BODY_RETENTION_DAYS
-    # 环境变量控制（按容量或按天数轮转），与本开关正交
+    # 排障窗口内临时打开（网关 ≤1 个轮询周期热生效）
     bodySnapshot: bool = False
+    # body 块轮转方式（size=按容量 / time=按时间）与数值：随快照下发，网关每轮
+    # 扫盘按当前值重建策略（管理端改完 ≤1 个轮询周期生效）。留空回落部署级
+    # env（LLMPOD_BODY_RETENTION_MODE 等）；扫描周期 env-only（body_sweep_interval_seconds）
+    bodyRetentionMode: str | None = None  # size / time；非法值读侧丢弃、写侧 422
+    bodyRetentionDays: int | None = None  # time 模式保留天数（正整数）
+    bodyMaxBytes: int | None = None  # size 模式总量上限（字节，正整数；前端按 GiB 换算展示）
 
 
 # 布尔字段（两态：缺省=不动 / 真值=覆写；读侧只认真 bool，写侧非 bool raise）
 _BOOL_FIELDS = frozenset({"maintenanceMode", "telemetryEnabled", "bodySnapshot"})
+
+# 轮转数值字段 → 下限（字节/天；写侧低于下限 422，读侧丢弃回落 env）。
+# 上限下限 1 MiB 挡单位手滑：把 GiB 数值当字节传进来，下一轮就会清空块目录
+_INT_FIELDS_MIN = {"bodyRetentionDays": 1, "bodyMaxBytes": 1024 * 1024}
 
 
 def _safe_url_or_text(value: str) -> bool:
@@ -136,6 +145,8 @@ def _field_invalid_reason(name: str, raw: str) -> str | None:
         return "需 3/6 位 hex 主色（如 #1a2b3c）"
     if name == "mode" and raw not in _VALID_MODES:
         return "mode 仅支持 light/dark/auto"
+    if name == "bodyRetentionMode" and raw not in ("size", "time"):
+        return "bodyRetentionMode 仅支持 size/time"
     if name in _SCHEME_FIELDS and not _safe_url_or_text(raw):
         return "仅支持 http(s)/data:image URL 或普通文本"
     return None
@@ -158,6 +169,12 @@ def sanitize_settings(value: Any) -> SettingsPayload:
         if name in _BOOL_FIELDS:
             if isinstance(raw, bool):
                 cleaned[name] = raw
+            continue
+        if name in _INT_FIELDS_MIN:
+            minimum = _INT_FIELDS_MIN[name]
+            if isinstance(raw, bool) or not isinstance(raw, int) or raw < minimum:
+                continue
+            cleaned[name] = raw
             continue
         if not isinstance(raw, str) or raw == "":
             continue
@@ -268,6 +285,9 @@ async def update_settings(
     - 文本字段：``None`` / 空串 → 清空该字段（回落前端默认）；有值 → 严格校验后覆写；
     - 布尔字段：只接受 ``true`` / ``false``；``None`` / 空串 / 其他类型 raise 422，
       不支持清空；
+    - 轮转数值字段（``bodyRetentionDays`` / ``bodyMaxBytes``）：``None`` / 空串 →
+      清空（回落 env 缺省）；有值 → 正整数且不低于下限（见 ``_INT_FIELDS_MIN``），
+      否则 raise 422；
     - 非法值 raise 422（非 hex 主色 / 非法 mode / 危险 scheme / 超长），
       绝不静默清空已存的合法值。
 
@@ -285,6 +305,18 @@ async def update_settings(
         if name in _BOOL_FIELDS:
             if not isinstance(raw, bool):
                 _raise_invalid(name, raw, "需布尔值")
+            merged[name] = raw
+            continue
+        if name in _INT_FIELDS_MIN:
+            minimum = _INT_FIELDS_MIN[name]
+            if raw is None or raw == "":
+                merged[name] = None
+                continue
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                _raise_invalid(name, raw, "需正整数")
+            if raw < minimum:
+                reason = "容量上限需 ≥ 1 MiB（1048576 字节）" if name == "bodyMaxBytes" else "保留天数需 ≥ 1"
+                _raise_invalid(name, raw, reason)
             merged[name] = raw
             continue
         # 文本字段三态：null / 空串 = 清空；非空 = 严格校验后覆写

@@ -67,18 +67,23 @@ async def sweep_body_store_once(store: BodyStore, policy: RetentionPolicy) -> bo
 
 
 def _start_body_sweep(
-    manager: BackgroundTaskManager, store: BodyStore, policy: RetentionPolicy, *, interval_seconds: int
+    manager: BackgroundTaskManager,
+    store: BodyStore,
+    *,
+    interval_seconds: int,
+    policy_factory: Callable[[], RetentionPolicy],
 ) -> None:
-    """登记轮转循环。间隔自选：首轮与积压未清完时隔 _SWEEP_BACKLOG_RETRY_SECONDS
-    快速跑（升级首日的存量超期块在小时级内消化，不等常规周期），否则回
-    interval_seconds 常规节拍。"""
+    """登记轮转循环。策略每轮经 ``policy_factory`` 现取——管理端热改轮转方式/
+    数值进配置快照（≤3s），下一轮即按新策略执行。间隔自选：首轮与积压未清完
+    时隔 _SWEEP_BACKLOG_RETRY_SECONDS 快速跑（升级首日的存量超期块在小时级内
+    消化，不等常规周期），否则回 interval_seconds 常规节拍。"""
 
     async def self_scheduling() -> None:
         next_delay = _SWEEP_BACKLOG_RETRY_SECONDS
         while True:
             await asyncio.sleep(next_delay)
             try:
-                backlog = await sweep_body_store_once(store, policy)
+                backlog = await sweep_body_store_once(store, policy_factory())
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 — 单轮失败不崩循环，下一轮重试
@@ -103,11 +108,21 @@ def register_background_tasks(
         name="proxy-config-poll",
         interval=cfg.poll_interval_seconds,
     )
+
+    def _current_retention_policy() -> RetentionPolicy:
+        snap = runtime.snapshot
+        return build_retention_policy(
+            cfg,
+            mode=snap.body_retention_mode,
+            days=snap.body_retention_days,
+            max_bytes=snap.body_max_bytes,
+        )
+
     _start_body_sweep(
         manager,
         body_store,
-        build_retention_policy(cfg),
         interval_seconds=cfg.body_sweep_interval_seconds,
+        policy_factory=_current_retention_policy,
     )
     manager.every(
         lambda: reap_expired_holds(db_context, runtime.active_request_ids),

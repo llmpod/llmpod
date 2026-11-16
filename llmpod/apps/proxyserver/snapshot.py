@@ -82,6 +82,12 @@ class ConfigSnapshot:
     # 「记录请求体」开关（全局设置 bodySnapshot，默认关）：维护态同款载体——
     # 随快照下发复用 3s 轮询周期热更新，落账路径读内存即可，不另设轮询/缓存
     body_snapshot: bool = False
+    # body 块轮转的管理端覆盖值（全局设置；None = 未配置，回落 env 缺省）。
+    # sweep 循环每轮据此重建策略（见 background.register_background_tasks），
+    # 管理端改轮转方式/数值与开关同周期热生效
+    body_retention_mode: str | None = None
+    body_retention_days: int | None = None
+    body_max_bytes: int | None = None
 
     def get(self, name: str) -> RouteEntry | None:
         return self.routes.get(name)
@@ -144,7 +150,7 @@ async def build_config_snapshot(db: AsyncSession, *, version: int = 0) -> Config
     tenants = await _load_all(db, Tenant)
     blocks = await _load_all(db, TenantModelBlock)
     maintenance = await get_maintenance(db)
-    body_snapshot = (await get_settings(db)).bodySnapshot
+    settings = await get_settings(db)
 
     bindings_by_route: dict[int, list[RouteBinding]] = {}
     for b in bindings:
@@ -169,7 +175,10 @@ async def build_config_snapshot(db: AsyncSession, *, version: int = 0) -> Config
         tenant_blocked_routes=tenant_blocked_routes,
         tenant_statuses=tenant_statuses,
         maintenance=maintenance,
-        body_snapshot=body_snapshot,
+        body_snapshot=settings.bodySnapshot,
+        body_retention_mode=settings.bodyRetentionMode,
+        body_retention_days=settings.bodyRetentionDays,
+        body_max_bytes=settings.bodyMaxBytes,
     )
 
 
