@@ -3,16 +3,13 @@ import { CloseOutline, CloudUploadOutline, DocumentOutline } from '@vicons/ionic
 import type { UploadFileInfo, UploadInst } from 'naive-ui'
 import {
   FormInput,
-  FormPassword,
   FormRadioButtonGroup,
   FormSelect,
   useForm,
   type UseFormReturn,
 } from '@repo/hooks'
 import {
-  AUTH_SOURCES,
   DEFAULT_REVISION,
-  REVISION_SOURCES,
   SOURCE_OPTIONS,
   SOURCE_URL_PLACEHOLDER,
   type ModelFiles,
@@ -49,6 +46,7 @@ const form: UseFormReturn<SourceFormValues> = useForm<SourceFormValues>({
   data: () => ({
     source: 'huggingface',
     source_url: '',
+    // revision / source_auth 不在界面暴露(无需用户输入),仅作默认值留在表单值里随提交下发
     revision: DEFAULT_REVISION.huggingface ?? 'main',
     local_mode: 'path',
     source_auth: '',
@@ -87,23 +85,6 @@ const form: UseFormReturn<SourceFormValues> = useForm<SourceFormValues>({
             ? SOURCE_URL_PLACEHOLDER.node
             : SOURCE_URL_PLACEHOLDER[form.params().source],
       },
-    }),
-    FormInput('版本(revision)', 'revision', {
-      disabled: uploading,
-      // revision 仅远程仓库源(HF / ModelScope)有意义
-      visible: computed(() => REVISION_SOURCES.includes(form.params().source)),
-      attrs: {
-        placeholder: `commit-hash,默认 ${DEFAULT_REVISION[form.params().source] ?? 'main'}`,
-      },
-      // 留默认值时不下发,由后端钉到具体 commit(ModelScope 钉 LatestCommitter)
-      itemProps: { feedback: '留空或保持默认则提交后由后端钉到具体版本' },
-    }),
-    FormPassword('访问令牌', 'source_auth', {
-      disabled: uploading,
-      // 私有仓库凭证通道:与 HF 一致,创建/更新时传 token,节点下载时带鉴权
-      visible: computed(() => AUTH_SOURCES.includes(form.params().source)),
-      attrs: { showPasswordOn: 'click', placeholder: '可选,私有仓库需填写' },
-      itemProps: { feedback: '仅用于私有仓库鉴权,加密保存且不会回显' },
     }),
   ],
   layout: { labelPlacement: 'top' },
