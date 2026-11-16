@@ -17,8 +17,8 @@ positional token ``[引导脚本, "bash"]``，经 entrypoint ``/bin/bash -c`` �
   无此键）、daemon 只认 ``--config-file``（无 ``--config``/``-c``）。系统层写死
   ``httpsEnabled/interCommTLSEnabled/interNodeTLSEnabled:false``（平台是 http 反代、
   不挂证书）与 ``ipAddress:0.0.0.0 + allowAllZeroIpListening:true``（出厂 127.0.0.1
-  容器外不可达）；management/metrics 端口由业务端口 +1/+2 派生（host 网络下同节点
-  多实例不撞固定端口）。
+  容器外不可达）；management/metrics 端口由业务端口 +1/+2 派生（避开出厂固定口，整组
+  三口经 ``service_port_band`` 在端口分配器按带登记）。
 
 健康检查用业务口 ``/v1/models``（310P 真机实测）：MindIE 的权威就绪探针 ``/v2/health/ready``
 只在管理口（``managementPort=port+1``，绑 127.0.0.2），而平台探活 URL 由 reconciler 固定按
@@ -139,6 +139,9 @@ class MindIEAdapter(EngineAdapter):
 
     # 容器/服务默认值（host 网络同 vLLM cann 先例）
     default_port = 1025  # MindIE Service 业务端口出厂值
+    # 一个实例占三个相邻口：业务口 + 管理口（port+1）+ 指标口（port+2）。端口分配
+    # 按整组登记（见 EngineAdapter.service_port_band），防同节点下一实例主口撞进派生口
+    service_port_band = 3
     default_network_mode = "host"
     default_ipc = "host"
     default_shm_size = "16g"
@@ -255,7 +258,9 @@ class MindIEAdapter(EngineAdapter):
                 "ipAddress": "0.0.0.0",
                 "managementIpAddress": "127.0.0.2",
                 "port": port,
-                "managementPort": port + 1,  # 派生端口：host 网络下多实例不撞固定 1026/1027
+                # 派生口避开出厂固定 1026/1027（多实例同用出厂值必撞）；整组三口
+                # 经 service_port_band=3 在端口分配器登记，下一实例主口不会落进 8001/8002
+                "managementPort": port + 1,
                 "metricsPort": port + 2,
                 "allowAllZeroIpListening": True,
                 "maxLinkNum": 1000,

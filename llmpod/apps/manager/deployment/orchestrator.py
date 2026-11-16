@@ -188,10 +188,15 @@ async def _stamp_assigned_instances(
         inst.mmproj_path = mmproj_path_for(model, mmproj_base)
         inst.served_model_name = model.name
         inst.port = (
-            await deployment_service.allocate_unique_port(db, local_taken, inst.assigned_node, "service")
+            await deployment_service.allocate_unique_port(
+                db, local_taken, inst.assigned_node, "service", engine=adapter.engine_name
+            )
             if inst.assigned_node
             else adapter.default_port
         )
+        # 整组占口带宽随 spec 持久化：端口分配读存量行时按此展开（引擎占派生口时 >1），
+        # 下一个实例的主口不会落进本实例的派生口
+        inst.port_band = adapter.service_port_band
         inst.task = task
         inst.vram_percent = util
         # 上卡层数两种部署形态都盖章（0=纯 CPU / NGL_ALL=全量上卡）：适配器只读实例值，不再
@@ -485,7 +490,10 @@ class DeploymentOrchestrator:
             _taken: dict[tuple[str | None, str], set[int]] = {}
             for inst in instances:
                 if inst.assigned_node:
-                    inst.port = await deployment_service.allocate_unique_port(db, _taken, inst.assigned_node, "service")
+                    inst.port = await deployment_service.allocate_unique_port(
+                        db, _taken, inst.assigned_node, "service", engine=adapter.engine_name
+                    )
+                    inst.port_band = adapter.service_port_band
             await deployment_service.assign_rendezvous_ports(db, instances, _taken)
 
             # 重置实例：回 PENDING，清上一轮容器态/错误（直接写，不经 set_instance_status 终态守卫）；

@@ -217,6 +217,10 @@ class EngineAdapter(ABC):
 
     # ---- 容器/服务默认值（子类按引擎覆盖；None/0=不设置，避免把 vLLM 默认泄漏到其它引擎）----
     default_port: int = 0  # 服务端口（vLLM 8000）
+    # 服务口整组占口带宽：引擎在业务口之外还占用相邻派生口（如 MindIE 的管理口/指标口
+    # = port+1/port+2）时覆写为整组口数。端口分配按「主口 + 带宽」登记与避让，防下一个
+    # 实例的主口落进本实例的派生口（host 网络端口整机共享，撞口的后绑定者 EADDRINUSE）。
+    service_port_band: int = 1
     default_master_port: int = 0  # 多机 rendezvous 端口（vLLM 29501）
     default_network_mode: str | None = None  # 容器网络模式（vLLM host）
     default_ipc: str | None = None  # IPC（vLLM host）

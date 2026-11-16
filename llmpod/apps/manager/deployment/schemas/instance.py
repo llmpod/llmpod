@@ -53,6 +53,10 @@ class InstanceSpec(BaseModel):
     mmproj_path: str | None = None  # 视觉投影器（GGUF 多模态）路径；与 model_path 同目录，adapter 注入 --mmproj
     served_model_name: str | None = None
     port: int | None = None
+    # 服务口整组占口带宽（引擎占派生口时 >1，如 MindIE 管理/指标口 = port+1/+2 → 3）；
+    # 由 _stamp_assigned_instances / restart 重分配按适配器盖章，随 spec JSONB 持久化——
+    # 端口分配读存量行时按此展开占口范围，无需反查部署引擎（旧行无此键按 1）
+    port_band: int | None = None
     task: str = "generate"  # 引擎 task（adapter.task_for(model_type)）：generate/embed/classify/rerank/...；用于推理引擎控制路由参数 如--task
     vram_percent: float | None = (
         None  # 生效显存占比（编排器解析自用户引擎 flag/显式 vram_percent/引擎默认；adapter 据此设 --gpu-memory-utilization）

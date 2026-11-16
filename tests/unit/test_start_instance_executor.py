@@ -226,6 +226,66 @@ class TestExecute:
         assert dep.stop_calls == ["llmpod-dep-i1"]
         assert dep.remove_calls == []
 
+    async def test_crash_port_conflict_attributed(self):
+        """崩溃日志含 Address already in use → FAILED message 追加端口被占的中文归因。"""
+        dep = FakeDeployer(logs_text="OSError: [Errno 98] Address already in use")
+        events, report = _collect()
+        tick = {"n": 0}
+
+        async def prober(url):
+            tick["n"] += 1
+            if tick["n"] >= 1:
+                dep.running = False
+            return False
+
+        ex = StartInstanceExecutor(dep, prober=prober)
+        await ex.execute(_task(), None, report, asyncio.Event())
+
+        assert events[-1]["status"] == "FAILED"
+        assert "端口被占用" in events[-1]["message"]
+        assert "引擎崩溃" in events[-1]["message"]  # 原失败事实仍在，归因只追加
+
+    async def test_deploy_exception_port_conflict_attributed(self):
+        """deploy 直接抛错且文案含端口冲突（bridge 发布口场景）→ 归因拼进失败消息。"""
+
+        class _AllocBoom(FakeDeployer):
+            async def deploy(self, spec, *, cancel_event=None):
+                raise RuntimeError("Bind for 0.0.0.0:8000 failed: port is already allocated")
+
+        # already_running 门：容器未在运行才走 deploy（_AllocBoom.deploy 抛错）
+        dep = _AllocBoom(running=False)
+        events, report = _collect()
+        ex = StartInstanceExecutor(dep)
+        await ex.execute(_task(), None, report, asyncio.Event())
+
+        assert events[-1]["status"] == "FAILED"
+        assert "端口被占用" in events[-1]["message"]
+        assert "容器启动失败" in events[-1]["message"]
+
+    async def test_logs_read_failure_keeps_plain_message(self):
+        """logs 读取失败不影响失败判定，也不追加归因（best-effort）。"""
+
+        class _LogsBoom(FakeDeployer):
+            async def logs(self, name, tail=200):
+                raise RuntimeError("daemon down")
+
+        dep = _LogsBoom()
+        events, report = _collect()
+        tick = {"n": 0}
+
+        async def prober(url):
+            tick["n"] += 1
+            if tick["n"] >= 1:
+                dep.running = False
+            return False
+
+        ex = StartInstanceExecutor(dep, prober=prober)
+        await ex.execute(_task(), None, report, asyncio.Event())
+
+        assert events[-1]["status"] == "FAILED"
+        assert "引擎崩溃" in events[-1]["message"]
+        assert "端口被占用" not in events[-1]["message"]
+
     async def test_readiness_timeout_failed(self):
         # wait_while_running=False：旧语义，超时直接判失败（缺省已改为「容器活着就继续等」）
         readiness = {

@@ -241,3 +241,63 @@ class TestAllocateUniquePort:
         await deployment_service.allocate_unique_port(session, local, "n1", "service")
         with pytest.raises(Conflict):
             await deployment_service.allocate_unique_port(session, local, "n1", "service")
+
+
+class TestServicePortBand:
+    """引擎服务口带宽（service_port_band）：MindIE 占 port+1/+2 派生口，整组登记与避让。"""
+
+    async def test_mindie_band_reserves_derived_ports(self, session):
+        """带宽 3 的分配：下一实例（无论引擎）主口不落进 8001/8002。"""
+        local: dict = {}
+        assert await deployment_service.allocate_unique_port(session, local, "n1", "service", engine="mindie") == 8000
+        # 同批下一个 vLLM 实例：8001/8002 在 8000 的组内，跳到 8003
+        assert await deployment_service.allocate_unique_port(session, local, "n1", "service", engine="vllm") == 8003
+        # 同批下一个 MindIE 实例：vLLM 只占 8003 一个口，从 8004 起组 8004..8006
+        assert await deployment_service.allocate_unique_port(session, local, "n1", "service", engine="mindie") == 8004
+
+    async def test_persisted_band_blocks_later_band1_alloc(self, session):
+        """存量 MindIE 行（spec 带 port_band=3）：之后给 vLLM（带宽 1）分配也要避开 8001/8002。"""
+        self_inst = Instance(
+            instance_id="i1",
+            deployment_id="dep-m",
+            role="full",
+            rank=0,
+            assigned_node="n1",
+            status="RUNNING",
+            spec={"port": 8000, "port_band": 3},
+        )
+        session.preload(self_inst)
+        assert await deployment_service.allocate_node_port(session, "n1", "service", engine="vllm") == 8003
+
+    async def test_legacy_row_without_band_counts_single(self, session):
+        """旧结构行（spec 无 port_band）：按带宽 1 登记，不因引擎变大而误扩占口。"""
+        session.preload(
+            Instance(
+                instance_id="i1",
+                deployment_id="dep-old",
+                role="full",
+                rank=0,
+                assigned_node="n1",
+                status="RUNNING",
+                spec={"port": 8000},
+            )
+        )
+        assert await deployment_service.allocate_node_port(session, "n1", "service", engine="vllm") == 8001
+
+    async def test_mindie_pool_exhausted_earlier(self, session, monkeypatch):
+        """带宽 3 需要池内仍有连续三口起点：2 口池只剩 8001 一个候选、其组越界且落在
+        既有 8000 组内 → Conflict（不能只占主口漏掉派生口）。"""
+        monkeypatch.setattr(deployment_service, "SERVICE_PORT_RANGE", range(8000, 8002))
+        session.preload(
+            Instance(
+                instance_id="i1",
+                deployment_id="dep-m",
+                role="full",
+                rank=0,
+                assigned_node="n1",
+                status="RUNNING",
+                spec={"port": 8000, "port_band": 3},
+            )
+        )
+        with pytest.raises(Conflict):
+            await deployment_service.allocate_node_port(session, "n1", "service", engine="mindie")

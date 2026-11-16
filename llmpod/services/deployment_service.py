@@ -54,6 +54,7 @@ from llmpod.apps.manager.deployment.constants import (
 from llmpod.config.constants import GpuStatus, InstanceStatus, NodeStatus
 from llmpod.config.enums import ModelSource
 from llmpod.core.exceptions import Conflict, LLMPodError, LLMPodValidationError, NotFound
+from llmpod.apps.manager.deployment.engine import get_adapter
 from llmpod.apps.manager.deployment.resource_ledger import DEFAULT_GPU_MEMORY_UTILIZATION
 from llmpod.models.deployment_gpu_assignment import DeploymentGpuAssignment
 from llmpod.models.gpu import Gpu
@@ -870,10 +871,16 @@ async def resolve_card_views(
     return occupancy, status
 
 
-def _port_band(kind: str) -> int:
-    """端口占口带宽：rendezvous 主口带隔离带（NCCL/gloo 会在主口附近开额外通道），
-    服务口占单口。登记、避让、本地防撞三处共用，改带宽只动这里。"""
-    return RENDEZVOUS_ISOLATION_BAND if kind == "rendezvous" else 1
+def _port_band(kind: str, engine: str | None = None) -> int:
+    """端口占口带宽：rendezvous 主口带隔离带（NCCL/gloo 会在主口附近开额外通道）；
+    service 口的带宽按引擎适配器声明（``service_port_band``，引擎占相邻派生口时为整组
+    口数，如 MindIE 的管理/指标口 = 主口+1/+2 → 3）。登记、避让、本地防撞三处共用，
+    改带宽只动这里。"""
+    if kind == "rendezvous":
+        return RENDEZVOUS_ISOLATION_BAND
+    if engine:
+        return max(1, get_adapter(engine).service_port_band)
+    return 1
 
 
 async def resolve_card_status(db: AsyncSession, gpu_uuids, *, model_id: int | None = None) -> dict[str, CardSummary]:
@@ -962,31 +969,39 @@ async def _load_assignments_and_deployments(db: AsyncSession, gpu_uuids):
     return rows, deps
 
 
-async def allocate_node_port(db: AsyncSession, node_id: str, kind: str, *, local_taken: set[int] | None = None) -> int:
+async def allocate_node_port(
+    db: AsyncSession, node_id: str, kind: str, *, engine: str | None = None, local_taken: set[int] | None = None
+) -> int:
     """在该节点上分配一个空闲端口（status-aware：非 STOPPED/FAILED 的实例才占端口）。
 
     kind="service" → 服务口池；"rendezvous" → 多机 rendezvous 池。port/master_port 不是
     Instance 列（在 ``spec`` JSON 里），故按节点取行后 Python 侧解析已占端口，取池内最小
     空闲；池满 → Conflict。同部署内多实例若同节点，由调用方在分配间自行去重。
 
-    rendezvous 主口带 ``RENDEZVOUS_ISOLATION_BAND`` 隔离带：占口按「主口 + 带宽」登记，
-    防相邻口被下一个引擎的主口占用（NCCL/gloo 会在主口附近开额外通道）。
+    占口按「主口 + 带宽」登记与避让：rendezvous 主口带 ``RENDEZVOUS_ISOLATION_BAND``
+    隔离带（NCCL/gloo 会在主口附近开额外通道）；service 口带宽由 ``engine`` 的适配器
+    声明（``service_port_band``）。**读存量行按行自己的带宽展开**（spec 里的
+    ``port_band``，缺省 1）：分配时把带宽落进 spec，否则本次给 vLLM（带宽 1）分配时
+    MindIE 行（带宽 3）只被记一个口，它占着的 port+1/port+2 仍会被当空闲发出去。
 
     ``local_taken``：本批尚未落库的已占口（调用方跨次调用持有）——DB 里看不到本轮刚分
     配的端口，缺它会让同批第二个实例重复拿到同一个口。整段按 band 参与避让判定，
     与 DB 行的登记口径一致（不会出现「本地只记主口、库里记主口+带」两套语义）。
     """
-    band = _port_band(kind)
+    band = _port_band(kind, engine)
     pool = SERVICE_PORT_RANGE if kind == "service" else RENDEZVOUS_PORT_RANGE
     key = "port" if kind == "service" else "master_port"
     taken: set[int] = set(local_taken or ())
     for r in (await db.execute(select(Instance).where(Instance.assigned_node == node_id))).scalars():
         if r.status in INSTANCE_PORT_RELEASED_STATUSES:
             continue
-        val = (r.spec or {}).get(key)
+        spec = r.spec or {}
+        val = spec.get(key)
         if val is not None:
             base = int(val)
-            taken.update(range(base, base + band))
+            # 存量行的占口范围按该行自己的带宽（分配时落进 spec 的 port_band，旧行无此键=1）
+            row_band = int(spec.get("port_band") or 1) if kind == "service" else band
+            taken.update(range(base, base + row_band))
     free = next((p for p in pool if all(q not in taken for q in range(p, p + band))), None)
     if free is None:
         raise Conflict(f"节点 {node_id} 的 {kind} 端口池已耗尽（{pool.start}-{pool.stop - 1}）")
@@ -998,6 +1013,8 @@ async def allocate_unique_port(
     local_taken: dict[tuple[str | None, str], set[int]],
     node_id: str | None,
     kind: str,
+    *,
+    engine: str | None = None,
 ) -> int:
     """``allocate_node_port`` + 本地防撞：同一批未落库的实例间不互抢端口。
 
@@ -1006,8 +1023,8 @@ async def allocate_unique_port(
     ``allocate_node_port`` 的占口口径同源），故本地避让不会把相邻的隔离带口分出去。
     """
     taken = local_taken.setdefault((node_id, kind), set())
-    port = await allocate_node_port(db, node_id, kind, local_taken=taken)
-    taken.update(range(port, port + _port_band(kind)))
+    port = await allocate_node_port(db, node_id, kind, engine=engine, local_taken=taken)
+    taken.update(range(port, port + _port_band(kind, engine)))
     return port
 
 

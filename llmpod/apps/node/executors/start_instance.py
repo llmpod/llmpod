@@ -68,6 +68,19 @@ async def _sleep_cancelable(seconds: float, cancel_event: asyncio.Event) -> bool
         return False
 
 
+# 端口被占的特征文案：Linux errno 报错（引擎进程绑定失败打进日志/异常栈）与 dockerd
+# 发布口冲突报错（bridge 模式 -p 发布时 create/start 直接抛错）两种来源
+_PORT_CONFLICT_MARKERS = ("address already in use", "port is already allocated")
+
+
+def _port_conflict_note(text: str | None) -> str:
+    """从日志/异常文本识别端口被占，返回可直接拼进失败消息的中文归因；识别不出返回空串。"""
+    low = (text or "").lower()
+    if any(marker in low for marker in _PORT_CONFLICT_MARKERS):
+        return "—— 端口被占用（Address already in use）：节点上已有其他进程占用目标端口，请检查节点端口占用后重试"
+    return ""
+
+
 class StartInstanceExecutor(Executor):
     """START_INSTANCE 执行器（构造注入 Deployer；``prober`` 可注入供测试）。"""
 
@@ -131,7 +144,7 @@ class StartInstanceExecutor(Executor):
             except Exception as e:
                 await report(
                     TaskStatus.FAILED,
-                    message=f"容器启动失败: {e}",
+                    message=f"容器启动失败: {e}" + _port_conflict_note(str(e)),
                     instance_status=InstanceStatus.FAILED,
                 )
                 return
@@ -189,11 +202,12 @@ class StartInstanceExecutor(Executor):
                 # 保留崩溃容器（只 stop 不 rm）：日志文件随容器留存，供前端点日志按钮经
                 # RPC 取全量崩溃输出。清理由部署级 label 扫除 / 重试同名 409-replace 兜底。
                 await self._stop_container(container_name)
+                note = await self._port_conflict_from_logs(container_name)
                 await report(
                     TaskStatus.FAILED,
                     message=(
                         f"容器 {container_name} 在 readiness 探活期间退出（引擎崩溃，"
-                        f"ExitCode={exit_code}）—— 容器已保留，详见容器日志"
+                        f"ExitCode={exit_code}）—— 容器已保留，详见容器日志" + note
                     ),
                     instance_status=InstanceStatus.FAILED,
                 )
@@ -341,6 +355,14 @@ class StartInstanceExecutor(Executor):
             await self._deployer.stop(name)
         except Exception as e:
             log.warning("stop-only %s 失败（容器可能已退出，日志仍保留）: %s", name, e)
+
+    async def _port_conflict_from_logs(self, name: str) -> str:
+        """读容器日志尾部识别端口占用冲突（读失败按无归因处理，不影响原失败文案）。"""
+        try:
+            return _port_conflict_note(await self._deployer.logs(name, tail=200))
+        except Exception as e:
+            log.warning("读容器 %s 日志识别端口冲突失败（忽略）: %s", name, e)
+            return ""
 
     async def _default_probe(self, url: str) -> bool:
         """默认 readiness 探测：HTTP GET 200 即就绪（谓词由 Manager 下发 path 决定）。"""

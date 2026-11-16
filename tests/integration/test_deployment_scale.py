@@ -206,10 +206,10 @@ def scale_stack(monkeypatch):
     monkeypatch.setattr(deployment_service, "load_node_ips", _ips)
     # 扩容 staging 放行以复核任务终态为准（node_model.status 只是缓存）→ 预置 SUCCESS 桩任务
     stub_model_verify(monkeypatch, session, 1, ["n1"])
-    # 端口分配 stub：递增（签名对齐 allocate_node_port 的 local_taken 形参）
+    # 端口分配 stub：递增（签名对齐 allocate_node_port 的 local_taken/engine 形参）
     counter = {"n": 9000}
 
-    async def _alloc(db, node_id, kind, *, local_taken=None):
+    async def _alloc(db, node_id, kind, *, engine=None, local_taken=None):
         counter["n"] += 1
         return counter["n"]
 
