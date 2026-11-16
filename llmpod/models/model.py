@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, CheckConstraint, Float, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Float, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from llmpod.db.base import Base, IntIdMixin, TimestampMixin
@@ -83,7 +83,7 @@ class Model(Base, IntIdMixin, TimestampMixin):
     node_id: Mapped[str | None] = mapped_column(
         String(64),
         nullable=True,
-        comment="来源节点ID（逻辑外键 → node.id；source=node 时绑定该节点，权重就地引用）",
+        comment="首次导入节点ID（逻辑外键 → node.id；source=node 时记录首个导入来源，展示溯源用；副本清单以 node_model 表为准）",
     )
     source_url: Mapped[str | None] = mapped_column(
         String(512), nullable=True, comment="来源 URL / repo id / 本地路径（可空）"
@@ -122,6 +122,13 @@ class Model(Base, IntIdMixin, TimestampMixin):
     __table_args__ = (
         Index("idx_model_name", "name"),
         Index("idx_model_node_id", "node_id"),
+        # 同名节点目录导入合并到同一条模型行（create 路由按名查重合并；本索引兜并发）
+        Index(
+            "uq_model_node_name",
+            "name",
+            unique=True,
+            postgresql_where=text("source = 'node'"),
+        ),
         CheckConstraint(
             "source_kind IN ('unknown', 'single_gguf', 'gguf_shards', 'transformers_folder', 'diffusers_folder')",
             name="ck_model_source_kind",

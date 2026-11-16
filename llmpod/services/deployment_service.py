@@ -26,7 +26,6 @@ from llmpod.apps.manager.deployment.schemas import (
     GpuAssignment,
     GpuCandidate,
     GpuOccupancy,
-    GpuSelector,
     InstanceSpec,
     NodeCandidate,
     OccupiedBy,
@@ -152,99 +151,83 @@ async def load_node_cpu_archs(db: AsyncSession, node_ids: set[str]) -> dict[str,
     return {n.id: (n.cpu_arch or "") for n in result.scalars()}
 
 
-def bound_node_of_model(model: Model) -> str | None:
-    """节点目录模型返回绑定的节点 ID；其它来源返回 None。
+async def node_source_copy_nodes(db: AsyncSession, model: Model) -> set[str] | None:
+    """节点目录模型返回持有可用副本的节点集合；其它来源返回 None。
 
-    节点目录模型的权重只存在于该节点，manager 没有副本，不能自动下载——部署必须钉在
-    这台节点上。
+    集合 = node_model 中 status=present 的节点（同名节点目录导入会往同一模型行下追加
+    多台节点的副本）。节点目录模型的权重只存在于导入过的节点上，manager 没有副本、
+    也不能自动下载——部署只能落在集合内的节点。
     """
     if not ModelSource.is_node_source(model.source):
         return None
-    if not model.node_id:
-        raise LLMPodValidationError("节点目录模型缺少绑定节点")
-    return model.node_id
+    return await nodes_with_model(db, model.id)
 
 
-# 「节点上没有可用副本」的统一文案：重启/扩容受理（require_node_model_present）与
-# 预检/创建（node_source_scope_errors）共用，两处各写一份迟早漂移
-NO_PRESENT_COPY_MESSAGE = "该节点上没有此模型的可用副本，无法部署（请先从节点目录导入或等待分发完成）"
+# 「没有可用副本」的统一文案：重启受理（require_model_copy_present）与预检/创建
+# （node_source_scope_errors）共用，两处各写一份迟早漂移
+NO_PRESENT_COPY_MESSAGE = "没有节点持有此模型的可用副本，无法部署（请先从节点目录导入或等待分发完成）"
 
 
-async def require_node_model_present(db: AsyncSession, model_id: int, node_id: str) -> None:
-    """要求 ``node_model`` 显示该节点已持有此模型（present），否则拒绝部署。"""
-    rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == model_id))).scalars())
-    if not any(r.node_id == node_id and r.status == NodeModelState.PRESENT for r in rows):
+async def require_model_copy_present(db: AsyncSession, model: Model) -> None:
+    """节点目录模型要求至少还有一台节点持有 present 副本，否则拒绝启动/重启。
+
+    实例落在已无副本的节点上不算在这里——重启复用实例规划前会按副本集合重排
+    （见 orchestrator._restart_redeploy）。
+    """
+    copy_nodes = await node_source_copy_nodes(db, model)
+    if copy_nodes is not None and not copy_nodes:
         raise Conflict(NO_PRESENT_COPY_MESSAGE)
 
 
 async def node_source_scope_errors(db: AsyncSession, model: Model, topology, selector) -> list[tuple[str, str]]:
     """节点目录模型部署约束的全部违反项（code, message）；空 = 通过。
 
-    预检与创建共用这一份判据，避免两处各自维护「只能绑定节点 / 只能单机」的规则。
+    预检与创建共用这一份判据，避免两处各自维护「副本集合非空 / 只能单机 / 显式
+    选择都在副本节点上」的规则。
     """
-    bound = bound_node_of_model(model)
-    if bound is None:
+    copy_nodes = await node_source_copy_nodes(db, model)
+    if copy_nodes is None:
         return []
     errors: list[tuple[str, str]] = []
     # 异构 copies 的后续份各自可能带 nnodes>1：逐份检查，不能只看归一化后的首份
     units = topology.per_copy_units() if topology is not None else []
     if any((unit.nnodes or 1) > 1 for unit in units):
         errors.append(("multi_node", "节点目录导入的模型只能在单台节点部署（nnodes 必须为 1）"))
-    rows = list((await db.execute(select(NodeModel).where(NodeModel.model_id == model.id))).scalars())
-    if not any(r.node_id == bound and r.status == NodeModelState.PRESENT for r in rows):
+    if not copy_nodes:
         errors.append(("no_copy", NO_PRESENT_COPY_MESSAGE))
+        return errors
+    # 副本在哪些节点上：错误文案直接列出，用户不用再去查
+    copy_hint = "、".join(sorted(copy_nodes))
     if selector is not None:
-        if selector.node_id and selector.node_id != bound:
-            errors.append(("other_node", f"节点目录导入的模型只能部署到绑定节点 {bound}"))
-        if selector.node_ids and any(node_id != bound for node_id in selector.node_ids):
-            errors.append(("other_node", f"节点目录导入的模型只能部署到绑定节点 {bound}"))
+        if selector.node_id and selector.node_id not in copy_nodes:
+            errors.append(("other_node", f"所选节点没有此模型的副本，无法部署（副本在节点：{copy_hint}）"))
+        if selector.node_ids and any(node_id not in copy_nodes for node_id in selector.node_ids):
+            errors.append(("other_node", f"所选节点集中有节点没有此模型的副本，无法部署（副本在节点：{copy_hint}）"))
         if selector.gpu_uuids:
             gpus = list((await db.execute(select(Gpu).where(Gpu.uuid.in_(selector.gpu_uuids)))).scalars())
             by_uuid = {g.uuid: g for g in gpus}
-            if any(by_uuid.get(uuid) is None or by_uuid[uuid].node_id != bound for uuid in selector.gpu_uuids):
-                errors.append(("other_gpu", f"所选 GPU 不在绑定节点 {bound} 上"))
+            if any(by_uuid.get(uuid) is None or by_uuid[uuid].node_id not in copy_nodes for uuid in selector.gpu_uuids):
+                errors.append(("other_gpu", f"所选 GPU 不在持有副本的节点上（副本在节点：{copy_hint}）"))
     return errors
 
 
-def _selector_is_empty(selector: GpuSelector | None) -> bool:
-    """GPU 选择器实质为空（node_id / gpu_uuids / node_ids 三字段全 falsy）。
-
-    下游按真值判「是否指定了节点/卡」，空 ``GpuSelector()`` 等效于自动调度——只判
-    ``is not None`` 会让空选择器绕过节点目录模型的「锁定到绑定节点」。
-    """
-    return selector is None or not (selector.node_id or selector.gpu_uuids or selector.node_ids)
-
-
-async def enforce_node_source_spec(db: AsyncSession, model: Model, spec: DeploymentConfig) -> bool:
+async def validate_node_source_spec(db: AsyncSession, model: Model, spec: DeploymentConfig) -> set[str] | None:
     """节点目录模型的部署硬限制（预检、创建、重规划、重启、在线扩缩共用同一份判据）。
 
-    - 只允许绑定节点持有副本，且副本必须 present；
-    - 只允许单机部署；
-    - 显式指定节点/卡时逐一校验；
-    - 未指定（含空选择器）时把选择器锁定到绑定节点，防止自动调度落到别的机器（含 CPU
-      部署按副本逐份锁定）。
-
-    返回是否注入了锁定选择器——重规划/重启路径据此决定要不要写回持久化 spec。
+    - 至少一台节点持有 present 副本，且只允许单机部署；
+    - 显式指定节点/卡时逐一校验都在副本节点集合内；
+    - 返回副本节点集合供调用方收缩调度池（不往空选择器注入节点——多副本时调度器
+      应在集合内自由选卡，本地性偏好自然生效）；非节点目录模型返回 None。
     """
-    bound = bound_node_of_model(model)
-    if bound is None:
-        return False
+    copy_nodes = await node_source_copy_nodes(db, model)
+    if copy_nodes is None:
+        return None
     errors = await node_source_scope_errors(db, model, spec.topology, spec.gpu_selector)
     if errors:
         code, message = errors[0]
-        # 「节点上没有副本」是状态冲突（409），其余是请求越界（422）
+        # 「没有可用副本」是状态冲突（409），其余是请求越界（422）
         raise Conflict(message) if code == "no_copy" else LLMPodValidationError(message)
-    if not _selector_is_empty(spec.gpu_selector):
-        return False
-
-    if spec.offload_preference == "cpu_only":
-        replicas = max(1, spec.topology.replicas or 1)
-        spec.gpu_selector = GpuSelector(node_ids=[bound] * replicas)
-    else:
-        # 锁定到绑定节点单台：GPU 调度只会选该节点；allow_cpu 回退到 CPU 档时
-        # ``_resolve_lane`` / ``_assign_cpu_lane`` 同样只在该节点求解
-        spec.gpu_selector = GpuSelector(node_id=bound)
-    return True
+    return copy_nodes
 
 
 async def nodes_with_model(db: AsyncSession, model_id: int) -> set[str]:

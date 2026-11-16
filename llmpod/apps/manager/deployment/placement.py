@@ -397,8 +397,11 @@ class PlacementService:
                 # 由调用方 ModelStagingGate 按会话观察计——这里只建任务
                 attempt = _next_attempt(rows)
                 # canonical 随建新任务刷新（不做首写冻结）：模型行更新（改源路径/换 revision）
-                # 后，新任务落到新目录；在飞任务不受影响——节点回报 local_dir 时投影写回权威值
-                nm.local_dir = canonical_local_dir(model)
+                # 后，新任务落到新目录；在飞任务不受影响——节点回报 local_dir 时投影写回权威值。
+                # node 源例外：目录按节点各导各的（多节点副本路径不同），沿用导入时写入的
+                # 每节点 local_dir，不用首导入路径（model.source_url）覆写别的节点
+                if not ModelSource.is_node_source(model.source):
+                    nm.local_dir = canonical_local_dir(model)
                 # 3. 构造 task（payload 不含 secrets）。看门狗 12h：大模型下载
                 #    （node 内部 3 次重试 + 断点续传）合法耗时以小时计，取值只兜
                 #    「await 永不返回」的挂死，不误杀慢下载

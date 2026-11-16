@@ -996,11 +996,13 @@ class TestDeployHandoff:
         # VRAM 已预留（交接不释放）
         assert orch.ledger.get_reserved_for_deployment(dep.deployment_id)
 
-    async def test_deploy_node_source_empty_selector_pins_bound_node(self, deployed_stack_multinode):
-        """空选择器不算「已指定」：节点目录模型必须钉到绑定节点，否则权重不在、staging 必失败。"""
+    async def test_deploy_node_source_empty_selector_stays_on_copy_nodes(self, deployed_stack_multinode):
+        """空选择器不算「已指定」：自动调度只在持有副本的节点里选（副本只剩 n2 → 必落 n2）。"""
         session, dep, _hub = deployed_stack_multinode
         model = await session.get(Model, dep.model_id)
         model.source, model.node_id = "node", "n2"
+        # 清掉 n1 的副本行：副本集合只剩 n2——空选择器也不得落到 n1（权重不在、staging 必失败）
+        session._store[NodeModel].pop((model.id, "n1"))
         dep_obj = await session.get(ModelDeployment, dep.deployment_id)
         dep_obj.spec = {**dep_obj.spec, "gpu_selector": {"gpu_uuids": []}, "topology": {"tp": 1, "replicas": 1}}
 
@@ -1008,7 +1010,8 @@ class TestDeployHandoff:
 
         dep_obj = await session.get(ModelDeployment, dep.deployment_id)
         assert dep_obj.phase == "PULL_IMAGE"
-        assert dep_obj.spec["gpu_selector"]["node_id"] == "n2"
+        # 不再注入选择器：spec 原样保留，约束由调度池收缩承担
+        assert dep_obj.spec["gpu_selector"] == {"gpu_uuids": []}
         instances = [v for v in session._store.get(Instance, {}).values()]
         assert instances and all(i.assigned_node == "n2" for i in instances)
 

@@ -1,7 +1,8 @@
 """从节点目录创建模型集成测试（FakeSession 驱动）。
 
 验证 ``POST /admin/models {source:node}``：node_id 必填、节点必须存在、创建前重新探测、
-落库绑定 node_id，并在同一事务写入 node_model(present)。
+落库绑定 node_id，并在同一事务写入 node_model(present)。同名节点目录导入合并到既有
+模型行（追加副本），不新建 Model。
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from _fakes import FakeSession, admin_session
 
 from llmpod.apps.webserver.auth.deps import get_current_user
 from llmpod.db import get_db
+from llmpod.models.model import Model
 from llmpod.models.node import Node
 from llmpod.models.node_model import NodeModel
 from llmpod.tunnel.schemas import ModelDirEntry, ModelDirProbe
@@ -45,8 +47,8 @@ def _override_user() -> None:
     app.dependency_overrides[get_current_user] = lambda: admin_session()
 
 
-def _node() -> Node:
-    return Node(id="n1", cluster_id=1, hostname="host-n1", ip="10.0.0.1", status="online")
+def _node(node_id: str = "n1") -> Node:
+    return Node(id=node_id, cluster_id=1, hostname=f"host-{node_id}", ip="10.0.0.1", status="online")
 
 
 def _probe(**overrides) -> ModelDirProbe:
@@ -69,7 +71,6 @@ def _patch_probe(monkeypatch, probe: ModelDirProbe) -> None:
     from llmpod.apps.manager import dispatch
 
     async def _call(node_id, path):
-        assert node_id == "n1"
         return probe
 
     monkeypatch.setattr(dispatch, "probe_model_dir", _call)
@@ -163,6 +164,126 @@ class TestCreateNodeModel:
         resp = await client.post("/api/v1/admin/models", json=_payload())
         assert resp.status_code == 422
         assert not session.all(NodeModel)
+
+
+def _existing(node_id: str = "n1") -> Model:
+    """已导入的节点目录模型行（source=node、副本在 node_id）。"""
+    return Model(
+        id=1,
+        name="Qwen2.5-7B",
+        model_type="llm",
+        source="node",
+        source_url="/data/models/qwen",
+        node_id=node_id,
+        is_moe=False,
+        is_vision=False,
+        needs_trust_remote_code=False,
+        source_kind="transformers_folder",
+        hash_mode="none",
+    )
+
+
+class TestMergeNodeImport:
+    """同名节点目录导入合并：不新建 Model 行，往 node_model 追加/刷新副本。"""
+
+    async def test_second_node_appends_copy_to_existing_model(self, client: AsyncClient, monkeypatch):
+        session = _Session()
+        session.preload(_existing(node_id="n1"))
+        session.preload(NodeModel(model_id=1, node_id="n1", desired_state="present", status="present"))
+        session.preload(_node("n1"))
+        session.preload(_node("n2"))
+        _override_db(session)
+        _override_user()
+        _patch_probe(monkeypatch, _probe())
+
+        resp = await client.post("/api/v1/admin/models", json=_payload(node_id="n2"))
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["id"] == 1  # 返回既有模型，不新建
+        assert len(session.all(Model)) == 1
+        copies = {c.node_id: c for c in session.all(NodeModel)}
+        assert set(copies) == {"n1", "n2"}
+        assert copies["n2"].status == "present"
+        assert copies["n2"].local_dir == "/data/models/qwen"
+        assert copies["n2"].bytes_total == 1084
+
+    async def test_same_node_reimport_refreshes_copy_row(self, client: AsyncClient, monkeypatch):
+        """同节点重复导入 = 原地刷新该副本行（路径/观测值跟随新探测）。"""
+        session = _Session()
+        session.preload(_existing(node_id="n1"))
+        session.preload(
+            NodeModel(
+                model_id=1,
+                node_id="n1",
+                desired_state="present",
+                status="failed",
+                last_error="旧目录被移动",
+                local_dir="/data/models/qwen-old",
+            )
+        )
+        session.preload(_node("n1"))
+        _override_db(session)
+        _override_user()
+        _patch_probe(monkeypatch, _probe())
+
+        resp = await client.post("/api/v1/admin/models", json=_payload())
+
+        assert resp.status_code == 200, resp.text
+        assert len(session.all(Model)) == 1
+        assert len(session.all(NodeModel)) == 1  # 不产生重复行
+        copy = session.all(NodeModel)[0]
+        assert copy.status == "present"
+        assert copy.local_dir == "/data/models/qwen"
+        assert copy.last_error is None
+
+    async def test_model_type_conflict_rejected(self, client: AsyncClient, monkeypatch):
+        """同名但类别不同（embedding vs llm）大概率不是同一个模型：拒绝合并。"""
+        session = _Session()
+        session.preload(_existing(node_id="n1"))
+        session.preload(_node("n1"))
+        session.preload(_node("n2"))
+        _override_db(session)
+        _override_user()
+        _patch_probe(monkeypatch, _probe())
+
+        resp = await client.post(
+            "/api/v1/admin/models", json=_payload(node_id="n2", model_type="embedding")
+        )
+
+        assert resp.status_code == 409, resp.text
+        assert len(session.all(NodeModel)) == 0  # 无新副本行
+
+    async def test_same_name_other_source_rejected(self, client: AsyncClient, monkeypatch):
+        """同名但来源是 HF：不同来源不合并，明确拒绝（不是静默新建重名行）。"""
+        session = _Session()
+        session.preload(
+            Model(id=2, name="Qwen2.5-7B", model_type="llm", source="huggingface", source_url="Qwen/Qwen2.5-7B")
+        )
+        session.preload(_node("n1"))
+        _override_db(session)
+        _override_user()
+        _patch_probe(monkeypatch, _probe())
+
+        resp = await client.post("/api/v1/admin/models", json=_payload())
+
+        assert resp.status_code == 409, resp.text
+
+    async def test_merge_probe_failure_leaves_no_rows(self, client: AsyncClient, monkeypatch):
+        """合并路径同样先探测：目录无效直接 422，不动既有模型与副本行。"""
+        session = _Session()
+        session.preload(_existing(node_id="n1"))
+        session.preload(_node("n2"))
+        _override_db(session)
+        _override_user()
+        _patch_probe(monkeypatch, _probe(exists=False, message="目录不存在或不可达"))
+
+        resp = await client.post("/api/v1/admin/models", json=_payload(node_id="n2"))
+
+        assert resp.status_code == 422
+        assert len(session.all(Model)) == 1
+        copies = [c for c in session.all(NodeModel) if c.node_id == "n2"]
+        assert copies == []
 
 
 class TestUpdateNodeModelGuard:

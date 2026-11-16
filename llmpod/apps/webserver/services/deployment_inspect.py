@@ -130,6 +130,12 @@ class InspectState:
     cross_node: bool = False
     realtime: dict = field(default_factory=dict)
 
+    # 节点目录模型的副本约束（_scope_node_source 装配；_pick_cluster / 池收缩消费）：
+    # copy_nodes = 持有 present 副本的节点集合（None = 非节点目录模型）；
+    # copy_cluster_ids = 副本节点所在集群（集群推荐与校验的候选范围）
+    copy_nodes: set[str] | None = None
+    copy_cluster_ids: set[int] | None = None
+
     # 卡池（_load_gpu_pool 装配；cluster_gpus 富化序：基础池→逐卡评估→占用/现状合并→model_local）
     cluster_gpus: list = field(default_factory=list)
     node_rows: list = field(default_factory=list)
@@ -203,9 +209,9 @@ async def run_inspect(db: AsyncSession, request: InspectDeploymentRequest) -> In
     await _validate_config(db, c)
     # 卡池富化：基础行（含离线卡，前端灰化）→ 逐卡评估（grey_reason / required_vram_gb）→ 占用 + 卡现状两视图合并；本段无 issue（灰化语义经 cluster_gpus 回显）
     await _load_gpu_pool(db, c)
-    # 节点目录模型：可见节点池收缩为绑定节点（前端据此只展示该节点，推荐调度也不会越界）
-    if ModelSource.is_node_source(model.source):
-        _restrict_pool_to_bound_node(c)
+    # 节点目录模型：可见节点池收缩为持有副本的节点（前端据此只展示这些节点，推荐调度也不会越界）
+    if c.copy_nodes is not None:
+        _restrict_pool_to_copy_nodes(c)
     # 未显式 tp 时按可选卡推导并回写 topo / vram_per_gpu；必须先于 _solve_lane（晚于它会出现集群级结论与 node_support 各说各话）；本段无 issue
     _derive_tp(c)
     # CPU / 混合部署逐层求解：纯 CPU 按节点内存判、显存档逐卡双闸复核；产出 memory / memory_by_node（node_support 直接复用不重算）；阻断：指定节点不在线 / 结构非法 / 内存不足 / 显存档装不下
@@ -237,19 +243,26 @@ async def run_inspect(db: AsyncSession, request: InspectDeploymentRequest) -> In
 
 
 async def _scope_node_source(db: AsyncSession, c: InspectState) -> None:
-    """节点目录模型的预检硬限制：集群锁定绑定节点所在集群，其余约束复用创建侧判据。"""
-    bound = c.model.node_id
-    if not bound:
-        c.fail("节点目录导入的模型缺少绑定节点")
+    """节点目录模型的预检硬限制：副本集合非空 + 选择器都在副本节点上 + 集群锁定到副本所在集群。
+
+    同名节点目录导入合并后副本可在多台节点上，部署落在任一副本节点均可；集群候选
+    收窄为副本节点所在集群（副本可跨集群时用户仍可显式选其中一个）。
+    """
+    copy_nodes = await deployment_service.node_source_copy_nodes(db, c.model)
+    if copy_nodes is None:
         return
-    node = await db.get(Node, bound)
-    if node is None:
-        c.fail(f"绑定节点不存在：{bound}")
+    c.copy_nodes = copy_nodes
+    if not copy_nodes:
+        c.fail(deployment_service.NO_PRESENT_COPY_MESSAGE)
         return
-    if c.request.cluster_id and c.request.cluster_id != node.cluster_id:
-        c.fail("绑定节点不属于所选集群，节点目录导入的模型只能在绑定节点所在集群部署")
-    else:
-        c.request.cluster_id = node.cluster_id
+    node_rows = list((await db.execute(select(Node).where(Node.id.in_(sorted(copy_nodes))))).scalars())
+    c.copy_cluster_ids = {n.cluster_id for n in node_rows if n.cluster_id is not None}
+    if c.request.cluster_id and c.request.cluster_id not in c.copy_cluster_ids:
+        c.fail("所选集群内没有持有此模型副本的节点，只能部署到副本所在集群")
+    elif not c.request.cluster_id and len(c.copy_cluster_ids) == 1:
+        # 唯一副本集群直接锁定（等价于旧行为的「绑定节点所在集群」）；跨集群时留给
+        # _pick_cluster 在副本集群里挑
+        c.request.cluster_id = next(iter(c.copy_cluster_ids))
 
     errors = await deployment_service.node_source_scope_errors(
         db, c.model, c.request.topology, c.request.gpu_selector
@@ -258,12 +271,13 @@ async def _scope_node_source(db: AsyncSession, c: InspectState) -> None:
         c.fail(message)
 
 
-def _restrict_pool_to_bound_node(c: InspectState) -> None:
-    """把可见节点池/卡池/CPU 资源收缩为绑定节点。"""
-    bound = c.model.node_id
-    c.node_rows = [node for node in c.node_rows if node.id == bound]
-    c.cluster_gpus = [gpu for gpu in c.cluster_gpus if gpu.node_id == bound]
-    c.node_resources = [res for res in c.node_resources if res.node_id == bound]
+def _restrict_pool_to_copy_nodes(c: InspectState) -> None:
+    """把可见节点池/卡池/CPU 资源收缩为持有副本的节点集合。"""
+    assert c.copy_nodes is not None
+    copies = c.copy_nodes
+    c.node_rows = [node for node in c.node_rows if node.id in copies]
+    c.cluster_gpus = [gpu for gpu in c.cluster_gpus if gpu.node_id in copies]
+    c.node_resources = [res for res in c.node_resources if res.node_id in copies]
 
 
 def _prepare_baseline(c: InspectState) -> None:
@@ -326,6 +340,10 @@ async def _pick_cluster(db: AsyncSession, c: InspectState) -> None:
         return
     # 遍历 active 集群推荐
     active_clusters = list((await db.execute(select(Cluster).where(Cluster.status == ClusterStatus.ACTIVE))).scalars())
+    if c.copy_cluster_ids is not None:
+        # 节点目录模型：只在持有副本的节点所在集群里推荐（其它集群的卡再多也用不上，
+        # 推过去池收缩后只剩全灰）
+        active_clusters = [cl for cl in active_clusters if cl.id in c.copy_cluster_ids]
     # 查各集群 GPU 池（JOIN Gpu→Node→Cluster，过滤 online）
     cluster_pools: dict[int, list[GpuPoolEntry]] = {}
     for cl in active_clusters:

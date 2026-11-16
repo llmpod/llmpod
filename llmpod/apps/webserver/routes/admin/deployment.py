@@ -184,9 +184,9 @@ async def create_deployment(
         raise NotFound("Model", request.model_id)
     adapter.validate_category(model.model_type)
 
-    # 节点目录模型的部署硬限制（只允许绑定节点/单机；未显式选节点时钉到绑定节点），
-    # 必须先于 validate_topology：注入的选择器也要参与结构校验
-    await deployment_service.enforce_node_source_spec(db, model, request.spec)
+    # 节点目录模型的部署硬限制（副本集合非空/单机/显式选择在副本节点上），必须先于
+    # validate_topology：后续结构校验与调度池收缩都基于副本节点集合
+    await deployment_service.validate_node_source_spec(db, model, request.spec)
 
     # CPU 部署守卫（先于结构校验：引擎不支持时按能力报错，不被 node_ids 长度类
     # 结构错误抢先）——能力由适配器声明（llama.cpp 支持，vLLM/SGLang 不支持），

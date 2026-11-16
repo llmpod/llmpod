@@ -179,8 +179,12 @@ class _ModelFakeSession:
             def scalars(self):
                 return self._rows
 
-        # 按 select 目标实体分发：部署引用守卫（查 ModelDeployment）恒空，
-        # 共享行查询（查 Model）返回预置 siblings
+        # delete()（node_model 副本行清理）no-op；select 按目标实体分发：部署引用守卫
+        # （查 ModelDeployment）恒空，共享行查询（查 Model）返回预置 siblings
+        from sqlalchemy.sql.dml import Delete
+
+        if isinstance(stmt, Delete):
+            return _Result([])
         target = stmt.column_descriptions[0]["entity"]
         if target is Model:
             return _Result(list(self.siblings))

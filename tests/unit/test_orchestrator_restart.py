@@ -225,14 +225,14 @@ def _expected_vram() -> float:
 
 
 class TestRestartNodeSource:
-    """节点目录模型（source=node）：绑定节点优先于原实例落点。
+    """节点目录模型（source=node）：重启按副本节点集合判定实例落点。
 
-    重启默认复用原实例、不重新调度，所以先前落到别的节点（空选择器绕过「锁定到绑定
-    节点」检查的历史数据）只会沿错节点重跑 staging 并失败——必须清规划重排。
+    重启默认复用原实例、不重新调度，所以先前落到没有副本的节点（历史数据/副本被删）
+    只会沿错节点重跑 staging 并失败——必须清规划重排到仍有副本的节点。
     """
 
     def _seed_node_source(self, session, *, inst_node: str = "n1", spec_selector=None):
-        """在既有 _seed 之上把模型改造成节点目录来源（绑 n1），其余预置复用。"""
+        """在既有 _seed 之上把模型改造成节点目录来源（副本在 n1），其余预置复用。"""
         _seed(session)
         model = session._store[Model][1]
         model.source, model.node_id = "node", "n1"
@@ -252,7 +252,8 @@ class TestRestartNodeSource:
         dep = await session.get(ModelDeployment, "dep-1")
         assert dep.status == "creating"
         assert dep.phase == "PENDING"  # 控制器只驱动 STAGING_PHASES
-        assert dep.spec["gpu_selector"]["node_id"] == "n1"  # 锁定到绑定节点的选择器写回
+        # 不再注入选择器：spec 原样保留，调度池由 _plan 按副本节点集合收缩
+        assert dep.spec["gpu_selector"] == {"gpu_uuids": []}
         assert session.all(Instance) == []  # 四层规划产物清空，交 _plan 重排
         assert orch.ledger.get_reserved_for_deployment("dep-1") == {}
 
@@ -264,7 +265,7 @@ class TestRestartNodeSource:
 
         dep = await session.get(ModelDeployment, "dep-1")
         assert dep.phase == "PULL_IMAGE"  # 实例落点正确 → 沿用原卡重预留
-        assert dep.spec["gpu_selector"]["node_id"] == "n1"
+        assert dep.spec["gpu_selector"] == {"gpu_uuids": []}  # 空选择器不被改写
         inst = await session.get(Instance, "i-0")
         assert inst.assigned_node == "n1" and inst.status == "PENDING"
 
@@ -272,7 +273,7 @@ class TestRestartNodeSource:
         session = patched_db
         self._seed_node_source(session, inst_node="n1", spec_selector={"node_id": "n2"})
 
-        with pytest.raises(LLMPodValidationError, match="绑定节点"):
+        with pytest.raises(LLMPodValidationError, match="副本"):
             await orch.restart("dep-1")
         assert (await session.get(ModelDeployment, "dep-1")).status == "stopped"
 

@@ -18,7 +18,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Path as PathParam, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from llmpod.apps.manager.deployment.feasibility import FeasibilityReport, assess_feasibility
@@ -397,6 +398,91 @@ async def _manager_content_hash(source: str | None, source_url: str | None) -> s
     return await asyncio.to_thread(compute_content_hash, resolved)
 
 
+async def _try_merge_node_import(
+    db: AsyncSession,
+    request: CreateModelRequest,
+    node_dir: str,
+    total_bytes: int | None,
+    source_kind: str | None,
+    weight_files: list[str],
+) -> Model | None:
+    """同名节点目录导入合并入口：命中既有模型时追加/刷新该节点的副本行并返回它；未命中返回 None。
+
+    只在 node 源之间合并（同名的其它来源模型不吞并，明确拒绝）。同节点重复导入 =
+    原地刷新该行的路径与观测值（探测已在上游校验过目录有效）。
+    """
+    from llmpod.apps.manager.model_source.inference import first_gguf_shard
+
+    rows = list(
+        (await db.execute(select(Model).where(Model.name == request.name))).scalars()
+    )
+    node_rows = [r for r in rows if ModelSource.is_node_source(r.source)]
+    if not node_rows:
+        other = next((r for r in rows if not ModelSource.is_node_source(r.source)), None)
+        if other is not None:
+            raise Conflict(
+                f"已存在同名模型（来源 {other.source}），节点目录导入请换一个名称；"
+                "不同来源的模型不合并"
+            )
+        return None
+    m = node_rows[0]
+    # 合并一致性守卫：类别或盘上布局冲突说明两个同名目录大概率不是同一个模型——
+    # 静默并掉会让部署用错配方，明确拒绝让用户改名。任一侧 unknown 不拦（探测未定）。
+    if m.model_type != request.model_type:
+        raise Conflict(
+            f"同名模型「{request.name}」的类别是 {m.model_type}，与本次导入声明的 "
+            f"{request.model_type} 不一致；若不是同一个模型请改名后导入"
+        )
+    if (
+        source_kind
+        and source_kind != "unknown"
+        and m.source_kind
+        and m.source_kind != "unknown"
+        and source_kind != m.source_kind
+    ):
+        raise Conflict(
+            f"同名模型「{request.name}」的目录布局是 {m.source_kind}，本次探测为 {source_kind}；"
+            "若不是同一个模型请改名后导入"
+        )
+
+    existing_copies = list(
+        (await db.execute(select(NodeModel).where(NodeModel.model_id == m.id))).scalars()
+    )
+    copy = next((r for r in existing_copies if r.node_id == request.node_id), None)
+    # 单 GGUF / 分片：引擎 --model 指向首个分片文件；文件夹布局指向目录本身
+    rel = first_gguf_shard(weight_files) if source_kind in ("single_gguf", "gguf_shards") else None
+    model_path = f"{node_dir.rstrip('/')}/{rel}" if rel else node_dir
+    now = datetime.now(timezone.utc)
+    if copy is None:
+        db.add(
+            NodeModel(
+                model_id=m.id,
+                node_id=request.node_id,
+                desired_state="present",
+                status="present",
+                local_dir=node_dir,
+                model_path=model_path,
+                bytes_total=total_bytes,
+                bytes_done=total_bytes or 0,
+                last_checked_at=now,
+            )
+        )
+    else:
+        # 同节点重复导入：目录路径变了就跟随新探测值（旧路径已失效），观测状态重置
+        copy.desired_state = "present"
+        copy.status = "present"
+        copy.local_dir = node_dir
+        copy.model_path = model_path
+        copy.bytes_total = total_bytes
+        copy.bytes_done = total_bytes or 0
+        copy.last_error = None
+        copy.last_checked_at = now
+    await db.flush()
+    await db.refresh(m)
+    await db.commit()
+    return m
+
+
 @model_router.post(
     "", response_model=Result[ModelOut], summary="创建模型", dependencies=[Depends(require_permission(MODEL_CREATE))]
 )
@@ -409,7 +495,8 @@ async def create_model(
     """创建模型。type 来自用户选择（前端预填 /inspect 的 suggested_type）；元数据取自回传 ``files``。
 
     ``source=node`` 时权重就地引用节点目录：重新探测校验目录仍有效，并写入一条
-    ``node_model(present)`` 表达平台已知的持有关系。
+    ``node_model(present)`` 表达平台已知的持有关系。同名节点目录模型已存在时不新建
+    Model 行，只往其副本清单追加该节点的 present 行（同节点重复导入 = 原地刷新）。
     """
     files = request.files
     # local 源路径合法性前置：坏路径不落库（否则创建成功、部署才报错）
@@ -442,6 +529,16 @@ async def create_model(
         node_source_kind = files.source_kind or detect_source_kind(
             ([probe.config_name] if probe.config_name else []) + node_weight_files
         )
+
+    # 同名节点目录导入合并：模型按名唯一（partial unique index 兜底并发），再次导入
+    # 只追加 node_model 副本行、不新建 Model 行——列表/部署都以同一条模型为准。仅
+    # node 源之间合并；撞上其它来源的同名模型时明确拒绝（下载配方语义不同）。
+    if node_dir is not None:
+        merged = await _try_merge_node_import(
+            db, request, node_dir, node_total_bytes, node_source_kind, node_weight_files
+        )
+        if merged is not None:
+            return success(merged)
 
     m = Model(
         name=request.name,
@@ -479,7 +576,23 @@ async def create_model(
         # 模型分发状态不再存 Model（cached_nodes 已移除）——由 node_model 表在部署期表达
     )
     db.add(m)
-    await db.flush()
+    if node_dir is not None:
+        # 并发同名导入兜底：partial unique index（uq_model_node_name）让后到的事务在
+        # flush 撞索引——回滚保存点后并入赢家行，与普通合并同一套判定
+        try:
+            async with db.begin_nested():
+                await db.flush()
+        except IntegrityError:
+            if m in db.new:
+                db.expunge(m)
+            merged = await _try_merge_node_import(
+                db, request, node_dir, node_total_bytes, node_source_kind, node_weight_files
+            )
+            if merged is None:
+                raise Conflict("同名模型正在并发导入，请稍后重试")
+            return success(merged)
+    else:
+        await db.flush()
     if node_dir is not None:
         from llmpod.apps.manager.model_source.inference import first_gguf_shard
 
@@ -657,8 +770,8 @@ async def delete_model_node(
             ).scalars()
         )
         on_node = any(inst.assigned_node == node_id for inst in instances)
-        # node 目录模型只能落在绑定节点：只要还有活跃部署，就不能清掉它唯一的副本。
-        # 其它来源规划期尚无 instance，删掉副本最多触发一次重下，不拦。
+        # 节点目录模型不会自动下载：只要还有活跃部署，任何副本都可能是它的唯一供给，
+        # 一律不删。其它来源规划期尚无 instance，删掉副本最多触发一次重下，不拦。
         active_node_model = ModelSource.is_node_source(m.source) and any(
             dep.status not in DEPLOYMENT_TERMINAL_STATUSES for dep in deployments
         )
@@ -845,7 +958,9 @@ async def delete_model(
     src_url = m.source_url
     purged_dirs: list[str] = []
 
-    # 先落库删除（commit 落定）；盘删除放后面且 best-effort，避免库未删成却已毁盘的不可逆错配
+    # 先落库删除（commit 落定）；盘删除放后面且 best-effort，避免库未删成却已毁盘的不可逆错配。
+    # node_model 副本行一并清（否则模型删了副本行成孤儿，nodes_with_model 还会数到它）
+    await db.execute(delete(NodeModel).where(NodeModel.model_id == model_id))
     await db.delete(m)
     await db.commit()
 

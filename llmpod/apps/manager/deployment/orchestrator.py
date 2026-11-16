@@ -409,10 +409,9 @@ class DeploymentOrchestrator:
         # 终态扫描集合，后续重预留窗口不再与 converge 竞态。预留失败时回滚为原终态。
         async with get_db_context() as db:
             dep, _model = await deployment_service.load_deployment(db, deployment_id)
-            # 节点目录模型：绑定节点必须仍持有该模型副本（解绑后不可重启）
-            bound = deployment_service.bound_node_of_model(_model)
-            if bound is not None:
-                await deployment_service.require_node_model_present(db, _model.id, bound)
+            # 节点目录模型：至少要还有一台节点持有副本（副本删光后不可重启；实例落在
+            # 已无副本的节点上时由 _restart_redeploy 的清规划重排兜底）
+            await deployment_service.require_model_copy_present(db, _model)
             if dep.status not in DEPLOYMENT_RESTARTABLE_STATUSES:
                 raise Conflict(f"部署当前状态 {dep.status}，无法启动（仅 stopped/failed 可启动）")
             restart_from = dep.status
@@ -442,21 +441,20 @@ class DeploymentOrchestrator:
         async with get_db_context() as db:
             dep, model = await deployment_service.load_deployment(db, deployment_id)
             config = DeploymentConfig.model_validate(dep.spec or {})
-            # 节点目录模型：持久化 spec 里可能仍是空选择器（recovery/直调绕过创建路由）。
-            # 返回 False = 非节点目录模型或已显式指定，无需写回。
-            bound = deployment_service.bound_node_of_model(model)
-            if await deployment_service.enforce_node_source_spec(db, model, config):
-                dep.spec = config.model_dump()
+            # 节点目录模型：校验持久化 spec（副本仍在、选择器未越界），并取回副本节点
+            # 集合判定实例是否仍可原地重启。不再往空选择器注入节点——调度池由 _plan
+            # 按集合收缩，spec 无需写回。
+            copy_nodes = await deployment_service.validate_node_source_spec(db, model, config)
             irows = list((await db.execute(select(Instance).where(Instance.deployment_id == deployment_id))).scalars())
-            # 重启复用原实例、不重新调度：实例落在绑定节点之外时只会沿错节点重跑 staging
-            # （权重不在，必失败），与「规划从未落盘」走同一套清规划重排。
-            if not irows or (bound is not None and any(r.assigned_node != bound for r in irows)):
+            # 重启复用原实例、不重新调度：实例落在没有副本的节点上时只会沿错节点重跑
+            # staging（权重不在，必失败），与「规划从未落盘」走同一套清规划重排。
+            if not irows or (copy_nodes is not None and any(r.assigned_node not in copy_nodes for r in irows)):
                 # 规划期失败的部署没有实例行（``_plan`` 在持久化前抛错）——不是「不可启动」，
                 # 而是规划从未落盘：清空规划状态后交控制器重跑 _plan（spec 里的 force 原样带过去）。
                 # 先释放账本旧预留：重规划会重新记账（累加），残留会让新预留凭空多出一份。
                 await self.ledger.release(deployment_id)
                 await deployment_service.clear_planning_slate(db, deployment_id)
-                if bound is not None:
+                if copy_nodes is not None:
                     # phase 回 PENDING（STAGING_PHASES 之一），否则停 STOPPING 子态的部署不会被驱动
                     await deployment_service.set_phase(db, deployment_id, DeploymentPhase.PENDING, trigger=trigger)
                 await deploy_log_service.append_log(
@@ -465,7 +463,7 @@ class DeploymentOrchestrator:
                     step=DeployStep.START,
                     level=LogLevel.WARN,
                     status=LogStatus.RUNNING,
-                    message="重新规划部署（上一轮未产出实例或实例不在绑定节点）",
+                    message="重新规划部署（上一轮未产出实例或实例节点已无模型副本）",
                     extra={"trigger": trigger, "force": force, "action": "replan"},
                 )
                 await db.flush()
@@ -755,12 +753,10 @@ class DeploymentOrchestrator:
         adapter = get_adapter(dep.engine)
         # 防御性校验（路由已 422；此处覆盖 controller/直调等绕过路由的路径）
         adapter.validate_category(model.model_type)
-        # 节点目录模型：创建路由已把选择器锁定到绑定节点，但 recovery/控制器重驱动/直调
-        # 绕过路由，持久化 spec 里可能是空选择器——不锁定会落到绑定节点之外（权重不在，
-        # staging 必失败）。写回避免下轮退回去。
-        # 与创建路由同序（先于结构校验），使注入的选择器同样参与后续校验。
-        if await deployment_service.enforce_node_source_spec(db, model, config):
-            dep.spec = config.model_dump()
+        # 节点目录模型：副本/选择器校验（路由已做；recovery/控制器重驱动/直调绕过路由）。
+        # 返回副本节点集合用于下方收缩调度池——不再注入节点选择器，多副本时调度器可在
+        # 集合内自由选卡（本地性偏好自然生效），spec 也不需要写回。
+        copy_nodes = await deployment_service.validate_node_source_spec(db, model, config)
         # 并行能力校验（路由已 422；force 部署跳过——引擎最终裁决）
         if not config.force:
             adapter.validate_parallel(config.topology, architecture=model.architecture, model_type=model.model_type)
@@ -792,6 +788,10 @@ class DeploymentOrchestrator:
 
         # GPU 调度 + VRAM 预留（先填 InstanceSpec，再持久化 Instance 带 assigned_node）
         gpu_pool = await deployment_service.load_online_gpus(db)
+        if copy_nodes is not None:
+            # 节点目录模型权重只在副本节点上（不会自动下载）：调度池收缩到副本节点，
+            # 自动调度自然不会落到没有副本的机器
+            gpu_pool = [g for g in gpu_pool if g.node_id in copy_nodes]
         # 纯 CPU 部署（allow_cpu 且引擎声明 cpu）：逐层表解出场景与调度结果
         lane: resource.LanePlan | None = None
         lane_nodes: list = []
@@ -799,7 +799,8 @@ class DeploymentOrchestrator:
         # 否则该偏好会被静默忽略按存档部署，下面「显式要纯 CPU 却无解」的分支也永远不可达
         if config.cpu_lane_requested and adapter.supports_cpu_lane():
             lane, lane_nodes = await self._resolve_lane(
-                db, model, config, adapter, gpu_pool, force=config.force, cluster_id=dep.cluster_id
+                db, model, config, adapter, gpu_pool,
+                force=config.force, cluster_id=dep.cluster_id, restrict_nodes=copy_nodes,
             )
             if lane is None and config.offload_preference == resource.SCENARIO_CPU_ONLY:
                 # 显式要纯 CPU 却无解：报错而不是悄悄改用显存档（部署语义不漂移）。
@@ -923,7 +924,8 @@ class DeploymentOrchestrator:
         return instances
 
     async def _resolve_lane(
-        self, db, model, config: DeploymentConfig, adapter, gpu_pool, force: bool = False, cluster_id: int | None = None
+        self, db, model, config: DeploymentConfig, adapter, gpu_pool, force: bool = False,
+        cluster_id: int | None = None, restrict_nodes: set[str] | None = None,
     ):
         """解 CPU 部署形态：逐层表在「每节点候选」上求场景与调度结果（取解只在两端，见 resource）。
 
@@ -933,11 +935,15 @@ class DeploymentOrchestrator:
         的单卡最大可用、内存取节点账本可用——两池都是已折过利用率上限的量）。形状/权重
         未知 → 无部署形态（退回纯 GPU 口径）。``pinned`` 只认单数 ``node_id``（逐副本
         指定的 node_ids 不收窄求解域——形态档位逐节点算，调度位置在 _assign_cpu_lane 硬给）。
-        ``force=True`` 且显式 ``cpu_only`` 时无解也不拒：改走 :func:`resource.forced_cpu_lane`
-        超额调度（用户已确认强制部署，容量交引擎/OOM 兜底）。
+        ``restrict_nodes``：节点目录模型传副本节点集合，候选节点只保留集合内的（权重
+        只在那几台机器上，落别处 staging 必失败）。``force=True`` 且显式 ``cpu_only``
+        时无解也不拒：改走 :func:`resource.forced_cpu_lane` 超额调度（用户已确认强制
+        部署，容量交引擎/OOM 兜底）。
         返回 ``(lane, nodes)``——nodes 供内存约束与预留复用，避免二次查库。
         """
         nodes = await deployment_service.load_online_nodes(db, cluster_id)
+        if restrict_nodes is not None:
+            nodes = [n for n in nodes if n.id in restrict_nodes]
         # 用户指定了节点（CPU 部署按节点选取 / 手选节点）：只在指定节点上求解
         pinned = config.gpu_selector.node_id if config.gpu_selector else None
         arch_meta = resource.KVArchMeta.from_model(model)

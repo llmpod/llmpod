@@ -132,8 +132,12 @@ class FakeSession:
         return obj
 
     def _pk(self, obj):
-        pk = list(obj.__table__.primary_key.columns)
-        return getattr(obj, pk[0].key, None) if pk else None
+        # 复合主键（如 node_model 的 (model_id, node_id)）返回 tuple 键，防同首列
+        # 不同次列的行互相覆盖（与 integration/_fakes 同口径）
+        pk_cols = list(obj.__table__.primary_key.columns)
+        if len(pk_cols) > 1:
+            return tuple(getattr(obj, c.key, None) for c in pk_cols)
+        return getattr(obj, pk_cols[0].key, None) if pk_cols else None
 
     async def get(self, cls, pk):
         return self._store.get(cls, {}).get(pk)
