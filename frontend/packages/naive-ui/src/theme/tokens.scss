@@ -66,7 +66,10 @@
      选中态卡片底/边由其派生,跟随 theme-lab 改色联动。 */
   --c-primary-tint: rgba(var(--n-primary-color), 0.05); // 选中卡底
   --c-primary-edge: rgba(var(--n-primary-color), 0.34); // 选中卡边
-  /* 正文级主色文字:亮色下主色本身已达 5.91:1,直接沿用并跟随主题色 */
+  /* 正文级主色文字(菜单选中项标题 / 卡片内主色按钮):仅作首屏兜底。
+     这里只是「跟着主色走」的声明,不保证对比度达标 —— 准确值由
+     packages/hooks 的 addCssVarsToHtml 按容器底求解 4.5:1 后写入并覆盖,
+     所以换主题色必然联动,不要在此写死具体色值。 */
   --c-primary-text: var(--c-primary);
 }
 
@@ -125,7 +128,8 @@ html.dark {
   /* 暗底选中态:透明度略提,保证浅底差异仍可辨 */
   --c-primary-tint: rgba(var(--n-primary-color), 0.09);
   --c-primary-edge: rgba(var(--n-primary-color), 0.45);
-  /* 暗色下主色不能直接当文字色:--n-primary-color 在暗色被压到 #125592,
-     落在 #18181c 卡底上仅 2.3:1;提亮为 #4088d3 后 4.5:1(色相彩度不变) */
-  --c-primary-text: #4088d3;
+  /* --c-primary-text 不在暗色下覆写:主色在暗底不能直接当文字色(默认主色落在
+     #18181c 上仅 2.3:1),但提亮量取决于具体主题色,写死任一色值都会让
+     "换主题色后文字仍是原色"复现。运行时 addCssVarsToHtml 用 getPrimaryTextColor
+     按当前主题色求解 4.5:1 并注入,沿用 :root 的兜底声明即可。 */
 }

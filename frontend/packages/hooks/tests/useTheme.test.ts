@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
+import { colord } from 'colord'
 import { darkTheme } from 'naive-ui'
 import { nextTick } from 'vue'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { DEFAULT_THEME_CONFIG } from '../src/theme/constants'
 import { addCssVarsToHtml, parseCssText } from '../src/theme/css-vars'
-import { generatePalette, getThemeColors } from '../src/theme/palette'
+import { generatePalette, getPrimaryTextColor, getThemeColors } from '../src/theme/palette'
 import { getThemeOverrides } from '../src/theme/overrides'
 import { useTheme } from '../src/theme/useTheme'
 
@@ -65,6 +66,66 @@ describe('theme helpers', () => {
   })
 })
 
+describe('Menu overrides 活跃项取色', () => {
+  /** 活跃态会被消费的两组键:文字走 --c-primary-text,图标/箭头走 --c-primary */
+  const textKeys = ['itemTextColorActive', 'itemTextColorChildActive'] as const
+  const iconKeys = ['itemIconColorActive', 'itemIconColorChildActive'] as const
+  const arrowKeys = ['arrowColorActive', 'arrowColorChildActive'] as const
+
+  for (const darkMode of [false, true]) {
+    it(`${darkMode ? '暗色' : '亮色'}:文字与图标的基础态和 hover 变体同值`, () => {
+      const menu = getThemeOverrides(DEFAULT_THEME_CONFIG, darkMode).Menu!
+
+      for (const key of textKeys) {
+        expect(menu[key]).toBe('var(--c-primary-text)')
+        // naive 的悬浮样式走独立变量:漏给 hover 变体就会悬浮瞬间跳色(曾跳回正文白)
+        expect(menu[`${key}Hover`]).toBe(menu[key])
+      }
+      for (const key of [...iconKeys, ...arrowKeys]) {
+        expect(menu[key]).toBe('var(--c-primary)')
+        expect(menu[`${key}Hover`]).toBe(menu[key])
+      }
+    })
+  }
+
+  it('活跃项文字不再退回正文色(--c-default)', () => {
+    const menu = getThemeOverrides(DEFAULT_THEME_CONFIG, true).Menu!
+    // 回归:暗色曾把 *Active / *ChildActive 及其 hover 全部设为 var(--c-default),
+    // 导致选中项文字与主题色图标不同色、悬浮时又跳成白色
+    const activeValues = [...textKeys, ...iconKeys, ...arrowKeys].map(
+      (key) => menu[key] as string,
+    )
+    expect(activeValues).not.toContain('var(--c-default)')
+  })
+})
+
+describe('getPrimaryTextColor(--c-primary-text 求解)', () => {
+  it('亮色下主色已达标时原样返回', () => {
+    expect(getPrimaryTextColor(DEFAULT_THEME_CONFIG.primary, false)).toBe(
+      colord(DEFAULT_THEME_CONFIG.primary).toHex(),
+    )
+  })
+
+  it('暗色下把主色沿 L 轴提亮到正文对比度,而不是固定某个色值', () => {
+    const primary = '#7a1fa2'
+    const text = getPrimaryTextColor(primary, true)
+
+    // 回归:曾硬编码 #4088d3,导致换主题色后菜单选中项文字仍是蓝色
+    expect(text).not.toBe('#4088d3')
+    expect(text).not.toBe(colord(primary).toHex())
+    // 提亮方向:HSL 的 L 必须高于主色本身
+    expect(colord(text).toHsl().l).toBeGreaterThan(colord(primary).toHsl().l)
+    // 色相保持(容差吸收 HSL 取整)
+    expect(Math.abs(colord(text).toHsl().h - colord(primary).toHsl().h)).toBeLessThanOrEqual(2)
+  })
+
+  it('亮色下过浅的主色会被压深以达标', () => {
+    const pale = '#4ade80'
+    const text = getPrimaryTextColor(pale, false)
+    expect(colord(text).toHsl().l).toBeLessThan(colord(pale).toHsl().l)
+  })
+})
+
 /** 模拟另一同源标签页写入 app_theme:本标签页收到 storage 事件(useStorage 只更新 store) */
 function dispatchCrossTabThemeChange(newValue: string, oldValue: string): void {
   localStorage.setItem('app_theme', newValue)
@@ -98,6 +159,52 @@ describe('useTheme', () => {
     expect(document.documentElement.style.getPropertyValue('--n-primary-color')).toMatch(
       /^\d+,\d+,\d+$/,
     )
+  })
+
+  it('--c-primary-text 随主题色变化联动(菜单选中项标题的取色来源)', async () => {
+    const theme = useTheme()
+    theme.setThemeMode('light')
+    theme.setThemeConfig({ primary: '#7a1fa2' })
+    await nextTick()
+    const purple = document.documentElement.style.getPropertyValue('--c-primary-text')
+
+    // 换主题色:同名变量必须跟着换,否则菜单活跃项会停在旧色(历史 bug:固定蓝)
+    theme.setThemeConfig({ primary: '#0f766e' })
+    await nextTick()
+    const teal = document.documentElement.style.getPropertyValue('--c-primary-text')
+
+    expect(teal).not.toBe(purple)
+    // 色相跟随各自主题色(两个色在白底均已达 4.5:1,无需调整,故与主色同值)
+    expect(purple).toBe('#7a1fa2')
+    expect(teal).toBe('#0f766e')
+  })
+
+  it('亮色下过浅的主色压深成正文级变体后再注入', async () => {
+    const theme = useTheme()
+    theme.setThemeMode('light')
+    theme.setThemeConfig({ primary: '#00ff00' })
+    await nextTick()
+    const text = document.documentElement.style.getPropertyValue('--c-primary-text')
+
+    // 纯绿白底仅 1.37:1,必须压深;同时不能变成某个与主题色无关的固定值
+    expect(text).not.toBe('#00ff00')
+    expect(colord(text).toHsl().l).toBeLessThan(colord('#00ff00').toHsl().l)
+    expect(colord(text).toHsl().h).toBeCloseTo(colord('#00ff00').toHsl().h, 0)
+  })
+
+  it('--c-primary-text 在暗色下取提亮变体,而非固定色', async () => {
+    const theme = useTheme()
+    theme.setThemeMode('dark')
+    theme.setThemeConfig({ primary: '#7a1fa2' })
+    await nextTick()
+    const dark = document.documentElement.style.getPropertyValue('--c-primary-text')
+
+    expect(dark).not.toBe('#4088d3')
+    expect(colord(dark).toHsl().l).toBeGreaterThan(colord('#7a1fa2').toHsl().l)
+
+    // 恢复到 light,保持后续用例对 mode 的既有前置假设
+    theme.setThemeMode('light')
+    await nextTick()
   })
 
   it('supports explicit modes and cycling toggle', async () => {

@@ -645,16 +645,23 @@ function handleAfterLeave() {
 .lm-sider-menu :deep(.n-submenu-children .n-submenu-children .n-menu-item-content--selected)::after {
   left: 4.9rem;
 }
-.lm-sider-menu :deep(.n-menu-item-content--selected .n-menu-item-content-header) {
+/* 活跃项的文字与图标:值必须与 overrides.ts 的 Menu.itemTextColorActive* /
+   itemTextColorChildActive* / itemIconColor* 保持一致,此处只作兜底(naive 升级改 key 时不至于丢色)。
+   覆盖 selected(当前页)与 child-active(含当前页的分组)两种态,hover 一并列出 ——
+   naive 的悬浮样式走独立变量(--n-item-text-color-active-hover 等),漏一条就会在悬停瞬间跳色,
+   出现"文字变白、旁边图标仍是主题色"的两套色打架。
+   文字走 --c-primary-text(运行时按主题色求解的正文级变体),图标走 --c-primary;
+   折叠态同样命中,无需另写规则。 */
+.lm-sider-menu :deep(.n-menu-item-content--selected .n-menu-item-content-header),
+.lm-sider-menu :deep(.n-menu-item-content--selected:hover .n-menu-item-content-header),
+.lm-sider-menu :deep(.n-menu-item-content--child-active .n-menu-item-content-header),
+.lm-sider-menu :deep(.n-menu-item-content--child-active:hover .n-menu-item-content-header) {
   color: var(--c-primary-text);
 }
-.lm-sider-menu :deep(.n-menu-item-content--selected .n-menu-item-content__icon) {
-  color: var(--c-primary);
-}
-
-/* 折叠态选中/所在分组:图标跟随主色软底块 */
-.lm-sider-menu.n-menu--collapsed :deep(.n-menu-item-content--selected .n-menu-item-content__icon),
-.lm-sider-menu.n-menu--collapsed :deep(.n-menu-item-content--child-active .n-menu-item-content__icon) {
+.lm-sider-menu :deep(.n-menu-item-content--selected .n-menu-item-content__icon),
+.lm-sider-menu :deep(.n-menu-item-content--selected:hover .n-menu-item-content__icon),
+.lm-sider-menu :deep(.n-menu-item-content--child-active .n-menu-item-content__icon),
+.lm-sider-menu :deep(.n-menu-item-content--child-active:hover .n-menu-item-content__icon) {
   color: var(--c-primary);
 }
 

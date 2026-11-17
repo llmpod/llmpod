@@ -140,28 +140,37 @@ function getAlertOverrides(darkMode: boolean): GlobalThemeOverrides['Alert'] {
 }
 
 function getMenuOverrides(darkMode: boolean): GlobalThemeOverrides['Menu'] {
+  /* 活跃态(当前页 = --selected,所在分组 = --child-active)的三种角色统一到主题色语义:
+     文字用 --c-primary-text(运行时按容器底求解的正文级变体),图标/箭头用 --c-primary。
+     必须把 *_Hover 变体与基础态写成同值 —— naive 的悬浮样式走的是独立变量,
+     只给基础态时它会退回内置 primaryColor(亮色)或本节暗色分支里的正文色(暗色),
+     表现为"悬浮瞬间文字跳色、旁边图标不变"的两套色打架。 */
+  const activeTextColor = 'var(--c-primary-text)'
+  const activeIconColor = 'var(--c-primary)'
   return {
     // 侧栏菜单项高:取自导航设计稿(36px),与 1px 项间距共同构成 37px 的行节奏;
     // 该值是侧栏菜单的尺寸基准,组件层不再用 !important 覆盖,改这里即全局生效
     itemHeight: '3.6rem',
-    // 暗色下默认项降一档(--c-secondary)弱化常驻文字,激活项升回正文色(--c-default)以拉开层级;
-    // 亮色沿用默认/正文对比即可。
+    // 常规项:暗色降一档(--c-secondary)弱化常驻文字,亮色用正文色;非活跃项悬浮提示到主题色
     itemTextColor: darkMode ? 'var(--c-secondary)' : 'var(--c-default)',
-    itemTextColorHover: 'var(--c-primary)',
+    itemTextColorHover: darkMode ? 'var(--c-default)' : 'var(--c-primary)',
+    // 活跃态:文字 / 图标 / 箭头 × (基础态 + hover 变体),保证"选中后悬浮不再变色"
+    itemTextColorActive: activeTextColor,
+    itemTextColorActiveHover: activeTextColor,
+    itemTextColorChildActive: activeTextColor,
+    itemTextColorChildActiveHover: activeTextColor,
+    itemIconColorActive: activeIconColor,
+    itemIconColorActiveHover: activeIconColor,
+    itemIconColorChildActive: activeIconColor,
+    itemIconColorChildActiveHover: activeIconColor,
+    arrowColorActive: activeIconColor,
+    arrowColorActiveHover: activeIconColor,
+    arrowColorChildActive: activeIconColor,
+    arrowColorChildActiveHover: activeIconColor,
     ...(darkMode
       ? {
           itemIconColor: 'var(--c-secondary)',
-          itemIconColorChildActive: 'var(--c-default)',
-          itemTextColorChildActive: 'var(--c-default)',
-          itemTextColorActive: 'var(--c-default)',
-          arrowColorActive: 'var(--c-default)',
-          arrowColorChildActive: 'var(--c-default)',
           itemColorActive: 'var(--c-fill-4)',
-          itemTextColorActiveHover: 'var(--c-default)',
-          itemTextColorChildActiveHover: 'var(--c-default)',
-          itemIconColorChildActiveHover: 'var(--c-default)',
-          arrowColorChildActiveHover: 'var(--c-default)',
-          itemTextColorHover: 'var(--c-default)',
         }
       : {}),
   }

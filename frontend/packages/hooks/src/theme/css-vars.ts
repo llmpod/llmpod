@@ -2,7 +2,7 @@ import { colord } from 'colord'
 import { kebabCase } from 'lodash-es'
 import { commonDark, commonLight } from 'naive-ui'
 
-import { generatePalette, getTextColor, getThemeColors } from './palette'
+import { generatePalette, getPrimaryTextColor, getTextColor, getThemeColors } from './palette'
 import type { ThemeColorKey, ThemeColorType, ThemeConfig } from './types'
 
 type CssObject = Record<string, string>
@@ -56,6 +56,11 @@ export function addCssVarsToHtml(config: ThemeConfig, darkMode: boolean): void {
       configCssObject[`--n-${key}-color-${index + 1}`] = `${r},${g},${b}`
     })
   }
+
+  // 正文级主色文字(菜单选中项标题、卡片内主色按钮):主色作文字色在暗底仅 2.3:1,
+  // 必须由运行时按容器底求解 4.5:1 后才能用。这里的注入是该变量的唯一准确来源 ——
+  // tokens.scss 的静态声明只是首屏兜底,硬编码固定色会让换主题色后文字不联动。
+  configCssObject['--c-primary-text'] = getPrimaryTextColor(config.primary, darkMode)
 
   root.style.cssText = Object.entries({ ...cssObject, ...configCssObject })
     .map(([key, value]) => `${key}: ${value};`)
