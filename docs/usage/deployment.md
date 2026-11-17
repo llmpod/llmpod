@@ -32,7 +32,7 @@ curl -fsSL https://llmpod.ai/src/download/latest/.env.example -o .env.example
 cp .env.example .env
 ```
 
-`latest` 是稳定版。需要固定版本时，将两条下载地址中的 `latest` 改为 `version/<版本号>`，并把 Compose 文件中管理端、API 网关的镜像标签一并改为该版本号。
+`latest` 是稳定版。需要固定版本时，将两条下载地址中的 `latest` 改为 `version/<版本号>`，并在 `.env` 中把 `LLMPOD_IMAGE_TAG` 设为该版本号。
 
 ## 2. 配置 `.env`
 
@@ -48,6 +48,8 @@ cp .env.example .env
 | `LLMPOD_NODE_MANAGER_IP_LAN` | 可选，节点可直连的内网地址，多个地址用逗号分隔 |
 | `LLMPOD_PROXY_ADVERTISE_URL` | 可选，通过固定域名或反向代理访问 API 网关时填写完整对外地址 |
 | `LLMPOD_ADMIN_USER`、`LLMPOD_ADMIN_PASSWORD` | 可选，仅首次建库时生效；留空则自动生成账号 |
+| `LLMPOD_IMAGE_TAG` | 可选，管理端与 API 网关使用的镜像标签，默认 `latest`；固定版本时设为对应版本号 |
+| `LLMPOD_OFFICIAL_IMAGE` | 可选，覆盖默认镜像仓库地址（含节点引导与升级默认拉取的镜像）；拉取默认仓库缓慢或使用自建镜像仓库时填写 |
 
 先创建 `MODEL_HOST_DIR` 指向的宿主机目录，并确认容器对它有读写权限。PostgreSQL 和 Redis 默认只在 Compose 网络内使用，不需要开放宿主机端口。
 
@@ -101,7 +103,7 @@ docker compose --env-file .env up -d --no-build
 docker compose --env-file .env ps
 ```
 
-数据库迁移会随管理端启动自动执行。数据库结构升级后，不要直接换回旧版镜像。需要固定版本时，升级时同样下载该版本的两份配置文件，并使用相同版本的镜像标签。
+数据库迁移会随管理端启动自动执行。数据库结构升级后，不要直接换回旧版镜像。需要固定版本时，升级时同样下载该版本的两份配置文件，并把 `LLMPOD_IMAGE_TAG` 设为相同版本号。
 
 `docker compose --env-file .env down` 会停止并删除容器，但保留 PostgreSQL、Redis、管理端的数据卷。不要在需要保留数据时使用 `down -v`；重新部署也应保留原 `.env`，使数据库密码与现有数据卷一致。
 
