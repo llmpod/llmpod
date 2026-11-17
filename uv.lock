@@ -827,7 +827,7 @@ wheels = [
 
 [[package]]
 name = "llmpod"
-version = "26.11.12b0"
+version = "26.11.17"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
