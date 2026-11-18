@@ -39,17 +39,19 @@ async function clickStar(value: number): Promise<void> {
 }
 
 describe('openNpsFeedback', () => {
-  it('默认标题用品牌名拼 NPS 问法，按钮为「提交 / 稍后再说」', async () => {
+  it('默认标题用品牌名拼 NPS 问法，底部只留「提交」', async () => {
     await open({ onSubmit: vi.fn() })
 
     expect(document.querySelector('.lm-dialog__title')?.textContent).toContain(
       '推荐给同事，你会打几分',
     )
     expect(buttonByText('提交')).toBeTruthy()
-    expect(buttonByText('稍后再说')).toBeTruthy()
+    expect(
+      [...document.querySelectorAll('.n-button')].some((b) => b.textContent?.includes('稍后再说')),
+    ).toBe(false)
   })
 
-  it('未打分就提交：内联提示先选分数，且不触发 onSubmit', async () => {
+  it('未打分就提交：内联提示先点亮星星，且不触发 onSubmit', async () => {
     const onSubmit = vi.fn()
     await open({ onSubmit })
 
@@ -57,7 +59,7 @@ describe('openNpsFeedback', () => {
     await nextTick()
     await nextTick()
 
-    expect(document.body.textContent).toContain('请先选择一个分数')
+    expect(document.body.textContent).toContain('先点亮一颗星星吧')
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
@@ -99,12 +101,14 @@ describe('openNpsFeedback', () => {
     expect(document.body.textContent).toContain('不太满意')
   })
 
-  it('点「稍后再说」直接关闭，不触发 onSubmit', async () => {
+  it('点右上角关闭按钮直接关闭，不触发 onSubmit', async () => {
     const onSubmit = vi.fn()
     await open({ onSubmit })
 
     await clickStar(4)
-    buttonByText('稍后再说').click()
+    const closeBtn = document.querySelector<HTMLElement>('.lm-nps-dialog .n-card-header__close')
+    expect(closeBtn, '关闭按钮未渲染').toBeTruthy()
+    closeBtn!.click()
     await nextTick()
     await nextTick()
 

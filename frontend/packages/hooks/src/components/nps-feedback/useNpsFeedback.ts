@@ -1,4 +1,5 @@
-import { NpsFeedbackDialog } from '@repo/naive-ui'
+import { h } from 'vue'
+import { NpsFeedbackDialog, NpsFeedbackHeader } from '@repo/naive-ui'
 import { useBrand } from '../../brand/useBrand'
 import { useDialog } from '../dialog/useDialog'
 import type { DialogHandle } from '../dialog/types'
@@ -15,7 +16,7 @@ export interface NpsFeedbackPayload {
 export interface OpenNpsFeedbackOptions {
   /** 弹窗标题；默认用当前品牌名拼一句 NPS 问法 */
   title?: string
-  /** 弹窗宽度（rem，1rem = 10px）；默认 44 = 440px */
+  /** 弹窗宽度（rem，1rem = 10px）；默认 68 = 680px */
   area?: number
   /**
    * 提交回调：上报等副作用由调用方负责。
@@ -41,11 +42,18 @@ export function openNpsFeedback(options: OpenNpsFeedbackOptions = {}): DialogHan
   const { brandConfig } = useBrand()
 
   return useDialog({
-    title: options.title ?? `把 ${brandConfig.value.platformName} 推荐给同事，你会打几分？`,
+    // 标题走 VNode：插画 + 标题 + 副标题整体作为弹窗头部
+    title: () =>
+      h(NpsFeedbackHeader, {
+        title: options.title,
+        brand: brandConfig.value.platformName,
+      }),
     component: NpsFeedbackDialog,
-    area: options.area ?? 44,
-    btn: { confirmText: '提交', cancelText: '稍后再说' },
-    dialogProps: { maskClosable: false },
+    area: options.area ?? 68,
+    btn: { confirmText: '提交', showCancel: false },
+    // class 传给 Naive 卡片，供 NpsFeedbackDialog 内只作用于本弹窗的样式钩子使用；
+    // autoFocus 关掉：默认会聚焦文本域，先给一个「还没打分就有蓝框」的错态
+    dialogProps: { maskClosable: false, autoFocus: false, class: 'lm-nps-dialog' },
     props: {
       onSubmit: (score: number, comment: string) =>
         options.onSubmit?.({ score, comment: comment || null }),

@@ -10,10 +10,18 @@ import {
   ScaleOutline,
   ServerOutline,
   SparklesOutline,
+  StarOutline,
   SwapHorizontalOutline,
 } from '@vicons/ionicons5'
-import { useBrand, useVersionCheck, message, DEFAULT_SITE_DESCRIPTION } from '@repo/hooks'
+import {
+  useBrand,
+  useVersionCheck,
+  message,
+  openNpsFeedback,
+  DEFAULT_SITE_DESCRIPTION,
+} from '@repo/hooks'
 import { checkUpdate, getServerVersion } from '@/api/version'
+import { submitNps } from '@/api/nps'
 import { sanitizeNotesHtml } from './notes-html'
 
 const { brandConfig } = useBrand()
@@ -74,6 +82,19 @@ async function handleCheckUpdate() {
     await minDelay
     checking.value = false
   }
+}
+
+/**
+ * NPS 入口:关于页主动唤起打分弹窗(星级 1–5 + 追问原因/建议),由用户自己点,不再被动弹出。
+ * 提交即调 POST /admin/nps:失败原因由 api 层统一 toast,这里不吞异常——
+ * 抛错会让弹窗保持打开并提示可重试,成功则弹窗自行关闭。
+ */
+function handleOpenNps() {
+  openNpsFeedback({
+    onSubmit: async ({ score, comment }) => {
+      await submitNps({ rate: score, comment })
+    },
+  })
 }
 
 /** 更新日志容器点击委托:消毒放行的 <a> 统一强制新窗口打开(比逐节点改属性更稳,不受 hook 移除影响) */
@@ -204,6 +225,17 @@ onBeforeUnmount(() => {
               <n-icon><Refresh /></n-icon>
             </template>
             检查更新
+          </n-button>
+          <n-button
+            size="small"
+            secondary
+            round
+            @click="handleOpenNps"
+          >
+            <template #icon>
+              <n-icon><StarOutline /></n-icon>
+            </template>
+            打个分
           </n-button>
         </div>
       </div>
