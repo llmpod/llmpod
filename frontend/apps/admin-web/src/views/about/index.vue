@@ -333,7 +333,7 @@ onBeforeUnmount(() => {
             推理引擎
           </span>
           <span class="text-small font-medium text-default">
-            vLLM / SGLang / llama.cpp
+            vLLM / SGLang / llama.cpp / Mindie
           </span>
         </div>
 
