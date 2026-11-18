@@ -1,6 +1,6 @@
-import { NEllipsis, NTag } from 'naive-ui'
+import { NTag } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
-import { LmTableGroup } from '@repo/naive-ui'
+import { LmTableGroup, renderEllipsisTag } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import { useTable, useOperate, useDialog } from '@repo/hooks'
 import { listTenants, type TenantData } from '@/api/tenant'
@@ -101,22 +101,14 @@ export function useController() {
         render: (row) => {
           const conf = upstreamTypeConf(row.upstream_type)
           // 有供应商名时直接以其作为标签文案(不再另起一行输出);
-          // 列宽固定,超长由 NEllipsis 按实际宽度省略,仅在溢出时悬浮展示全名
-          // (限宽走内联样式:.n-ellipsis 自带 max-width:100%,工具类会因样式表顺序被覆盖)
-          return h(
-            NTag,
-            { type: conf.type, size: 'small', bordered: false },
-            {
-              default: () =>
-                row.provider_name
-                  ? h(
-                      NEllipsis,
-                      { style: { maxWidth: '8rem' } },
-                      { default: () => row.provider_name },
-                    )
-                  : conf.label,
-            },
-          )
+          // 供应商名可能很长,统一走 renderEllipsisTag:超出标签宽度单行省略、悬浮看全名
+          return row.provider_name
+            ? renderEllipsisTag(row.provider_name, { type: conf.type, maxWidth: 8 })
+            : h(
+                NTag,
+                { type: conf.type, size: 'small', bordered: false },
+                { default: () => conf.label },
+              )
         },
       },
       {

@@ -1,7 +1,7 @@
 import { onBeforeUnmount, ref, onMounted } from 'vue'
 import { NTag, NButton, NIcon } from 'naive-ui'
 import { CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
-import { LmTableGroup } from '@repo/naive-ui'
+import { LmTableGroup, renderEllipsisTag } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import type { SelectOption } from 'naive-ui'
 import { useTable, useOperate, useDialog, useConfirm, useEntryAction, message, copyToClipboard } from '@repo/hooks'
@@ -220,13 +220,10 @@ export function useController() {
           row.allowed_models.length
             ? h(
                 'div',
-                { class: 'flex flex-wrap gap-[.25rem]' },
+                { class: 'flex min-w-0 flex-wrap gap-[.25rem]' },
+                // 模型别名可能很长：统一走 renderEllipsisTag 的限宽 + 单行省略
                 row.allowed_models.map((model) =>
-                  h(
-                    NTag,
-                    { type: 'primary', size: 'small', bordered: false },
-                    { default: () => model },
-                  ),
+                  renderEllipsisTag(model, { key: model }),
                 ),
               )
             : h(NTag, { size: 'small', bordered: false }, { default: () => '全部模型' }),

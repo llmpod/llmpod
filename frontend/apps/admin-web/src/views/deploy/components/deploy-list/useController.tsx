@@ -1,6 +1,6 @@
 import { NTag, NTooltip } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
-import { LmTableGroup } from '@repo/naive-ui'
+import { LmTableGroup, renderEllipsisTag } from '@repo/naive-ui'
 import type { LmBatchAction, LmSelectAction, LmTableBatchSelectPayload } from '@repo/naive-ui'
 import {
   useBatch,
@@ -256,18 +256,14 @@ export function useController() {
           key: 'engine',
           width: 100,
           render: (row) =>
-            h(
-              NTag,
-              {
-                size: 'small',
-                bordered: false,
-                color: {
-                  color: 'var(--c-tag-purple)',
-                  textColor: 'rgb(var(--n-primary-color))',
-                },
+            // 引擎标识(如 vllm / llama.cpp)可能带版本后缀:限宽单行省略
+            renderEllipsisTag(row.engine, {
+              maxWidth: 8,
+              color: {
+                color: 'var(--c-tag-purple)',
+                textColor: 'rgb(var(--n-primary-color))',
               },
-              { default: () => row.engine },
-            ),
+            }),
         },
         {
           title: '状态',

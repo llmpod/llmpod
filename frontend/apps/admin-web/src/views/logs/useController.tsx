@@ -1,5 +1,5 @@
 import { NTag } from 'naive-ui'
-import { LmTableGroup } from '@repo/naive-ui'
+import { LmTableGroup, renderEllipsisTag } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import { useTable, useOperate } from '@repo/hooks'
 import { listTenants } from '@/api/tenant'
@@ -116,11 +116,8 @@ export function useController() {
           render: (row) =>
             h('div', { class: 'flex items-center gap-[.5rem] min-w-0' }, [
               row.resource_type
-                ? h(
-                    NTag,
-                    { type: 'primary', size: 'small', bordered: false },
-                    { default: () => resourceTypeLabel(row.resource_type) },
-                  )
+                ? // 资源类型未收录枚举时回退原始串,可能很长:限宽单行省略
+                  renderEllipsisTag(resourceTypeLabel(row.resource_type), { maxWidth: 10 })
                 : null,
               h('span', { class: 'truncate' }, row.resource_id ?? '--'),
             ]),

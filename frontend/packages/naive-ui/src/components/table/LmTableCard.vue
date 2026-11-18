@@ -508,7 +508,11 @@ const VNodeBridge = defineComponent({
 
 /* 标签刻意保持中性:语义交给强调数字与边轨,避免多个彩底标签互相争夺注意力 */
 .lm-table-card__tag {
-  flex: 0 0 auto;
+  /* 可收缩:列 render 产出的标签(如超长模型别名/角色名)在窄屏卡内不挤出卡片,
+     收缩后由标签自身的 text-overflow 省略;min-width:0 让 flex 项允许小于内容宽 */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   height: 2rem;

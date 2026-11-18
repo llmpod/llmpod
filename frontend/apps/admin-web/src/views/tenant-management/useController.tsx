@@ -1,6 +1,6 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { NButton, NPopover, NTag } from 'naive-ui'
-import { LmTableGroup } from '@repo/naive-ui'
+import { LmTableGroup, renderEllipsisTag } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import { useTable, useOperate, useDialog, useConfirm, useEntryAction, message, buildPortalLoginUrl } from '@repo/hooks'
 import TenantManagementForm from './TenantManagementForm.vue'
@@ -135,11 +135,8 @@ export function useController() {
                   'div',
                   { class: 'flex max-w-[24rem] flex-wrap gap-[.4rem]' },
                   models.map(m =>
-                    h(
-                      NTag,
-                      { key: m.route_id, size: 'small', bordered: false },
-                      { default: () => m.name },
-                    ),
+                    // 模型名可能很长:限宽单行省略,悬浮看全名
+                    renderEllipsisTag(m.name, { key: m.route_id, maxWidth: 20 }),
                   ),
                 ),
             },

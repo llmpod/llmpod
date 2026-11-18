@@ -1,6 +1,6 @@
 import { computed, h, onBeforeUnmount, ref, watch } from 'vue'
 import { NTag } from 'naive-ui'
-import { LmTableGroup } from '@repo/naive-ui'
+import { LmTableGroup, renderEllipsisTag } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import { message, useConfirm, useDialog, useEntryAction, useOperate, useTable } from '@repo/hooks'
 import MemberDetailDrawer from './MemberDetailDrawer.vue'
@@ -85,13 +85,8 @@ export function useController() {
             ? h(
                 'div',
                 { class: 'flex flex-wrap gap-[.5rem]' },
-                row.role_ids.map((id) =>
-                  h(
-                    NTag,
-                    { key: id, size: 'small', type: 'primary', bordered: false },
-                    { default: () => roleName(id) },
-                  ),
-                ),
+                // 角色名可自定义且可能很长：统一走 renderEllipsisTag 限宽省略
+                row.role_ids.map((id) => renderEllipsisTag(roleName(id), { key: id })),
               )
             : '—',
       },

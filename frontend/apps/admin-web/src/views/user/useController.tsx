@@ -1,6 +1,6 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { NTag } from 'naive-ui'
-import { LmTableGroup } from '@repo/naive-ui'
+import { LmTableGroup, renderEllipsisTag } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import { useTable, useOperate, useDialog, useConfirm, useEntryAction, message } from '@repo/hooks'
 import { listRoles } from '@/api/access'
@@ -134,12 +134,9 @@ export function useController() {
           return h(
             'div',
             { class: 'flex flex-wrap gap-[.4rem]' },
+            // 角色名可自定义且可能很长：统一走 renderEllipsisTag 限宽省略
             row.role_ids.map((roleId) =>
-              h(
-                NTag,
-                { key: roleId, size: 'small', bordered: false },
-                { default: () => roleNames.value.get(roleId) ?? `#${roleId}` },
-              ),
+              renderEllipsisTag(roleNames.value.get(roleId) ?? `#${roleId}`, { key: roleId }),
             ),
           )
         },

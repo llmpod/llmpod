@@ -1,6 +1,6 @@
 import { onBeforeUnmount } from 'vue'
-import { NSwitch, NTag } from 'naive-ui'
-import { LmTableGroup } from '@repo/naive-ui'
+import { NSwitch } from 'naive-ui'
+import { LmTableGroup, renderEllipsisTag } from '@repo/naive-ui'
 import type { LmSelectAction } from '@repo/naive-ui'
 import { useTable, useOperate, useDialog, useEntryAction, message } from '@repo/hooks'
 import WebhookForm from './WebhookForm.vue'
@@ -36,7 +36,8 @@ export function useController() {
         key: 'event',
         width: 200,
         render: (row) =>
-          h(NTag, { size: 'small', bordered: false, type: 'success' }, { default: () => row.event }),
+          // 事件名较长(如 model.deploy.completed):限宽单行省略,避免后续新增更长事件类型时溢出
+          renderEllipsisTag(row.event, { type: 'success', maxWidth: 16 }),
       },
       { title: '目标URL', key: 'url', minWidth: 260 },
       {
