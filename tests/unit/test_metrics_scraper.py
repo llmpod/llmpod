@@ -230,6 +230,16 @@ sglang:num_running_reqs 3
 sglang:num_queue_reqs 1
 """
 
+# llama.cpp --metrics 实测口径（b11176）：只有两个请求水位 gauge，无 KV/前缀命中指标族
+LLAMACPP_TEXT = """\
+# TYPE llamacpp:requests_processing gauge
+llamacpp:requests_processing 2
+# TYPE llamacpp:requests_deferred gauge
+llamacpp:requests_deferred 4
+# TYPE llamacpp:prompt_tokens_total counter
+llamacpp:prompt_tokens_total 100
+"""
+
 
 def _target(instance_id="i-1", deployment_id="dep-1", engine="vllm", url="http://10.0.0.5:8000/metrics"):
     from llmpod.apps.webserver.metrics_scraper import _EngineTarget
@@ -263,6 +273,18 @@ class TestEngineIngest:
         assert snap.kv_cache_util == pytest.approx(0.55)
         assert snap.running_requests == 3
         assert snap.waiting_requests == 1
+
+    def test_llamacpp_mapping(self):
+        """llamacpp 只有请求水位两个 gauge（含 counter 不入快照）；KV/前缀命中上游
+        已删，对应字段恒 None——缺源是结构性的，勿当采集故障排查。"""
+        s = MetricsScraper(_cfg())
+        s._ingest_engine_text(_target(engine="llamacpp"), LLAMACPP_TEXT, NOW)
+        snap = s._engine_snapshots["i-1"]
+        assert snap.ok is True
+        assert snap.running_requests == 2
+        assert snap.waiting_requests == 4
+        assert snap.kv_cache_util is None
+        assert snap.prefix_cache_hit_rate is None
 
     def test_counter_suffix_stripped(self):
         """带 _total 后缀的 counter（如 num_preemptions_total）按基名匹配。"""

@@ -92,6 +92,11 @@ class TestGenerateStartArgs:
         args = LlamaCppAdapter().generate_start_args(_inst(), Topology(tp=1), {"extra_args": ["--threads", "8"]})
         assert "--threads" in args and "8" in args
 
+    def test_metrics_flag_appended(self):
+        """中央 scraper 依赖 /metrics：llama-server 默认关（501），必须显式 --metrics。"""
+        args = LlamaCppAdapter().generate_start_args(_inst(), Topology(tp=1), {})
+        assert "--metrics" in args
+
 
 class TestBuildDeviceConfig:
     def test_nvidia_returns_assigned_indices(self):

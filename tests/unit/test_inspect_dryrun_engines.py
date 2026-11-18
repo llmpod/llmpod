@@ -111,6 +111,7 @@ class TestEngineDryRunShapes:
             "8192",
             "--n-gpu-layers",
             "999",
+            "--metrics",
         ]
         assert resolved["env"] == {}  # HF_HUB_OFFLINE 是系统注入，不回显
 

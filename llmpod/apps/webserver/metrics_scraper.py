@@ -109,6 +109,12 @@ _ENGINE_METRIC_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("sglang:num_queue_reqs", "waiting_requests"),
         ("sglang:cache_hit_rate", "prefix_cache_hit_rate"),
     ),
+    # llama.cpp 开 --metrics 后也仅有两个请求水位 gauge；KV 占用与前缀命中上游已删
+    # （b10975+ 实测无此指标族），llamacpp 部署的这两项恒为 None——缺源，非采集故障。
+    "llamacpp": (
+        ("llamacpp:requests_processing", "running_requests"),
+        ("llamacpp:requests_deferred", "waiting_requests"),
+    ),
 }
 
 # 引擎 gauge 归一名 → metric_engine_rollup 列名（avg/max 成对）

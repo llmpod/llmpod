@@ -174,6 +174,10 @@ class LlamaCppAdapter(EngineAdapter):
         if self.category_for_task(task) == ModelType.EMBEDDING:
             args.append("--embedding")
 
+        # Prometheus 指标开关：llama-server 默认不开 /metrics（请求 501），中央 scraper
+        # 恒采不到请求水位。--metrics 各版本都有（catalog 收录的 b10975+ 均带），直接下发。
+        args.append("--metrics")
+
         # 用户额外参数（llama-server 无被系统覆盖的必控项，直接追加）
         return args + list(engine_params.get("extra_args") or [])
 
