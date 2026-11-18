@@ -2,7 +2,7 @@
 import { h } from 'vue'
 import type { VNode } from 'vue'
 import { mount } from '@vue/test-utils'
-import { NEllipsis, NTag } from 'naive-ui'
+import { NTag } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -305,28 +305,25 @@ describe('bills useController 上游列', () => {
     wrapper.unmount()
   })
 
-  it('有 provider_name:标签直接显示供应商名,不做 JS 截断', () => {
+  it('有 provider_name:标签直接显示供应商名', () => {
     const { wrapper } = mountController()
     const name = 'OpenAI'
     const vnode = upstreamColumn().render(makeLog({ upstream_type: 'local', provider_name: name }))
-    expect(vnode.type).toBe(NTag)
-    expect(vnode.props).toMatchObject({ type: 'success' })
-
-    const ellipsis = defaultSlot(vnode) as VNode
-    expect(ellipsis.type).toBe(NEllipsis)
-    expect(defaultSlot(ellipsis)).toBe(name)
+    // 供应商名走 renderEllipsisTag:文案与配色经组件 props 传入
+    expect(vnode.props).toMatchObject({ text: name, type: 'success' })
+    // 悬浮提示由组件内 NTooltip 提供,不再挂原生 title
+    expect((vnode.props as { title?: unknown }).title).toBeUndefined()
     wrapper.unmount()
   })
 
-  it('provider_name 超长:交给 NEllipsis 限宽省略(溢出才悬浮展示全名)', () => {
+  it('provider_name 超长:交给 renderEllipsisTag 限宽单行省略', () => {
     const { wrapper } = mountController()
     const name = 'Azure-OpenAI-Enterprise-Gateway-Cluster'
     const vnode = upstreamColumn().render(makeLog({ provider_name: name }))
 
-    const ellipsis = defaultSlot(vnode) as VNode
-    // 限宽约束标签宽度,完整名字仍传给 NEllipsis(其内部按实际溢出决定省略号与 tooltip)
-    expect(ellipsis.props).toMatchObject({ style: { maxWidth: '8rem' } })
-    expect(defaultSlot(ellipsis)).toBe(name)
+    // 契约:文案原样传入,标签宽度上限 8rem(组件内再 min(…, 100%) 兜住更窄的列)
+    // 内层包 NEllipsis/truncate 无效——naive 的 span.n-tag__content 是不收缩的 flex item
+    expect(vnode.props).toMatchObject({ text: name, maxWidth: 8 })
     wrapper.unmount()
   })
 })

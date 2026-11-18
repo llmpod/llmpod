@@ -65,10 +65,10 @@ function tableOptions() {
   }
 }
 
-/** 角色列 render 输出的标签文本列表 */
+/** 角色列 render 输出的标签文本列表(标签经 renderEllipsisTag 渲染,文案在组件 props.text 上) */
 function roleTagTexts(vnode: VNode): string[] {
   const tags = vnode.children as VNode[]
-  return tags.map((tag) => (tag.children as { default: () => string }).default())
+  return tags.map((tag) => (tag.props as { text: string }).text)
 }
 
 beforeEach(() => {
