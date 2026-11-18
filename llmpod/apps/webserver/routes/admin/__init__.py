@@ -19,6 +19,7 @@ from .node import router as node_router
 from .gpu import router as gpu_router
 from .system import router as system_router
 from .settings import router as settings_router
+from .nps import router as nps_router
 from .orchestration import router as orchestration_router
 from .users import router as users_router
 from .tenants import router as tenants_router
@@ -63,6 +64,9 @@ router.include_router(orchestration_router, prefix="/orchestration", tags=["Admi
 # —— 系统层 ——
 router.include_router(system_router, prefix="/system", tags=["Admin - System"])
 router.include_router(settings_router, prefix="/settings", tags=["Admin - Settings"])
+
+# —— NPS 满意度问卷（平台登录用户即可提交，转发 nps.bt.cn）——
+router.include_router(nps_router, prefix="/nps", tags=["Admin - NPS"])
 
 # —— 推理镜像目录 ——
 router.include_router(inference_image_router, prefix="/inference-images", tags=["Admin - Inference Images"])

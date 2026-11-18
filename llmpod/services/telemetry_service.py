@@ -107,12 +107,12 @@ _PLACEHOLDER_MACHINE_IDS = frozenset(
 )
 
 
-def derive_instance_id() -> str:
-    """从宿主机器标识派生 32 hex 实例 ID；无可用来源则随机。
+def derive_machine_hash() -> str | None:
+    """宿主机器标识的全量 sha256（64 hex，不截断）；无可用来源返回 None。
 
-    首选哈希派生而非纯随机：实例身份跟着宿主机走，容器化部署卸载重装
-    （数据卷一并清掉）后仍派生出同一 ID，站点统计不把重装当新装机。
-    出站的只是加盐哈希，宿主标识原文不出机。
+    与 :func:`derive_instance_id` 同源同盐——命中宿主来源时其前 32 位即
+    instance_id。需要完整 64 hex 机器标识的对外上报（如 NPS 问卷 serverid）
+    复用本函数，保证两套上报能对上同一台机器。
     """
     for path in _MACHINE_ID_SOURCES:
         try:
@@ -120,7 +120,20 @@ def derive_instance_id() -> str:
         except OSError:
             continue  # 来源不存在/不可读，试下一个
         if raw and raw not in _PLACEHOLDER_MACHINE_IDS:
-            return hashlib.sha256(("llmpod:" + raw).encode()).hexdigest()[:32]
+            return hashlib.sha256(("llmpod:" + raw).encode()).hexdigest()
+    return None
+
+
+def derive_instance_id() -> str:
+    """从宿主机器标识派生 32 hex 实例 ID；无可用来源则随机。
+
+    首选哈希派生而非纯随机：实例身份跟着宿主机走，容器化部署卸载重装
+    （数据卷一并清掉）后仍派生出同一 ID，站点统计不把重装当新装机。
+    出站的只是加盐哈希，宿主标识原文不出机。
+    """
+    full = derive_machine_hash()
+    if full is not None:
+        return full[:32]
     return secrets.token_hex(16)
 
 
