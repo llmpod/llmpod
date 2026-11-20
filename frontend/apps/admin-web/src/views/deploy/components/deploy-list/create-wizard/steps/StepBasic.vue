@@ -173,6 +173,10 @@ const resolvedImage = computed(
 
 // 自动预填镜像地址:字段为空或仍是上次自动值时覆盖,保留用户手改;仅改动过才作为 spec.image 提交。
 // 输入框已移到 Step3「高级参数」,此处只负责把预检解析结果写进表单值(store.autoImage 记自动值基线)。
+// store.form.image 必须与基线同步写入:Step1 期间(controller 切步前 await 基础预检)解析结果会按
+// 手选的镜像版本刷新,只写组件局部副本会让 store 里留下「上一个自动值」——基线已更新,旧值就被
+// imageOverride 误判成用户手改,后续预检与提交都带上旧推荐 image(image 优先于 image_tag),
+// 用户手选的镜像版本被静默丢弃。
 watch(
   resolvedImage,
   (image) => {
@@ -180,6 +184,10 @@ watch(
     const model = params()
     if (model.image.trim() && model.image !== store.autoImage.value) return
     model.image = image
+    // store 侧仍为空或上一个自动值时一并写入,保证基线与表单值同源
+    if (!store.form.image.trim() || store.form.image === store.autoImage.value) {
+      store.form.image = image
+    }
     store.autoImage.value = image
   },
   { immediate: true },

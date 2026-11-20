@@ -134,6 +134,34 @@ describe('node-list useStore', () => {
     expect(listGpus).toHaveBeenCalledWith({ page: 1, page_size: 100 }, undefined, { silentError: true })
   })
 
+  it('includeGpus=false:复用上次全量 GPU 缓存,不再请求 /admin/gpus', async () => {
+    // 先全量拉一次填缓存
+    await store.request({ page: 1, pageSize: 20 })
+    vi.mocked(listGpus).mockClear()
+
+    const result = await store.request({ page: 1, pageSize: 20 }, undefined, { includeGpus: false })
+    expect(listGpus).not.toHaveBeenCalled()
+    // GPU 列/展开行的数据照旧可取:来自缓存而非空数组
+    expect(result.data.find((row) => row.id === 'n1')!.gpus.map((gpu) => gpu.index)).toEqual([0, 1])
+    expect(result.missingGpus).toBe(false)
+  })
+
+  it('includeGpus=false 且当前页有未缓存节点:标记 missingGpus 供调用方补拉', async () => {
+    await store.request({ page: 1, pageSize: 20 })
+    vi.mocked(listNodes).mockResolvedValue({
+      items: [{ id: 'n9', hostname: 'gpu-09', ip: '10.0.0.9', status: 'online', runtime: null }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+    } as Awaited<ReturnType<typeof listNodes>>)
+
+    const result = await store.request({ page: 1, pageSize: 20 }, undefined, { includeGpus: false })
+    // 缓存模式下新节点先按无 GPU 渲染,调用方据 missingGpus 下一轮立刻补拉
+    expect(result.missingGpus).toBe(true)
+    expect(result.data[0].gpus).toEqual([])
+  })
+
   it('listNodeGpus 按 index 排序', async () => {
     const gpus = await store.listNodeGpus('n1')
     expect(gpus.map((gpu) => gpu.index)).toEqual([0, 1])

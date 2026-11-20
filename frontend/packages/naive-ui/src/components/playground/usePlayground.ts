@@ -3,7 +3,7 @@ import type {
   ChatCompletionContentPartImage,
   ChatCompletionContentPartText,
 } from 'openai/resources/chat/completions'
-import { reactive, ref } from 'vue'
+import { getCurrentScope, onScopeDispose, reactive, ref } from 'vue'
 import { parsePlaygroundError } from './parse-error'
 import { splitReasoning } from './parse-reasoning'
 import type {
@@ -269,6 +269,11 @@ export function usePlayground(options: UsePlaygroundOptions) {
   function stop() {
     abortController?.abort()
   }
+
+  // 页面卸载即终止在途流:playground 不做 keep-alive,离开后没人能再点「停止」,
+  // 不 abort 会让后端继续生成到自然结束(占用推理实例 + 继续计费),前端无法止损。
+  // 作用域守卫:本 hook 允许在无 scope 环境(单元测试等)直接调用。
+  if (getCurrentScope()) onScopeDispose(() => abortController?.abort())
 
   /** 清空对话与待发送图片,回到默认示例对话。 */
   function clear() {

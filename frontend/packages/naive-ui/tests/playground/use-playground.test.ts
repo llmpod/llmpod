@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { watch } from 'vue'
+import { effectScope, watch } from 'vue'
 import { applyModelDefaults, usePlayground } from '../../src'
 import type { PlaygroundChatCallbacks, PlaygroundChatSender, PlaygroundParams } from '../../src'
 
@@ -318,6 +318,24 @@ describe('usePlayground', () => {
     // 剩默认示例对话 + 本轮 user 消息
     expect(messages.value).toHaveLength(3)
     expect(messages.value[2].role).toBe('user')
+  })
+
+  it('作用域销毁(页面卸载)时 abort 在途流,不让后端生成到自然结束', async () => {
+    const harness = createSenderHarness()
+    const scope = effectScope()
+    const playground = scope.run(() => createPlayground(harness.sender))!
+    playground.input.value = '问题'
+    const promise = playground.send()
+
+    const signal = (harness.calls[0].callbacks as unknown as { signal: AbortSignal }).signal
+    expect(signal.aborted).toBe(false)
+
+    // 等价于路由切换导致组件卸载:不做 keep-alive,离开后没人能再点「停止」
+    scope.stop()
+    expect(signal.aborted).toBe(true)
+
+    harness.resolve()
+    await promise
   })
 
   it('空响应:移除 assistant 占位消息', async () => {

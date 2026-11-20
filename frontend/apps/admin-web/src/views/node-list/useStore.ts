@@ -121,8 +121,23 @@ export function notify(): void {
  */
 export function useStore() {
   /**
+   * GPU 全量结果缓存(node_id → 该节点 GPU,已按 index 升序)。
+   * 列表里 GPU 型号/显存/驱动/单卡指标都来自 `/admin/gpus`,而接口只支持单个 node_id 过滤,
+   * 没有批量 node_ids —— 按页逐个节点拉反而把 1 个请求拆成 N 个,更贵。
+   * 故静默轮询默认复用本缓存(只拉节点),由调用方按节奏决定何时全量补拉一次。
+   */
+  const gpuByNode = new Map<string, GpuData[]>()
+  /**
+   * 最近一次带 GPU 全量的请求覆盖到的节点 ID。
+   * 不能只看 gpuByNode 有没有键:节点本身可能就没有 GPU(纯 CPU 节点),
+   * 那种「缓存里没有」不是缺数据,不该触发补拉。
+   */
+  const gpuCoveredNodes = new Set<string>()
+
+  /**
    * 分页 + 关键字请求(供 useTable.request);keyword 后端不支持,仅过滤当前页。
-   * options.silentError:静默轮询用,失败不弹统一错误提示(3s 一次会刷屏),由下一次手动刷新兜底提示。
+   * options.silentError:静默轮询用,失败不弹统一错误提示,由下一次手动刷新兜底提示。
+   * options.includeGpus:是否顺带全量拉 GPU(默认 true);静默轮询传 false 复用 gpuByNode 缓存。
    */
   const request = async (
     params: {
@@ -131,25 +146,35 @@ export function useStore() {
       keyword?: string
     },
     ctx?: TableRequestContext,
-    options?: { silentError?: boolean },
+    options?: { silentError?: boolean, includeGpus?: boolean },
   ) => {
     // useTable 按 config.request.pageSizeField 透传,运行时为 page_size
     const pageSize = (params as { page_size?: number }).page_size ?? params.pageSize
     const meta = options?.silentError ? { silentError: true } : undefined
-    // GPU 按节点聚合:一次拉全量 GPU(上限 100),按 node_id 分组挂到节点行上
+    const includeGpus = options?.includeGpus ?? true
+    // GPU 按节点聚合:一次拉全量 GPU(上限 100),按 node_id 分组挂到节点行上;
+    // 复用缓存时这一路整个不发,本轮只付节点接口的流量
     const [nodePage, gpuPage] = await Promise.all([
       listNodes({ page: params.page, page_size: pageSize }, ctx?.signal, meta),
-      listGpus({ page: 1, page_size: 100 }, ctx?.signal, meta),
+      includeGpus
+        ? listGpus({ page: 1, page_size: 100 }, ctx?.signal, meta)
+        : Promise.resolve(null),
     ])
-    const gpuMap = new Map<string, GpuData[]>()
-    for (const gpu of gpuPage.items) {
-      const list = gpuMap.get(gpu.node_id) ?? []
-      list.push(gpu)
-      gpuMap.set(gpu.node_id, list)
+    if (gpuPage) {
+      // 全量结果整体重建缓存(不做增量合并):节点被注销、GPU 换卡时靠它收敛
+      gpuByNode.clear()
+      gpuCoveredNodes.clear()
+      for (const gpu of gpuPage.items) {
+        const list = gpuByNode.get(gpu.node_id)
+        if (list) list.push(gpu)
+        else gpuByNode.set(gpu.node_id, [gpu])
+      }
+      for (const list of gpuByNode.values()) list.sort((a, b) => a.index - b.index)
+      for (const node of nodePage.items) gpuCoveredNodes.add(node.id)
     }
     let items: ComputeNode[] = nodePage.items.map((node) => ({
       ...node,
-      gpus: (gpuMap.get(node.id) ?? []).sort((a, b) => a.index - b.index),
+      gpus: gpuByNode.get(node.id) ?? [],
     }))
     const keyword = (params.keyword ?? '').trim().toLowerCase()
     if (keyword) {
@@ -157,7 +182,10 @@ export function useStore() {
         (r) => r.hostname.toLowerCase().includes(keyword) || r.ip.includes(keyword),
       )
     }
-    return { data: items, total: nodePage.total }
+    // 当前页是否存在「上一轮全量没覆盖过」的节点(新注册、或翻到未加载过的页):
+    // 缓存模式下这些行先按无 GPU 渲染,调用方据此刻即补拉一轮,不必等下一个补拉周期
+    const missingGpus = !gpuPage && nodePage.items.some((node) => !gpuCoveredNodes.has(node.id))
+    return { data: items, total: nodePage.total, missingGpus }
   }
 
   /** 节点详情(GET /api/v1/admin/nodes/{node_id}) */
@@ -203,7 +231,7 @@ export function useStore() {
   /**
    * 下发节点升级(节点侧自判,重复触发安全)。
    * 返回只代表指令送达:version_status 要等节点真正换版后才翻 ok(镜像预载 <30s,需拉取则分钟级),
-   * 期间节点 status 全程 online 无「升级中」态,故此处不 notify —— 列表由 3s 轮询自动带出最新版本状态。
+   * 期间节点 status 全程 online 无「升级中」态,故此处不 notify —— 列表由静默轮询自动带出最新版本状态。
    */
   const upgrade = (id: string): Promise<NodeUpgradeItem> => {
     return upgradeNode(id)

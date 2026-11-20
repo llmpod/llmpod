@@ -36,3 +36,7 @@ pnpm-debug.log*
 .codegraph/
 
 
+
+# .claude/skills 是 .agents/skills 的目录联接(junction),唯一真源是 .agents/skills
+# 克隆后在仓库根执行 pnpm skills:link 重建联接
+.claude/skills

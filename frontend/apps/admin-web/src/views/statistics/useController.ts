@@ -1,4 +1,4 @@
-import { message, useTable } from '@repo/hooks'
+import { escapeHtml, message, useTable } from '@repo/hooks'
 import type { ComponentPublicInstance } from 'vue'
 import type { DataTableColumns, SelectOption } from 'naive-ui'
 import { listApiKeys } from '@/api/api-key'
@@ -132,8 +132,10 @@ export function useController() {
             .sort((a, b) => b.value - a.value)
             .slice(0, 6)
           const total = view.requests[index] ?? 0
+          // tooltip 走 echarts html 模式(renderMode 默认 auto → 浏览器下解析为 html),
+          // formatter 返回值直接进 innerHTML:后端下发的标签/序列名必须转义,否则存储型 XSS
           const lines = [
-            view.labels[index],
+            escapeHtml(view.labels[index]),
             `合计 <b>${total.toLocaleString()}</b>`,
             `平均延迟 ${latency === null ? EMPTY_TEXT : formatLatency(latency)}`,
           ]
@@ -141,7 +143,7 @@ export function useController() {
           breakdown.forEach((item) => {
             const shareText = total === 0 ? '0%' : `${((item.value / total) * 100).toFixed(0)}%`
             lines.push(
-              `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:${colorForKey(item.key)}"></span>${item.key} <b>${item.value.toLocaleString()}</b>(${shareText})`,
+              `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;background:${colorForKey(item.key)}"></span>${escapeHtml(item.key)} <b>${item.value.toLocaleString()}</b>(${shareText})`,
             )
           })
           if (breakdown.length) lines.push('</div>')
@@ -207,7 +209,7 @@ export function useController() {
         formatter: (params: Array<{ dataIndex: number }>) => {
           const index = params[0]?.dataIndex ?? 0
           const shareText = dist.bars[index]?.shareText
-          return `${dist.labels[index]}<br/>计数 <b>${counts[index]?.toLocaleString() ?? '0'}</b>${shareText ? ` · ${shareText}` : ''}`
+          return `${escapeHtml(dist.labels[index])}<br/>计数 <b>${counts[index]?.toLocaleString() ?? '0'}</b>${shareText ? ` · ${shareText}` : ''}`
         },
       },
       grid: { left: 8, right: 8, top: 20, bottom: 0, containLabel: true },

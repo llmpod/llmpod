@@ -1,8 +1,15 @@
-import { goToPortalLogin, message } from '@repo/hooks'
+import { closeAllDialog, goToPortalLogin, message } from '@repo/hooks'
 import type { Router } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 
 export function setupGuard(router: Router) {
+  // 命令式弹窗宿主 <DialogHost /> 挂在 App.vue,与 RouterView 平级,不随页面卸载:
+  // 路由切换必须主动清场,否则 useConfirm 的 await 永久悬挂,且残留弹窗上的确认
+  // 会把停止/删除等危险操作提交到用户已离开的页面。
+  router.afterEach(() => {
+    closeAllDialog()
+  })
+
   router.beforeEach(async (to) => {
     const auth = useAuthStore()
     const isLogin = !!auth.token

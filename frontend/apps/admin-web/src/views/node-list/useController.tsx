@@ -20,8 +20,20 @@ import {
   type NodeRuntime,
 } from './useStore'
 
-/** 列表自动刷新间隔:节点心跳/版本状态靠轮询带出,3s 一轮 */
-const LIST_POLL_INTERVAL_MS = 3_000
+/**
+ * 列表自动刷新间隔:节点心跳/版本状态靠轮询带出。
+ * 取 10s:心跳本身是分钟级语义,3s 一轮等于把同一份数据每分钟重拉 20 次
+ * (每轮 2 个请求 + 一次整表重渲),前后端都在为「看不出变化」付钱。
+ */
+const LIST_POLL_INTERVAL_MS = 10_000
+
+/**
+ * 静默轮询里 GPU 全量补拉的节奏:每 N 轮补一次(10s × 6 = 60s)。
+ * 其余轮次只拉 `/admin/nodes`,GPU 复用 store 里的上一次全量结果 ——
+ * 主表格的 GPU 型号/显存/驱动与展开行的单卡指标在 60s 内收敛一次,
+ * 而 GPU 全量流量从「每轮一次 100 条」降到 1/6。
+ */
+const GPU_RESYNC_EVERY_POLLS = 6
 
 export function useController() {
   const { request, upgrade, subscribe } = useStore()
@@ -63,16 +75,31 @@ export function useController() {
   }
 
   /**
-   * 最近一次列表请求的页码/页大小/关键字:3s 静默轮询据此重放,
-   * 不走 useTable.refresh —— 它会翻 loading 遮罩,每 3s 一次会持续闪烁。
+   * 最近一次列表请求的页码/页大小/关键字:静默轮询据此重放,
+   * 不走 useTable.refresh —— 它会翻 loading 遮罩,轮一次就闪一次。
    */
   let lastQuery: { page: number, pageSize: number, keyword: string } | null = null
+
+  /**
+   * 上一轮已写进表格的数据指纹:轮询结果与它一致就跳过 setData。
+   * 整表重渲(每行每列的 render 全部重跑)远比一次字符串比较贵;JSON 比较虽朴素,
+   * 但覆盖全部展示字段,不会因为漏比某个指标而把变化吃掉。
+   */
+  let lastSignature: string | null = null
+
+  function dataSignature(rows: ComputeNode[], total: number): string {
+    return JSON.stringify([total, rows])
+  }
 
   /** 包装 store.request:顺带记住当前查询参数供静默轮询复用,其余行为(含 signal 取消)原样透传 */
   const tableRequest: TableRequest<ComputeNode, { keyword: string }> = (params, ctx) => {
     const pageSize = (params as { page_size?: number }).page_size ?? params.pageSize
     lastQuery = { page: params.page, pageSize, keyword: params.keyword ?? '' }
-    return request(params, ctx)
+    // 首屏/翻页/手动刷新确立新基线:轮询据此判断「数据是否真的变了」
+    return request(params, ctx).then((result) => {
+      lastSignature = dataSignature(result.data, result.total)
+      return result
+    })
   }
 
   /** 升级下发中的节点ID(行/卡片操作防连点;节点侧本身自判忽略重复,前端只防误触) */
@@ -316,25 +343,69 @@ export function useController() {
 
   /** 静默轮询序号:请求在途时若发生翻页/手动刷新,丢弃本轮旧响应,避免旧页数据覆盖新页 */
   let silentSeq = 0
+  /** 在途静默请求:卸载时中止,不留一条没人等结果的请求 */
+  let silentAbort: AbortController | null = null
+  /** 已卸载标记:即便底层不认 abort,也不再把响应写回已销毁的页面 */
+  let unmounted = false
+  /** 轮询计数:决定哪一轮顺带全量补拉 GPU */
+  let pollCount = 0
+  /** 上一轮发现当前页有缓存未覆盖的节点:下一轮立刻补拉 GPU,不让这些行空等一个 GPU 补拉周期 */
+  let needGpuResync = false
+
+  function abortSilentPoll(): void {
+    silentAbort?.abort()
+    silentAbort = null
+  }
+  onBeforeUnmount(() => {
+    unmounted = true
+    abortSilentPoll()
+  })
 
   /**
-   * 3s 静默刷新:按最近一次查询参数重放请求并直接写回表格数据,不翻 loading 遮罩
-   * (走 useTable.refresh 会让 n-data-table 每 3s 闪一次 spin);手动刷新/翻页在途时跳过本轮;
+   * 静默刷新:按最近一次查询参数重放请求并直接写回表格数据,不翻 loading 遮罩
+   * (走 useTable.refresh 会让 n-data-table 每轮闪一次 spin);手动刷新/翻页在途时跳过本轮;
    * 标签页隐藏自动暂停、回到前台立即补一轮(usePolling)。首屏仍由 useTable 的 immediate 负责。
-   * 失败静默(不弹统一错误提示,3s 一次会刷屏),下次手动刷新照常提示。
+   *
+   * 三条省成本的规则:
+   * 1) GPU 每 GPU_RESYNC_EVERY_POLLS 轮才全量补一次,其余轮次复用 store 缓存(只拉节点);
+   * 2) 当前页出现缓存未覆盖的节点(新注册/翻到新页)时下一轮立刻补拉,不让 GPU 列空着;
+   * 3) 结果指纹与上一轮一致就跳过 setData,省掉一次整表重渲。
+   * 失败与中止一律静默(轮询失败不弹统一错误提示,由下一次手动刷新兜底),下个周期自动重试。
    */
   async function silentRefresh() {
     const query = lastQuery
     if (!query || loading.value) return
     const seq = ++silentSeq
-    const result = await request(query, undefined, { silentError: true })
-    if (seq !== silentSeq || loading.value || query !== lastQuery) return
+    abortSilentPoll()
+    const controller = new AbortController()
+    silentAbort = controller
+    let result: Awaited<ReturnType<typeof request>>
+    try {
+      pollCount += 1
+      result = await request(query, { signal: controller.signal }, {
+        silentError: true,
+        includeGpus: needGpuResync || pollCount % GPU_RESYNC_EVERY_POLLS === 0,
+      })
+    }
+    catch {
+      // 中止(卸载/新一轮)或接口失败:本轮作废,usePolling 会在下个周期重试
+      return
+    }
+    finally {
+      if (silentAbort === controller) silentAbort = null
+    }
+    // 请求期间发生卸载/翻页/手动刷新:旧响应不得覆盖新页
+    if (unmounted || seq !== silentSeq || loading.value || query !== lastQuery) return
+    needGpuResync = result.missingGpus
+    const signature = dataSignature(result.data, result.total)
+    if (signature === lastSignature) return
+    lastSignature = signature
     setData(result.data, result.total)
   }
 
   /**
    * usePolling 不自启:此处拉起轮询链。mounted 时首屏请求在途(loading=true),silentRefresh 跳过本轮,
-   * 下个周期(3s)才真正开始静默刷新,不与 useTable 的 immediate 首刷重复打接口。
+   * 下个周期(10s)才真正开始静默刷新,不与 useTable 的 immediate 首刷重复打接口。
    */
   const { refresh: startPolling } = usePolling(silentRefresh, LIST_POLL_INTERVAL_MS)
   onMounted(() => void startPolling())

@@ -271,7 +271,17 @@ onMounted(() => {
   } else {
     setTimeout(prefetchRouteChunks, 500)
   }
+  window.addEventListener('keydown', handleDrawerEscape)
 })
+onBeforeUnmount(() => window.removeEventListener('keydown', handleDrawerEscape))
+
+/**
+ * 窄屏抽屉的键盘出口:遮罩是不可聚焦的 div,侧栏打开后也没有其它关闭入口,
+ * 不给 Esc 的话键盘用户进去就出不来。
+ */
+function handleDrawerEscape(event: KeyboardEvent) {
+  if (event.key === 'Escape' && isMobile.value && drawerOpen.value) drawerOpen.value = false
+}
 
 // 缩小飞入菜单动画:从 flyToMenu 声明的源路由离开时,页面缩小飞入目标菜单项
 const pageTransition = ref('lm-page')
@@ -284,9 +294,33 @@ const unregisterFlyGuard = router.beforeEach((to, from) => {
 })
 onBeforeUnmount(unregisterFlyGuard)
 
-/** 给菜单项根节点打 data-menu-key,供飞入动画定位目标菜单项 */
+/**
+ * 菜单项根节点补强:打 data-menu-key(飞入动画定位),并加 tab 停靠点。
+ * naive 的 MenuOption 渲染的是 h('div', { role: 'menuitem' }),没有 tabindex,
+ * 纯键盘用户根本进不了主导航;naive 的 node-props 类型只接受
+ * string|number|undefined,按键处理放到容器上做事件委托(见 handleMenuKeydown)。
+ */
 function menuNodeProps(option: MenuOption) {
-  return { 'data-menu-key': String(option.key ?? '') }
+  return {
+    'data-menu-key': String(option.key ?? ''),
+    tabindex: 0,
+  }
+}
+
+/**
+ * 菜单键盘操作(容器事件委托):把 Enter/Space 转发给命中的菜单项,
+ * 复用 naive 自身的 onClick,不另建一套选择逻辑。输入框等其它元素不匹配
+ * [role="menuitem"],不受影响。
+ */
+function handleMenuKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  const item = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+    '[role="menuitem"][data-menu-key]',
+  )
+  if (!item) return
+  // 空格默认滚动页面,回车在部分上下文触发默认提交,均需拦掉
+  event.preventDefault()
+  item.click()
 }
 
 /** 定位飞入动画的目标菜单项:折叠态下子项不在 DOM 中,回退为其所属分组(顶层节点始终存在) */
@@ -359,7 +393,10 @@ function handleAfterLeave() {
       @update:collapsed="onSiderCollapsedChange"
     >
       <!-- min-h-screen 撑满视口:菜单过短时把收起按钮顶到侧栏最底 -->
-      <div class="min-h-screen flex flex-col">
+      <div
+        class="min-h-screen flex flex-col"
+        @keydown="handleMenuKeydown"
+      >
         <!-- sticky 固定头部:菜单项过多滚动时 logo 区域不随菜单滚动;
              折叠态收起左右内边距,让标识方块在 56px 窄栏内居中 -->
         <div
@@ -425,7 +462,6 @@ function handleAfterLeave() {
             v-if="menuSettingTo"
             quaternary
             circle
-            :focusable="false"
             aria-label="菜单显示设置"
             @click="openMenuSetting"
           >
@@ -438,7 +474,6 @@ function handleAfterLeave() {
           <n-button
             quaternary
             circle
-            :focusable="false"
             :aria-label="siderCollapsed ? '展开菜单' : '收起菜单'"
             @click="toggleCollapsed"
           >
@@ -461,7 +496,6 @@ function handleAfterLeave() {
           v-if="isMobile"
           quaternary
           circle
-          :focusable="false"
           class="mr-auto"
           aria-label="打开菜单"
           @click="drawerOpen = true"
@@ -477,7 +511,6 @@ function handleAfterLeave() {
             quaternary
             circle
             class="lm-theme-toggle"
-            :focusable="false"
             aria-label="切换主题"
             @click="handleToggleTheme"
           >

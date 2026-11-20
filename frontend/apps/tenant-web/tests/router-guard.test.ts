@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@repo/hooks', () => ({
+  closeAllDialog: vi.fn(),
   goToPortalLogin: vi.fn(),
   message: { error: vi.fn(), warning: vi.fn() },
 }))
@@ -19,7 +20,7 @@ vi.mock('@/store/auth', () => {
   return { useAuthStore: () => auth, __auth: auth }
 })
 
-import { goToPortalLogin, message } from '@repo/hooks'
+import { closeAllDialog, goToPortalLogin, message } from '@repo/hooks'
 import * as authModule from '@/store/auth'
 import type { Router } from 'vue-router'
 import { setupGuard } from '@/router/guard'
@@ -38,14 +39,21 @@ const auth = (authModule as unknown as { __auth: {
 type GuardTo = { name?: string | null; meta: Record<string, unknown> }
 type GuardFn = (to: GuardTo) => unknown
 
+/** setupGuard 注册的 afterEach(路由切换清场)回调 */
+let capturedAfterEach: (() => void) | null = null
+
 function captureGuard(): GuardFn {
   let guard: GuardFn | null = null
-  setupGuard({ beforeEach: (fn: GuardFn) => { guard = fn } } as unknown as Router)
+  setupGuard({
+    beforeEach: (fn: GuardFn) => { guard = fn },
+    afterEach: (fn: () => void) => { capturedAfterEach = fn },
+  } as unknown as Router)
   return guard!
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  capturedAfterEach = null
   auth.token = ''
   auth.userInfo = null
   auth.menus = {}
@@ -54,6 +62,13 @@ beforeEach(() => {
 })
 
 describe('tenant router guard', () => {
+  it('路由切换清场:afterEach 关闭命令式弹窗(否则 useConfirm 的 await 永久悬挂)', () => {
+    captureGuard()
+    expect(capturedAfterEach).toBeTypeOf('function')
+    capturedAfterEach!()
+    expect(closeAllDialog).toHaveBeenCalledTimes(1)
+  })
+
   it('public 路由直接放行(不看登录态)', async () => {
     const guard = captureGuard()
     await expect(guard({ meta: { public: true } })).resolves.toBe(true)

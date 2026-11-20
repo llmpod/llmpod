@@ -253,6 +253,44 @@ describe('StepBasic 镜像地址自动预填(输入框已移至 Step3 高级参�
     wrapper.unmount()
   })
 
+  it('手选镜像版本后,Step1 期间的基础预检不得让后续 inspect 带上旧推荐 image', async () => {
+    store.form.modelId = 7
+    vi.mocked(inspectDeployment)
+      // 选模型即推荐:推荐镜像地址不在 catalog 里 → 版本回填到 catalog 默认版本 0.9.4
+      // (等价于用户手选了与推荐不同的镜像版本)
+      .mockResolvedValueOnce(
+        makeInspect({
+          recommendation: { ...makeInspect().recommendation, image: 'reg/vllm:9.9.9' },
+        }),
+      )
+      // Step1→2 基础预检:后端按已选版本 0.9.4 解析出实际镜像
+      .mockResolvedValueOnce(
+        makeInspect({
+          recommendation: { ...makeInspect().recommendation, image: 'reg/vllm:0.9.4' },
+        }),
+      )
+    const wrapper = mount(StepBasic, { attachTo: document.body })
+    await vi.waitFor(() => expect(store.autoImage.value).toBe('reg/vllm:9.9.9'))
+    await vi.waitFor(() => expect(store.imageEntries.value.length).toBeGreaterThan(0))
+    await settle()
+
+    // Step1 写回表单:镜像地址=推荐值(autoImage 同值),镜像版本=catalog 默认 0.9.4
+    const validate = (wrapper.vm as unknown as { validate: () => Promise<boolean> }).validate
+    expect(await validate()).toBe(true)
+    expect(store.form.imageTag).toBe('0.9.4')
+    expect(store.imageOverride.value).toBe('')
+
+    // controller.next() 在切步前 await 基础预检 → 此刻 StepBasic 仍挂载,预填 watch 仍在生效
+    await store.loadInspect()
+    await settle()
+
+    expect(vi.mocked(inspectDeployment).mock.calls.at(-1)?.[0].image_tag).toBe('0.9.4')
+    // 预检解析出手选版本的实际镜像后,自动基线跟随:旧推荐值不得被当成用户手改(否则 image 盖掉 image_tag)
+    expect(store.form.image).toBe('reg/vllm:0.9.4')
+    expect(store.imageOverride.value).toBe('')
+    wrapper.unmount()
+  })
+
   it('手填地址不被迟到的推荐覆盖,validate 写回手填值', async () => {
     store.form.modelId = 7
     // 集群先手动选定:本用例只验证「迟到不覆盖」,不依赖推荐回填

@@ -618,7 +618,11 @@ export function useWizardStore() {
    */
   const imageOverride = computed(() => {
     const value = form.image.trim()
-    return value && value !== autoImage.value ? value : ''
+    if (!value || value === autoImage.value) return ''
+    // 兜底:与当前预检解析出的镜像一致也不算手改,防基线漂移(预检按新镜像版本重解析后,
+    // 表单里残留的旧自动值不得被当成用户手改,否则 image 会盖掉 image_tag)
+    const resolved = inspect.value?.resolved?.image ?? inspect.value?.recommendation?.image
+    return value === resolved ? '' : value
   })
 
   /** 命令文本是否生效(非空 = 命令模式:整条接管,提交只发 spec.command) */

@@ -67,6 +67,22 @@ function tableOptions() {
   }
 }
 
+/** 一轮节点列表响应(静默轮询测试用) */
+function nodePage(items: unknown[], total: number) {
+  return { items, total, page: 1, page_size: 10, total_pages: 1 } as Awaited<ReturnType<typeof listNodes>>
+}
+
+/** 一轮 GPU 列表响应(静默轮询测试用) */
+function gpuPage(items: unknown[]) {
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    page_size: 100,
+    total_pages: 1,
+  } as Awaited<ReturnType<typeof listGpus>>
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
@@ -145,40 +161,79 @@ describe('node-list useController 表格列', () => {
     expect(upgradeNode).not.toHaveBeenCalled()
   })
 
-  it('静默轮询:3s 后用最近一次查询参数重放请求并写回数据,不触发 useTable.refresh', async () => {
+  it('静默轮询:10s 后重放当前页节点请求,不触发 useTable.refresh、不重复拉全量 GPU', async () => {
     vi.useFakeTimers()
     try {
       mountController()
       const options = tableOptions() as unknown as {
         request: (params: { page: number, pageSize: number, keyword: string }, ctx: { signal: AbortSignal }) => Promise<unknown>
       }
-      vi.mocked(listNodes).mockResolvedValue({
-        items: [],
-        total: 0,
-        page: 1,
-        page_size: 10,
-        total_pages: 0,
-      } as Awaited<ReturnType<typeof listNodes>>)
-      vi.mocked(listGpus).mockResolvedValue({
-        items: [],
-        total: 0,
-        page: 1,
-        page_size: 100,
-        total_pages: 0,
-      } as Awaited<ReturnType<typeof listGpus>>)
+      vi.mocked(listNodes).mockResolvedValue(nodePage([], 0))
+      vi.mocked(listGpus).mockResolvedValue(gpuPage([]))
 
       // 尚无查询参数(首屏未发出)时不请求
-      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(10000)
       expect(listNodes).not.toHaveBeenCalled()
 
-      // 首屏请求记录页码后,下个周期静默重放同一页(不带 signal:轮询自身不取消,靠序号丢弃旧响应)
+      // 首屏请求记录页码后,下个周期静默重放同一页
       await options.request({ page: 1, pageSize: 10, keyword: '' }, { signal: new AbortController().signal })
       vi.mocked(listNodes).mockClear()
-      await vi.advanceTimersByTimeAsync(3000)
+      vi.mocked(listGpus).mockClear()
+      // 数据变化(空页 → 一个节点)才会写回表格
+      vi.mocked(listNodes).mockResolvedValue(nodePage([{ id: 'n1', hostname: 'gpu-01', ip: '10.0.0.1', status: 'online', runtime: null }], 1))
+      await vi.advanceTimersByTimeAsync(10000)
 
-      expect(listNodes).toHaveBeenCalledWith({ page: 1, page_size: 10 }, undefined, { silentError: true })
+      // 轮询带自己的 AbortSignal(卸载/新一轮可中止),失败静默不弹统一错误提示
+      expect(listNodes).toHaveBeenCalledWith(
+        { page: 1, page_size: 10 },
+        expect.any(AbortSignal),
+        { silentError: true },
+      )
+      // 第 1 轮不是 GPU 补拉周期:复用 store 缓存,只付节点接口的流量
+      expect(listGpus).not.toHaveBeenCalled()
       expect(setDataMock).toHaveBeenCalledTimes(1)
       expect(useTableMock.mock.results[0].value.refresh).not.toHaveBeenCalled()
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('静默轮询:数据与上一轮一致时跳过 setData,不白付一次整表重渲', async () => {
+    vi.useFakeTimers()
+    try {
+      mountController()
+      const options = tableOptions() as unknown as {
+        request: (params: { page: number, pageSize: number, keyword: string }, ctx: { signal: AbortSignal }) => Promise<unknown>
+      }
+      const node = { id: 'n1', hostname: 'gpu-01', ip: '10.0.0.1', status: 'online', runtime: null }
+      const gpu = {
+        id: 1,
+        uuid: 'g1',
+        node_id: 'n1',
+        index: 0,
+        name: 'A100',
+        total_vram_gb: 80,
+        driver_version: '570',
+        status: 'online',
+        runtime: null,
+      }
+      vi.mocked(listNodes).mockResolvedValue(nodePage([node], 1))
+      vi.mocked(listGpus).mockResolvedValue(gpuPage([gpu]))
+
+      // 首屏请求:确立指纹基线(写回由 useTable 自己负责)
+      await options.request({ page: 1, pageSize: 10, keyword: '' }, { signal: new AbortController().signal })
+      vi.mocked(listNodes).mockClear()
+
+      // 轮询拿到完全一致的数据:请求照发,但不写回表格
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(listNodes).toHaveBeenCalledTimes(1)
+      expect(setDataMock).not.toHaveBeenCalled()
+
+      // 指标真的变了才写回
+      vi.mocked(listNodes).mockResolvedValue(nodePage([{ ...node, runtime: { cpu_percent: 12 } }], 1))
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(setDataMock).toHaveBeenCalledTimes(1)
     }
     finally {
       vi.useRealTimers()

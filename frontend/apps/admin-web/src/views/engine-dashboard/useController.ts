@@ -1,4 +1,4 @@
-import { chartAxisColors, message, useTable } from '@repo/hooks'
+import { chartAxisColors, escapeHtml, message, useTable } from '@repo/hooks'
 import { usePolling } from '@/analytics/usePolling'
 import { emptyChartOption, useChart } from '@/analytics/charts'
 import {
@@ -239,8 +239,11 @@ export function useController() {  const {
           const cell = view.rows[rowIndex]?.cells[colIndex]
           if (!cell) return ''
           const max = cell.kvMax === 0 ? EMPTY_TEXT : `${Math.round(cell.kvMax * 100)}%`
+          // 走 echarts html 模式 tooltip(renderMode 默认 auto → 浏览器下解析为 html),
+          // 返回值直接进 innerHTML:列标签(时间槽,后端 ts 非法时 formatSlotLabel 原样返回)
+          // 与行标签(部署名/部署 ID)都来自后端,必须转义
           return [
-            `${view.labels[colIndex]} · ${view.rows[rowIndex]!.label}`,
+            `${escapeHtml(view.labels[colIndex])} · ${escapeHtml(view.rows[rowIndex]!.label)}`,
             `KV 均值 ${Math.round(cell.kvAvg * 100)}% · 峰值 ${max}`,
             `抢占 ${cell.preemptions} · 采样 ${cell.samples} 次`,
           ].join('<br/>')

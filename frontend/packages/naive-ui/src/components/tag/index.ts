@@ -1,4 +1,4 @@
-import { defineComponent, h, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { PropType, VNode } from 'vue'
 import { NTag, NTooltip } from 'naive-ui'
 import type { TagProps } from 'naive-ui'
@@ -28,11 +28,120 @@ interface WithRootEl {
   $el?: unknown
 }
 
+// ---------------------------------------------------------------------------
+// 溢出检测:全页标签共用一个 ResizeObserver
+// ---------------------------------------------------------------------------
+
+/**
+ * 元素 → 该标签的 measure 回调。
+ * 授权模型/角色这类列表一行就有多个标签,单页可达数百个;每个标签各建一个 observer 时,
+ * 窗口缩放、列显隐、卡片断点切换都会让这些回调各自排队。共用后回调逻辑不变,
+ * 注册的观察对象只剩一个,观察成本从 O(标签数) 降到 O(1)。
+ */
+const tagMeasurers = new WeakMap<Element, () => void>()
+let sharedObserver: ResizeObserver | null = null
+
+/** 全页共享的超出检测目标;ResizeObserver 不可用(旧浏览器/测试环境)时静默跳过 */
+function observeTag(el: HTMLElement, measure: () => void): void {
+  if (typeof ResizeObserver === 'undefined') return
+  tagMeasurers.set(el, measure)
+  sharedObserver ??= new ResizeObserver((entries) => {
+    for (const entry of entries) tagMeasurers.get(entry.target)?.()
+  })
+  sharedObserver.observe(el)
+}
+
+/** 注销观察:删除映射与 observe 目标(重复调用安全,标签卸载即可调) */
+function unobserveTag(el: HTMLElement): void {
+  tagMeasurers.delete(el)
+  sharedObserver?.unobserve(el)
+}
+
+// ---------------------------------------------------------------------------
+// 短文本快速路径:确定放得下就不挂 tooltip
+// ---------------------------------------------------------------------------
+
+/**
+ * 估算宽度只用到宽度上限的这个比例以内时,判定「一定放得下」。
+ *
+ * 取 0.66 而不是 1:父容器可能比 maxWidth 更窄(`min(maxWidth, 100%)` 的分支,窄屏卡片常见),
+ * 留三成余量让判定在这种场景下也不会误判。误判的代价只有一种——极窄容器里短标签悬浮
+ * 不再提示;长文本(本功能的目标场景)一条都不会漏判。
+ */
+const SHORT_TEXT_RATIO = 0.66
+
+/** n-tag 各尺寸的正文字号(px):small→fontSizeTiny、medium→fontSizeSmall、large→fontSizeMedium */
+const TAG_FONT_PX: Record<string, number> = { tiny: 12, small: 12, medium: 14, large: 14 }
+
+/** 全角字符(中日韩、全角标点):按 1em 计;其余按 0.6em 计(拉丁/数字的偏大估计) */
+const WIDE_CHAR_RE
+  = /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/
+
+/** 估算文本渲染宽度(px):按字符类别累加 em 再乘字号 */
+function estimateTextWidthPx(text: string, size: string): number {
+  const fontPx = TAG_FONT_PX[size] ?? 14
+  let em = 0
+  for (const ch of text) em += WIDE_CHAR_RE.test(ch) ? 1 : 0.6
+  return em * fontPx
+}
+
+/** 文本是否确定不会触发省略(宽度上限按 1rem=10px 折算) */
+function fitsWithoutEllipsis(text: string, maxWidth: number, size: string): boolean {
+  return estimateTextWidthPx(text, size) <= maxWidth * 10 * SHORT_TEXT_RATIO
+}
+
+/**
+ * 标签样式:短路径与常规路径共用一份,保证两条分支的省略表现完全一致。
+ * 样式全内联:packages/* 不参与消费方 app 的 UnoCSS 扫描,写类名不会被生成。
+ */
+function tagStyle(maxWidth: number): Record<string, string> {
+  return {
+    display: 'block',
+    width: 'fit-content',
+    maxWidth: `min(${maxWidth}rem, 100%)`,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    lineHeight: 'var(--n-height)',
+  }
+}
+
+/** 标签本体 vnode(两条分支共用):props 与样式保持一致,差异只在外面要不要包 tooltip */
+function renderTagVNode(
+  props: {
+    text: string
+    maxWidth: number
+    type: TagProps['type']
+    size: TagProps['size']
+    bordered: boolean
+    color?: TagProps['color']
+  },
+  onRef?: (instance: unknown) => void,
+): VNode {
+  return h(
+    NTag,
+    {
+      ...(onRef ? { ref: onRef } : {}),
+      type: props.type,
+      size: props.size,
+      bordered: props.bordered,
+      ...(props.color ? { color: props.color } : {}),
+      style: tagStyle(props.maxWidth),
+    },
+    { default: () => props.text },
+  )
+}
+
 /**
  * 单个标签:省略样式 + 仅在确实被省略时给 tooltip。
  *
- * 溢出检测走 ResizeObserver:列宽变化(列显隐、窗口缩放、卡片断点切换)后状态自动跟随,
+ * 溢出检测走共享 ResizeObserver:列宽变化(列显隐、窗口缩放、卡片断点切换)后状态自动跟随,
  * 不必等下次 hover 才纠正;短文案不弹提示,避免"每个标签都顶个气泡"的噪音。
+ *
+ * 两条分支:
+ * - 短文本(估算宽度远小于宽度上限):直接返回裸标签,不挂 NTooltip、不注册 observer ——
+ *   省掉 popover/binder 那条实例链,这是密集标签列表里最大的一笔开销;
+ * - 长文本:包 NTooltip,由 observer 判定是否真被省略(未省略时 tooltip disabled)。
  */
 const EllipsisTag = defineComponent({
   name: 'LmEllipsisTag',
@@ -49,7 +158,11 @@ const EllipsisTag = defineComponent({
     const truncated = ref(false)
     /** 标签根 DOM,用于宽度测量 */
     let rootEl: HTMLElement | null = null
-    let observer: ResizeObserver | undefined
+
+    /** 按文本与宽度上限预估「一定放得下」:命中即走短文本快速路径 */
+    const probablyFits = computed(() =>
+      fitsWithoutEllipsis(props.text, props.maxWidth, String(props.size)),
+    )
 
     function measure(): void {
       if (!rootEl) return
@@ -57,28 +170,47 @@ const EllipsisTag = defineComponent({
       truncated.value = rootEl.scrollWidth > rootEl.clientWidth + 1
     }
 
+    /** 让观察状态跟随当前分支:短文本不观察,长文本才观察(文本/宽度变化时切换) */
+    function syncObserver(): void {
+      if (!rootEl) return
+      if (probablyFits.value) unobserveTag(rootEl)
+      else observeTag(rootEl, measure)
+    }
+
     function setRootRef(instance: unknown): void {
       const el = (instance as WithRootEl | null)?.$el ?? null
-      rootEl = el instanceof HTMLElement ? el : null
+      const next = el instanceof HTMLElement ? el : null
+      // 分支切换会重建标签节点:先把旧节点的观察摘掉,避免 WeakMap 里留下悬空回调
+      if (rootEl && rootEl !== next) unobserveTag(rootEl)
+      rootEl = next
+      if (!rootEl) return
       measure()
+      syncObserver()
     }
 
     onMounted(() => {
+      if (!rootEl) return
       measure()
-      if (rootEl && typeof ResizeObserver !== 'undefined') {
-        observer = new ResizeObserver(measure)
-        observer.observe(rootEl)
-      }
+      syncObserver()
+    })
+
+    // 文本或宽度上限变化可能翻转判定:重新测一次并同步观察状态
+    watch(probablyFits, () => {
+      if (!rootEl) return
+      measure()
+      syncObserver()
     })
 
     onBeforeUnmount(() => {
-      observer?.disconnect()
-      observer = undefined
+      if (rootEl) unobserveTag(rootEl)
       rootEl = null
     })
 
-    return () =>
-      h(
+    return () => {
+      const tag = renderTagVNode(props, setRootRef)
+      // 短文本快速路径:确定放得下,连 tooltip 组件都不创建
+      if (probablyFits.value) return tag
+      return h(
         NTooltip,
         {
           trigger: 'hover',
@@ -86,28 +218,7 @@ const EllipsisTag = defineComponent({
           disabled: !truncated.value,
         },
         {
-          trigger: () =>
-            h(
-              NTag,
-              {
-                ref: setRootRef,
-                type: props.type,
-                size: props.size,
-                bordered: props.bordered,
-                ...(props.color ? { color: props.color } : {}),
-                // 样式全内联:packages/* 不参与消费方 app 的 UnoCSS 扫描,写类名不会被生成
-                style: {
-                  display: 'block',
-                  width: 'fit-content',
-                  maxWidth: `min(${props.maxWidth}rem, 100%)`,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  lineHeight: 'var(--n-height)',
-                },
-              },
-              { default: () => props.text },
-            ),
+          trigger: () => tag,
           default: () =>
             h(
               'div',
@@ -116,6 +227,7 @@ const EllipsisTag = defineComponent({
             ),
         },
       )
+    }
   },
 })
 
