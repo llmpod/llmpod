@@ -358,7 +358,7 @@ const engineMismatchTip = computed(() => {
   )
 })
 
-/** 预检推荐摘要:纯 CPU 档展示内存需求与节点落点,显存档展示显存需求 + 推荐引擎/拓扑(基础预检结果) */const recommendSummary = computed(() => {
+/** 预检推荐摘要:纯 CPU 档展示内存需求与节点落点,显存档展示显存需求 + 推荐拓扑(基础预检结果;引擎已在上一步选定,不再回显推荐) */const recommendSummary = computed(() => {
   const result = store.inspect.value
   if (!result) return ''
   const parts: string[] = []
@@ -376,7 +376,6 @@ const engineMismatchTip = computed(() => {
   }
   const recommendation = result.recommendation
   if (recommendation) {
-    parts.push(`推荐引擎 ${store.engineLabel(recommendation.engine)}`)
     // tp_feasible=false = 后端按显存估算凑不出任何可行并行度,tp=1 只是基线占位不构成建议(放不下归因在顶部报错);
     // 已手选卡时后端不做 tp 推导(should_derive_tp 守卫),回显值对选卡无意义,同样不展示
     const manualSelected = store.allSelectedUuids.value.size > 0

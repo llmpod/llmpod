@@ -490,7 +490,7 @@ describe('StepGpuSelect 选卡交互', () => {
     wrapper.unmount()
   })
 
-  it('预检推荐摘要:显存需求 + 推荐引擎/拓扑', async () => {
+  it('预检推荐摘要:显存需求 + 推荐拓扑(引擎已在上一步选定,不再回显推荐)', async () => {
     store.inspect.value = makeInspect({
       cluster_gpus: [
         {
@@ -516,7 +516,7 @@ describe('StepGpuSelect 选卡交互', () => {
     const wrapper = mountStep()
     await nextTick()
     expect(document.body.textContent).toContain('模型约需显存 40GB')
-    expect(document.body.textContent).toContain('推荐引擎 vLLM')
+    expect(document.body.textContent).not.toContain('推荐引擎')
     expect(document.body.textContent).toContain('推荐 tp=1')
     wrapper.unmount()
   })
@@ -1035,7 +1035,7 @@ describe('StepGpuSelect 显存共用(被占卡手选解锁 + 批量排除)', () 
     flowState.selectionEndHandler!()
     await nextTick()
     const text = document.body.textContent ?? ''
-    expect(text).toContain('推荐引擎 vLLM')
+    expect(text).not.toContain('推荐引擎')
     expect(text).not.toContain('推荐 tp=')
     wrapper.unmount()
   })
