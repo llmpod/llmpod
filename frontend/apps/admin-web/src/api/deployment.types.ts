@@ -169,6 +169,8 @@ export interface InspectRecommendation {
   topology: DeploymentTopology
   /** 推荐配置下每卡显存占用 GB */
   vram_per_gpu_gb: number
+  /** tp 推荐是否成立;false=按显存估算集群凑不出任何可行并行度,topology.tp 只是基线占位不构成建议,不应展示「推荐 tp=」 */
+  tp_feasible?: boolean
   /** 引擎声明的并行能力(tp/pp/ep 白名单;后端按请求 image_tag 版本折算,最准);缺失 → 前端回落引擎字典 */
   supported_parallel?: string[]
   /** 引擎(按请求 image_tag 版本折算)是否支持多机部署;缺失 → 前端回落引擎字典/宽松兜底 */

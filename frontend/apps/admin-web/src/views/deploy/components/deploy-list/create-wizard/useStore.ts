@@ -1287,18 +1287,19 @@ export function useWizardStore() {
       )
     }
     const fromIssues = result.issues.find(
-      (text) => text.includes('空闲卡不足') || text.includes('提高 tp'),
+      (text) => text.includes('空闲卡不足') || text.includes('提高 tp') || text.includes('无法为其推荐部署'),
     )
     const copies = Math.max(1, form.replicas)
     const total = placement.total_gpus ?? copies
     const reason =
       fromIssues ?? `当前副本配置共需 ${total} 张卡,集群空闲可选卡不足;请减少副本数、缩小并行度或释放占用卡`
     // 共用显存出路:集群存在「在线、无灰化、被运行中部署占用」的卡时,报错末尾给出手选出路
-    // (避免「请释放占用卡」成为唯一出路);符合口径的卡数按 inspect 逐卡口径统计
+    // (避免「请释放占用卡」成为唯一出路);符合口径的卡数按 inspect 逐卡口径统计。
+    // 「无法为其推荐部署」= 需求超过全部 GPU 合计上限,调低占比只会让可用更小,不给这条死路
     const colocatable = (result.cluster_gpus ?? []).filter(
       (gpu) => !gpu.grey_reason && gpu.status === 'online' && occupiedGpuUuids.value.has(gpu.uuid),
     ).length
-    if (colocatable > 0) {
+    if (colocatable > 0 && !fromIssues?.includes('无法为其推荐部署')) {
       return `${reason};也可手动选择被占用的 ${colocatable} 张卡共用显存(确认部署时调低显存占比)`
     }
     return reason

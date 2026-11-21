@@ -377,7 +377,10 @@ const engineMismatchTip = computed(() => {
   const recommendation = result.recommendation
   if (recommendation) {
     parts.push(`推荐引擎 ${store.engineLabel(recommendation.engine)}`)
-    if (!cpuOnly)
+    // tp_feasible=false = 后端按显存估算凑不出任何可行并行度,tp=1 只是基线占位不构成建议(放不下归因在顶部报错);
+    // 已手选卡时后端不做 tp 推导(should_derive_tp 守卫),回显值对选卡无意义,同样不展示
+    const manualSelected = store.allSelectedUuids.value.size > 0
+    if (!cpuOnly && recommendation.tp_feasible !== false && !manualSelected)
       parts.push(`推荐 tp=${recommendation.topology.tp}(每卡约 ${recommendation.vram_per_gpu_gb}GB)`)
   }
   return parts.join(' · ')

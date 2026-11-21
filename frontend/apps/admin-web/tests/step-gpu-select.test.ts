@@ -970,6 +970,75 @@ describe('StepGpuSelect 显存共用(被占卡手选解锁 + 批量排除)', () 
     )
     wrapper.unmount()
   })
+
+  it('空推荐提示:需求超全部 GPU 合计上限(无法为其推荐部署)时透传后端归因,不追加共用显存死路', async () => {
+    seedOccupiedTopology()
+    store.inspect.value = makeInspect({
+      deployable: false,
+      issues: ['模型需约 175.55 GB,集群全部 GPU 合计最多可用显存约 114.6 GB,无法为其推荐部署'],
+      recommended_placement: {
+        gpu_uuids: [],
+        node_ids: [],
+        arch: 'nvidia',
+        total_gpus: 1,
+        arch_summary: {},
+        unit_plans: [],
+        replica_plans: [],
+      },
+      cluster_gpus: [
+        makeAssessed('gpu-1', 'n1', {
+          declared_vram_gb: 13.2,
+          occupied_pct: 0.6,
+          occupied_by: [{ deployment_id: 'd-run', deployment_name: 'dep-running', declared_gb: 13.2 }],
+        }),
+        makeAssessed('gpu-2', 'n1', {
+          declared_vram_gb: 6.6,
+          occupied_pct: 0.3,
+          occupied_by: [{ deployment_id: 'd-run', deployment_name: 'dep-running', declared_gb: 6.6 }],
+        }),
+      ],
+      recommendation: {
+        engine: 'vllm',
+        image: 'reg/vllm:latest',
+        topology: { tp: 1, pp: 1, replicas: 1, nnodes: 1, max_model_len: null },
+        vram_per_gpu_gb: 175.55,
+        tp_feasible: false,
+      },
+    })
+    const wrapper = mountStep()
+    await nextTick()
+    const text = document.body.textContent ?? ''
+    // 后端归因透传(不再被「共需 N 张卡」前端兜底文案盖掉)
+    expect(text).toContain('无法为其推荐部署')
+    expect(text).not.toContain('共需 1 张卡')
+    // 合计上限装不下时调低占比无济于事,不给共用显存死路
+    expect(text).not.toContain('共用显存')
+    // tp 无解:基线 tp=1 不构成建议,摘要不展示「推荐 tp=」
+    expect(text).not.toContain('推荐 tp=')
+    wrapper.unmount()
+  })
+
+  it('推荐摘要:已手选卡时不展示自动推荐 tp(后端 should_derive_tp 守卫不推导,回显值不构成建议)', async () => {
+    seedTopology()
+    store.inspect.value = makeInspect({
+      cluster_gpus: [makeAssessed('gpu-1', 'n1', { required_vram_gb: 40, fit: true })],
+    })
+    store.engines.value = [
+      { engine: 'vllm', display_name: 'vLLM', deployable: true },
+    ] as unknown as typeof store.engines.value
+    const wrapper = mountStep()
+    // 手选一张卡(走 selectionEndHandler,与用户框选同链路;handler 由组件挂载时注册)
+    flowState.selectedNodes = [store.topology.value!.gpus[0]].map((record) => ({
+      type: 'gpu' as const,
+      data: { record },
+    }))
+    flowState.selectionEndHandler!()
+    await nextTick()
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('推荐引擎 vLLM')
+    expect(text).not.toContain('推荐 tp=')
+    wrapper.unmount()
+  })
 })
 
 describe('StepGpuSelect 部署规格(副本卡片/最大上下文)', () => {
