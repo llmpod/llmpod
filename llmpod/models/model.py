@@ -40,6 +40,11 @@ class Model(Base, IntIdMixin, TimestampMixin):
 
     # ---- 权重信息（原 ModelVersion，合并入此；皆可空）----
     size_gb: Mapped[float | None] = mapped_column(Float, nullable=True, comment="权重大小（GB，可空）")
+    ngram_table_gb: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        comment="n-gram 嵌入表大小（GB，Qwen4Exp PLE 表；推理引擎默认驻留内存/磁盘不进显存，显存预算= size_gb − 本值，可空=未扫描）",
+    )
     format: Mapped[str | None] = mapped_column(
         String(50), nullable=True, comment="格式：safetensors | gguf | ...（可空）"
     )

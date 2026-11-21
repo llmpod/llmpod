@@ -84,6 +84,7 @@ def build_recommendation(
     arch_meta=None,
     n_parallel: int | None = None,
     model_max_context: int | None = None,
+    ngram_table_gb: float | None = None,
 ) -> Recommendation:
     """组装推荐配置（全 adapter 默认值，不做智能推导）。
 
@@ -93,6 +94,8 @@ def build_recommendation(
     ``model_max_context``：模型自带上下文上限，已知时把推荐值钳到它以内。8192 这个兜底值对
     短上下文模型（2048/4096）是超限的，引擎会直接拒启——钳制是必需的，不是优化。
     ``kv_dtype_bytes``/``arch_meta``：请求里已选的 KV 精度档与模型架构形状，推荐显存随之折算。
+    ``ngram_table_gb``：n-gram 嵌入表大小（Qwen4Exp PLE 表，引擎默认驻留内存/磁盘不进显存），
+    推荐显存按 ``size_gb − ngram_table_gb`` 折算（见 ``resource.gpu_weight_gb``）。
     镜像：catalog 命中优先（engine+arch 粗匹配，无具体卡），否则 adapter 默认。
     """
     from llmpod.apps.manager.deployment import image_catalog
@@ -105,7 +108,7 @@ def build_recommendation(
         ctx = min(ctx, model_max_context)
     topology = Topology(tp=1, nnodes=1, replicas=1, max_model_len=ctx)
     vram = adapter.estimate_vram_gb(
-        model_size_gb or 0.0,
+        resource.gpu_weight_gb(model_size_gb, ngram_table_gb) or 0.0,
         topology,
         model_type=model_type,
         dtype_bytes=kv_dtype_bytes,

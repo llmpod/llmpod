@@ -271,6 +271,7 @@ async def create_deployment(
                 # 部署授权与逐卡口径：与编排器 _resolve_lane 同参，否则预检放行的请求调度时被拒
                 allow_cpu=request.spec.cpu_lane_requested,
                 parallel=unit_parallel(request.spec.topology),
+                ngram_table_gb=getattr(model, "ngram_table_gb", None),
             )
             if not report.deployable:
                 raise LLMPodValidationError(f"部署预检不通过：{report.message}")

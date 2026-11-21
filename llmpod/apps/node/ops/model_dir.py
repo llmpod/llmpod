@@ -20,6 +20,7 @@ from pathlib import Path
 
 from llmpod.config.constants import MODEL_WEIGHT_EXTS
 from llmpod.tunnel.schemas import ModelDirEntry, ModelDirProbe, RemoveModelDirResult
+from llmpod.utils.safetensors_meta import sum_ngram_table_bytes
 
 # 单个目录的普通文件数上限：异常目录（如误选 $HOME）不能把通信帧撑爆。
 _MAX_FILES = 10_000
@@ -139,6 +140,9 @@ def probe_model_dir_sync(
 
     config, config_name, config_message = _read_config(resolved)
     entries, total, walk_message = _walk_files(resolved)
+    # n-gram 嵌入表字节（显存预算扣减项）：只扫 safetensors 文件头；单文件读头失败
+    # 计 0，与「目录里本来就没有」同口径——都回到不扣减的保守侧
+    ngram_bytes = sum_ngram_table_bytes([resolved / e.path for e in entries if e.path.lower().endswith(".safetensors")])
     message = config_message or walk_message
     return ModelDirProbe(
         exists=True,
@@ -147,6 +151,7 @@ def probe_model_dir_sync(
         config=config,
         files=entries,
         total_bytes=total,
+        ngram_table_bytes=ngram_bytes,
         message=message,
     )
 

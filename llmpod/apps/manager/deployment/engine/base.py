@@ -548,10 +548,13 @@ class EngineAdapter(ABC):
         """本部署配置下**每卡**显存需求（GiB）：KV 精度档、架构形状、并发序列数都从
         ``model`` + 部署配置推出，调用方不再逐项手拼。
 
+        权重基数扣 n-gram 嵌入表（Qwen4Exp PLE 表引擎默认驻留内存/磁盘，见
+        ``resource.gpu_weight_gb``）——账本预留与调度容量判定同此口径。
+
         异构副本逐份口径用 :meth:`vram_per_gpu_by_copy`。
         """
         return self.estimate_vram_gb(
-            model.size_gb,
+            resource.gpu_weight_gb(model.size_gb, getattr(model, "ngram_table_gb", None)),
             topology,
             model_type=model.model_type,
             n_parallel=getattr(kv_cache, "n_parallel", None),
@@ -564,16 +567,17 @@ class EngineAdapter(ABC):
         """异构副本**逐份**每卡显存需求（``{份序号: GiB}``）；同形返回 None（走单值口径）。
 
         同形副本各份 tp/pp 一致，用单值 :meth:`vram_per_gpu` 即可；异构各份不同，容量过滤
-        与记账都得按各自份的口径。
+        与记账都得按各自份的口径。权重基数同样扣 n-gram 嵌入表（与 vram_per_gpu 同口径）。
         """
         if topology.is_homogeneous:
             return None
         # 两件输入与份序号无关，提到推导式外算一次（逐份重算只是白算）
         kv_inputs = self.kv_arch_inputs(model, engine_params)
         n_parallel = getattr(kv_cache, "n_parallel", None)
+        weight_gb = resource.gpu_weight_gb(model.size_gb, getattr(model, "ngram_table_gb", None))
         return {
             str(i): self.estimate_vram_gb_for_unit(
-                model.size_gb,
+                weight_gb,
                 unit,
                 topology.max_model_len,
                 model_type=model.model_type,

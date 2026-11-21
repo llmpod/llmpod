@@ -15,6 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from llmpod.apps.manager.deployment import image_catalog
+from llmpod.apps.manager.deployment import resource
 from llmpod.apps.manager.deployment.engine import get_adapter
 from llmpod.apps.manager.deployment.engine.base import estimate_required_vram
 from llmpod.apps.manager.deployment.scheduler.gpu import card_reserve, reserve_fits
@@ -47,6 +48,7 @@ def assess_per_gpu(
     kv_dtype_bytes: float | None = None,
     arch_meta=None,
     n_parallel: int | None = None,
+    ngram_table_gb: float | None = None,
 ) -> list[GpuAssessment]:
     """逐卡评估。
 
@@ -75,7 +77,7 @@ def assess_per_gpu(
 
     # embedding/rerank 类别无自回归 KV cache（类别级判定，与引擎无关）
     required = estimate_required_vram(
-        model_size_gb,
+        resource.gpu_weight_gb(model_size_gb, ngram_table_gb),
         context_size,
         has_kv_cache=ModelType.has_kv_cache(model_type),
         dtype_bytes=kv_dtype_bytes,

@@ -152,3 +152,35 @@ class TestTildePath:
         probe = await _svc(tmp_path).probe_model_dir("~/models")
         assert probe.exists is False
         assert "绝对路径" in (probe.message or "")
+
+
+class TestNgramTableScan:
+    """探测顺带扫 n-gram 嵌入表字节（显存预算扣减项）：有表给字节数，没表给 0。"""
+
+    @staticmethod
+    def _ngram_file(path, name, start, end):
+        import struct
+
+        header = {
+            name: {"dtype": "BF16", "shape": [1], "data_offsets": [start, end]},
+            "other.weight": {"dtype": "BF16", "shape": [1], "data_offsets": [end, end + 4096]},
+        }
+        raw = json.dumps(header).encode()
+        path.write_bytes(struct.pack("<Q", len(raw)) + raw)
+
+    async def test_ngram_bytes_reported(self, tmp_path):
+        d = _transformer_dir(tmp_path)
+        self._ngram_file(
+            d / "model.safetensors",
+            "model.layers.0.ple.ple_embedding.ngram_embedding.shard_0.weight",
+            0,
+            1024,
+        )
+        probe = await _svc(tmp_path).probe_model_dir(str(d))
+        assert probe.ngram_table_bytes == 1024
+
+    async def test_plain_model_reports_zero(self, tmp_path):
+        """普通模型（无 PLE 表）：明确 0（区分于 None=旧节点没实现该字段）。"""
+        d = _transformer_dir(tmp_path)
+        probe = await _svc(tmp_path).probe_model_dir(str(d))
+        assert probe.ngram_table_bytes == 0

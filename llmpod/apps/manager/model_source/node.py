@@ -46,6 +46,8 @@ class NodeInspector(ModelInspector):
             config_name=probe.config_name,
             weight_files=[entry.path for entry in weights],
             total_bytes=sum(entry.size for entry in weights),
+            # 节点侧已扫表（None=旧节点未实现，保持不扣减口径）
+            ngram_table_bytes=probe.ngram_table_bytes,
             message=probe.message,
         )
         # 权重文件在节点盘上，manager 读不到 GGUF 头；显式传 None 跳过本地读头

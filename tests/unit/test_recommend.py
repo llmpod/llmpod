@@ -402,3 +402,20 @@ class TestPickCluster:
     def test_empty_pools(self):
         pick = pick_cluster({}, vram_per_gpu=10.0, tp=1)
         assert pick is None
+
+
+class TestNgramTableDeduction:
+    """n-gram 嵌入表（引擎默认驻留内存不进显存）从推荐显存里扣减。"""
+
+    def test_recommendation_vram_deducts_ngram_table(self):
+        # KV 启发式基数跟着扣减后权重走（表不在显存，按全量估 KV 同样虚高）：
+        # 权重 175.36 − 95.37 = 79.99，@8192 KV = 79.99×0.1 = 8.0，推荐显存 87.99
+        adapter = get_adapter("vllm")
+        rec = build_recommendation(adapter, 175.36, "llm", "vllm", context_size=None, ngram_table_gb=95.37)
+        assert rec.vram_per_gpu_gb == 87.99
+
+    def test_none_keeps_full_weight(self):
+        adapter = get_adapter("vllm")
+        a = build_recommendation(adapter, 10.0, "llm", "vllm").vram_per_gpu_gb
+        b = build_recommendation(adapter, 10.0, "llm", "vllm", ngram_table_gb=None).vram_per_gpu_gb
+        assert a == b

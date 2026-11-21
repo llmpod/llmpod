@@ -60,6 +60,10 @@ class ModelFiles(BaseModel):
     )
     quantization: str | None = Field(default=None, description="量化方案：awq|gptq|q4_k_m|none|...")
     size_gb: float | None = Field(default=None, description="权重大小（GB）")
+    ngram_table_gb: float | None = Field(
+        default=None,
+        description="n-gram 嵌入表大小（GB，Qwen4Exp PLE 表；引擎默认驻留内存/磁盘不进显存，显存预算按 size_gb 扣除本值；None=未扫描或无表）",
+    )
     revision: str | None = Field(default=None, description="来源版本/commit-hash")
 
     # —— 架构形状（KV cache 真公式 + 逐层 offload + TP 整除校验的输入；提取不到留 None）——

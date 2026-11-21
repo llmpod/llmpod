@@ -44,6 +44,10 @@ class ModelDirProbe(BaseModel):
     config: dict | None = Field(None, description="配置原文；解析失败或不存在为 None")
     files: list[ModelDirEntry] = Field(default_factory=list, description="目录内普通文件清单")
     total_bytes: int = Field(0, description="全部文件字节总和")
+    ngram_table_bytes: int | None = Field(
+        None,
+        description="n-gram 嵌入表字节总和（safetensors 头扫描，Qwen4Exp PLE 表；None=未扫描，旧节点不返回该字段）",
+    )
     message: str | None = Field(None, description="探测失败/降级说明，可直接展示")
 
 

@@ -315,6 +315,7 @@ def _prepare_baseline(c: InspectState) -> None:
         kv_dtype_bytes=c.kv_dtype_bytes,
         arch_meta=c.arch_meta,
         model_max_context=c.model.max_context,
+        ngram_table_gb=getattr(c.model, "ngram_table_gb", None),
     )
 
     # 用户传了 topology 就用用户的，否则用推荐的
@@ -471,6 +472,7 @@ async def _validate_config(db: AsyncSession, c: InspectState) -> None:
                 # 部署授权与逐卡口径：与部署测算/编排器同参，否则「预检说能部署、调度失败」
                 allow_cpu=request.cpu_lane_requested,
                 parallel=unit_parallel(topo),
+                ngram_table_gb=getattr(model, "ngram_table_gb", None),
             )
             if c.cluster_id and c.cluster_id not in report.deployable_clusters:
                 c.fail(report.message or "显存不足")
@@ -542,6 +544,7 @@ async def _load_gpu_pool(db: AsyncSession, c: InspectState) -> None:
             kv_dtype_bytes=c.kv_dtype_bytes,
             arch_meta=c.arch_meta,
             n_parallel=request.kv_cache.n_parallel,
+            ngram_table_gb=getattr(model, "ngram_table_gb", None),
         )
     }
     for cg in raw:
@@ -615,7 +618,7 @@ def _derive_tp(c: InspectState) -> None:
             c.recommendation.topology = c.topo.model_dump()
             c.vram_per_gpu = round(
                 adapter.estimate_vram_gb(
-                    c.model.size_gb or 0.0,
+                    resource.gpu_weight_gb(c.model.size_gb, getattr(c.model, "ngram_table_gb", None)) or 0.0,
                     c.topo,
                     model_type=c.model.model_type,
                     dtype_bytes=c.kv_dtype_bytes,

@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict
 
 from llmpod.apps.manager.model_source import inference
 from llmpod.apps.manager.model_source.base import ModelFiles, ModelInspector
+from llmpod.utils.safetensors_meta import sum_ngram_table_bytes
 
 log = logging.getLogger("llmpod.apps.manager.model_source.local")
 
@@ -41,6 +42,8 @@ class ModelProbe(BaseModel):
     config_name: str | None = None  # 读到的配置文件名：config.json | model_index.json（决定 layout/architecture 取法）
     weight_files: list[str] = []  # 权重文件相对路径（.safetensors/.gguf/.bin/.pt/.pth/.onnx）
     total_bytes: int = 0  # 权重文件总字节
+    # n-gram 嵌入表总字节（显存预算扣减项；None=没扫（单文件源等），0=扫过没有
+    ngram_table_bytes: int | None = None
     message: str | None = None  # 探测失败/异常说明
 
 
@@ -87,6 +90,13 @@ def build_local_model_files(
     else:
         is_moe = bool(gguf_meta_obj and gguf_meta_obj.is_moe)
     size_gb = round(probe.total_bytes / (1024**3), 2) if probe.total_bytes else None
+    # 显存预算扣减项（Qwen4Exp PLE 表）：目录源扫过才有值；None 保持 None（单文件源/
+    # 旧调用方未传），下游按不扣减处理
+    ngram_table_gb = (
+        round(probe.ngram_table_bytes / (1024**3), 2)
+        if probe.ngram_table_bytes is not None and probe.ngram_table_bytes > 0
+        else None
+    )
     # 架构形状：manager 盘上有 config 就以它为准（更权威的描述），否则取 GGUF 头
     shape = inference.arch_shape(config, gguf_meta_obj)
     # 盘上布局（node 分发判据）：与 inference.detect_source_kind 同口径——local 也在 manager
@@ -107,6 +117,7 @@ def build_local_model_files(
         mmproj_file=inference.pick_mmproj(probe.weight_files or []),
         quantization=inference.infer_quant(config, probe.weight_files or [], gguf_meta_obj),
         size_gb=size_gb,
+        ngram_table_gb=ngram_table_gb,
         num_layers=shape.num_layers,
         kv_layers=shape.kv_layers,
         num_attention_heads=shape.num_attention_heads,
@@ -191,6 +202,7 @@ def _read_local_probe_sync(path: Path) -> ModelProbe:
 
     weight_files: list[str] = []
     total = 0
+    safetensors_paths: list[Path] = []
     for root, _dirs, files in os.walk(path):
         for fname in files:
             low = fname.lower()
@@ -210,6 +222,8 @@ def _read_local_probe_sync(path: Path) -> ModelProbe:
                 continue
             total += size
             weight_files.append(str(fp.relative_to(path)))
+            if low.endswith(".safetensors"):
+                safetensors_paths.append(fp)
 
     return ModelProbe(
         exists=True,
@@ -217,6 +231,7 @@ def _read_local_probe_sync(path: Path) -> ModelProbe:
         config_name=config_name,
         weight_files=weight_files,
         total_bytes=total,
+        ngram_table_bytes=sum_ngram_table_bytes(safetensors_paths) if safetensors_paths else 0,
         message=None,
     )
 

@@ -208,6 +208,10 @@ class UpdateModelRequest(BaseModel):
     is_moe: bool | None = Field(None, description="是否 MoE；不传则不修改")
     is_vision: bool | None = Field(None, description="是否视觉模型；不传则不修改")
     size_gb: float | None = Field(None, description="权重大小（GB）；不传则不修改")
+    ngram_table_gb: float | None = Field(
+        None,
+        description="n-gram 嵌入表大小（GB，Qwen4Exp PLE 表；显存预算按 size_gb − 本值折算）；不传则不修改",
+    )
     format: str | None = Field(None, description="格式：safetensors|gguf|pytorch；不传则不修改")
     quantization: str | None = Field(None, description="量化方案：awq|gptq|q4_k_m|none；不传则不修改")
     num_layers: int | None = Field(None, description="层数（KV 估算与逐层 offload 用）；不传则不修改")
@@ -322,10 +326,18 @@ async def inspect_model_source(
                 model_format=eff_format,
                 cluster_id=request.cluster_id,
                 context_size=request.context_size,
+                ngram_table_gb=files.ngram_table_gb,
             )
         except Exception as e:  # 可行性检测不得阻塞探测
             log.warning("inspect feasibility failed for %s: %s", request.source_url, e)
     return success(InspectResponse(files=files, feasibility=report))
+
+
+def _bytes_to_gb(raw: int | None) -> float | None:
+    """字节数转 GB（两位小数）；None/0 归一为 None（未扫描 / 无 n-gram 表，均按不扣减处理）。"""
+    if not raw or raw <= 0:
+        return None
+    return round(raw / 1024**3, 2)
 
 
 def _sanitize_name(name: str | None) -> str:
@@ -405,11 +417,14 @@ async def _try_merge_node_import(
     total_bytes: int | None,
     source_kind: str | None,
     weight_files: list[str],
+    ngram_table_gb: float | None = None,
 ) -> Model | None:
     """同名节点目录导入合并入口：命中既有模型时追加/刷新该节点的副本行并返回它；未命中返回 None。
 
     只在 node 源之间合并（同名的其它来源模型不吞并，明确拒绝）。同节点重复导入 =
     原地刷新该行的路径与观测值（探测已在上游校验过目录有效）。
+    ``ngram_table_gb`` 非空时顺带刷新到既有模型行——节点升级后重新导入即可补上
+    显存预算扣减值，不必手改模型字段。
     """
     from llmpod.apps.manager.model_source.inference import first_gguf_shard
 
@@ -477,6 +492,10 @@ async def _try_merge_node_import(
         copy.bytes_done = total_bytes or 0
         copy.last_error = None
         copy.last_checked_at = now
+    # n-gram 表大小：重新导入时跟随最新探测（None 不覆盖——旧节点扫不出来时别把
+    # 已有值抹掉；显式想清除可走 PATCH 模型字段）
+    if ngram_table_gb is not None:
+        m.ngram_table_gb = ngram_table_gb
     await db.flush()
     await db.refresh(m)
     await db.commit()
@@ -526,6 +545,8 @@ async def create_model(
             raise LLMPodValidationError(probe.message or "节点目录无效：未找到完整模型文件")
         node_dir = request.source_url
         node_total_bytes = probe.total_bytes
+        # n-gram 表探测值跟随节点侧扫描（旧节点不返回该字段 → None，不扣减）
+        files = files.model_copy(update={"ngram_table_gb": _bytes_to_gb(probe.ngram_table_bytes)})
         node_source_kind = files.source_kind or detect_source_kind(
             ([probe.config_name] if probe.config_name else []) + node_weight_files
         )
@@ -535,7 +556,8 @@ async def create_model(
     # node 源之间合并；撞上其它来源的同名模型时明确拒绝（下载配方语义不同）。
     if node_dir is not None:
         merged = await _try_merge_node_import(
-            db, request, node_dir, node_total_bytes, node_source_kind, node_weight_files
+            db, request, node_dir, node_total_bytes, node_source_kind, node_weight_files,
+            ngram_table_gb=files.ngram_table_gb,
         )
         if merged is not None:
             return success(merged)
@@ -564,6 +586,7 @@ async def create_model(
         # is_vision 由声明 type 推导（不再从 config 猜）：视觉类别判定走 ModelType 唯一定义处
         is_vision=ModelType.is_vision(request.model_type),
         size_gb=files.size_gb,
+        ngram_table_gb=files.ngram_table_gb,
         format=files.format,
         quantization=files.quantization,
         # 架构形状：KV cache 真公式、逐层 offload、TP 整除校验的输入（探测不到为 None）
@@ -888,6 +911,8 @@ async def update_model(
         m.is_vision = updates["is_vision"]
     if "size_gb" in updates:
         m.size_gb = updates["size_gb"]
+    if "ngram_table_gb" in updates:
+        m.ngram_table_gb = updates["ngram_table_gb"]
     if "format" in updates:
         m.format = updates["format"]
     if "quantization" in updates:

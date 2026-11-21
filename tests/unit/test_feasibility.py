@@ -511,3 +511,84 @@ class TestAssessFeasibility:
         )
         assert report.deployable is False
         assert "无在线可用节点" in (report.message or "")
+
+
+class TestNgramTableDeduction:
+    """n-gram 嵌入表（Qwen4Exp PLE 表）从显存预算扣减：引擎默认驻留内存不进显存。"""
+
+    async def test_deduction_reduces_required_and_turns_deployable(self, monkeypatch):
+        import llmpod.apps.manager.deployment.feasibility as feas
+
+        async def _fake_collect(db, cluster_id=None, *, used_vram=None):
+            return [_g(1, "nvidia", 32.0, 0.0) for _ in range(4)]  # 4×32G，cap 115.2
+
+        monkeypatch.setattr(feas, "_collect_gpu_resources", _fake_collect)
+        # 175G 全量权重按显存判 → required 175 > 115.2 不可部署（修复前口径）
+        report = await feas.assess_feasibility(
+            db=None, model_size_gb=175.36, model_type="llm", model_format="safetensors"
+        )
+        assert report.deployable is False
+
+        # 扣掉 95.37G n-gram 表 → required ≈ 80 ≤ 115.2 可部署；消息说明表去向
+        report = await feas.assess_feasibility(
+            db=None,
+            model_size_gb=175.36,
+            model_type="llm",
+            model_format="safetensors",
+            ngram_table_gb=95.37,
+        )
+        assert report.deployable is True
+        assert report.required_vram_gb == 79.99
+        assert report.ngram_table_gb == 95.37
+        assert report.model_size_gb == 175.36  # 原始大小照常回显
+        assert "n-gram 嵌入表 95.37 GB" in (report.message or "")
+        assert "disk_offload" in (report.message or "")
+
+    async def test_deduction_unknown_keeps_full_weight(self, monkeypatch):
+        """ngram_table_gb 未传/None → 维持全量口径（未扫描的模型不误放行）。"""
+        import llmpod.apps.manager.deployment.feasibility as feas
+
+        async def _fake_collect(db, cluster_id=None, *, used_vram=None):
+            return [_g(1, "nvidia", 80.0, 0.0)]
+
+        monkeypatch.setattr(feas, "_collect_gpu_resources", _fake_collect)
+        report = await feas.assess_feasibility(
+            db=None, model_size_gb=10.0, model_type="llm", model_format="safetensors", ngram_table_gb=None
+        )
+        assert report.required_vram_gb == 10.0
+        assert "n-gram" not in (report.message or "")
+
+    async def test_deduction_kv_heuristic_uses_reduced_weight(self, monkeypatch):
+        """KV 启发式基数跟着扣减后权重走（表不在显存，按全量估 KV 同样虚高）。"""
+        import llmpod.apps.manager.deployment.feasibility as feas
+
+        async def _fake_collect(db, cluster_id=None, *, used_vram=None):
+            return [_g(1, "nvidia", 80.0, 0.0)]
+
+        monkeypatch.setattr(feas, "_collect_gpu_resources", _fake_collect)
+        # 10G 权重 @8192 → KV=1（全量口径 11）；扣 4G 表 → 权重 6，KV=0.6，required 6.6
+        report = await feas.assess_feasibility(
+            db=None,
+            model_size_gb=10.0,
+            model_type="llm",
+            model_format="safetensors",
+            context_size=8192,
+            ngram_table_gb=4.0,
+        )
+        assert report.required_vram_gb == 6.6
+
+
+class TestGpuWeightGb:
+    def test_passthrough_when_unknown(self):
+        from llmpod.apps.manager.deployment.resource import gpu_weight_gb
+
+        assert gpu_weight_gb(None, 95.37) is None
+        assert gpu_weight_gb(175.36, None) == 175.36
+        assert gpu_weight_gb(175.36, 0) == 175.36
+
+    def test_deduct_and_floor_zero(self):
+        from llmpod.apps.manager.deployment.resource import gpu_weight_gb
+
+        assert gpu_weight_gb(175.36, 95.37) == 79.99
+        # 表比总权重大（探测异常）→ 下限 0，不给算术塞负数
+        assert gpu_weight_gb(10.0, 30.0) == 0.0

@@ -76,6 +76,22 @@ class KVArchMeta:
         return cls(num_layers, num_kv_heads, head_dim, positive_int(getattr(model, "kv_layers", None)))
 
 
+def gpu_weight_gb(size_gb: float | None, ngram_table_gb: float | None) -> float | None:
+    """显存侧的权重字节数：总权重 − n-gram 嵌入表（可空/未知按不扣减处理）。
+
+    Qwen4Exp 一族把约一半权重体积放在 PLE n-gram 嵌入表里，推理引擎默认让它驻留
+    CPU 内存或磁盘（见 utils/safetensors_meta 的扫描说明），显存预算不该整份
+    ``size_gb`` 均摊。``ngram_table_gb`` 未知（None）或非正数 → 原样返回 ``size_gb``
+    （修复前口径）；已知且为正 → 扣减，下限 0（表比总权重还大属探测异常，按 0 权重
+    也比负数进算术安全）。
+    """
+    if size_gb is None:
+        return None
+    if ngram_table_gb is None or ngram_table_gb <= 0:
+        return size_gb
+    return max(0.0, round(size_gb - ngram_table_gb, 2))
+
+
 def kv_cache_gb(
     weight_gb: float | None,
     context_size: int | None,

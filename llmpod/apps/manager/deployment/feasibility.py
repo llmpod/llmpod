@@ -125,6 +125,10 @@ class FeasibilityReport(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     model_size_gb: float | None = Field(None, description="模型权重大小（GB）")
+    ngram_table_gb: float | None = Field(
+        None,
+        description="n-gram 嵌入表大小（GB，Qwen4Exp PLE 表；引擎默认驻留内存/磁盘不进显存，显存预算已按 size_gb − 本值扣减；None=未扫描）",
+    )
     context_size: int | None = Field(None, description="最大上下文长度（tokens），KV cache 估算用")
     required_vram_gb: float | None = Field(None, description="所需显存 = 权重 + KV_cache(context)；size 未知为 None")
     gpu_groups: list[GpuGroupAssessment] = Field(default_factory=list, description="同构 GPU 分组评估（GPU 分组路径）")
@@ -663,6 +667,7 @@ async def assess_feasibility(
     used_vram: dict[str, float] | None = None,
     allow_cpu: bool = False,
     parallel: int = 1,
+    ngram_table_gb: float | None = None,
 ) -> FeasibilityReport:
     """可部署性检测（可复用）：显存分组匹配 + 引擎支持 + GGUF offload。
 
@@ -670,6 +675,8 @@ async def assess_feasibility(
     - ``cluster_id=None``（inspect 全局扫描）/ 非 None（create_deployment 指定集群预检）；
     - ``context_size=None``（inspect 未知 KV）/ 非 None（deploy 加 KV，避免长上下文跑起来被拒）；
     - ``kv_dtype_bytes``/``arch_meta``/``n_parallel``：KV 精度档与架构形状（真公式输入）；
+    - ``ngram_table_gb``：n-gram 嵌入表大小（Qwen4Exp PLE 表，引擎默认驻留内存/磁盘），
+      显存侧权重按 ``size_gb − ngram_table_gb`` 预算（见 ``resource.gpu_weight_gb``）；
     - ``total_layers`` 已知时 GGUF 分支走逐层 offload 模型，否则退回显存+内存单一池粗估；
     - ``node_resources`` 非空时直接用调用方已采集的节点资源（同一请求里 inspect 还要拿它算部署形态，
       避免重复查库）；None → 本函数自行采集；
@@ -684,15 +691,18 @@ async def assess_feasibility(
     # model_type 未知 → 保守按有 KV 估。KV 走全仓唯一入口 ``resource.kv_cache_gb``，
     # required = 权重 + KV 前向合成（不从 estimate_required_vram 反减——反减会跟着它
     # 将来加项而静默错位，把别的项算进 KV 池）。
+    # 显存侧权重先扣 n-gram 表（Qwen4Exp PLE 表默认驻留内存/磁盘）；KV 启发式的
+    # 基数跟着用扣减后的权重（表不在显存，按全量估 KV 同样虚高）。
+    gpu_weight = resource.gpu_weight_gb(model_size_gb, ngram_table_gb)
     kv_gb = resource.kv_cache_gb(
-        model_size_gb,
+        gpu_weight,
         context_size,
         has_kv_cache=ModelType.has_kv_cache(model_type),
         dtype_bytes=kv_dtype_bytes if kv_dtype_bytes is not None else resource.DEFAULT_KV_DTYPE_BYTES,
         arch_meta=arch_meta,
         n_parallel=n_parallel,
     )
-    required_gb = None if model_size_gb is None else round(model_size_gb + kv_gb, 2)
+    required_gb = None if gpu_weight is None else round(gpu_weight + kv_gb, 2)
 
     # 分支选择按引擎能力（不写引擎名/格式字面量）：存在「声明 CPU / 内存部署能力且格式可服务」
     # 的引擎时走逐层 offload 模型（权重可拆到内存、KV 只落一边池子）；否则走 GPU 分组口径。
@@ -718,7 +728,7 @@ async def assess_feasibility(
         offload_nodes = _assess_offload_nodes(
             node_resources,
             required_gb,
-            weight_gb=model_size_gb,
+            weight_gb=gpu_weight,
             kv_gb=kv_gb,
             total_layers=total_layers,
             allow_cpu_lane=allow_cpu,
@@ -737,8 +747,19 @@ async def assess_feasibility(
     # 一处——此前 GGUF 分支漏过它（rerank 等类别被误判可部署），分头各写就是漏改的温床
     deployable = required_gb is not None and any(e.supported is True for e in engines) and len(dep_clusters) > 0
 
+    if ngram_table_gb:
+        # 显存预算已按「总权重 − n-gram 表」折算，数字与直觉（模型 175G 但只需 80G 显存）
+        # 有落差时靠这句对齐；表本身去哪了（内存/磁盘）也一并说清
+        suffix = (
+            f"；其中 n-gram 嵌入表 {ngram_table_gb} GB 引擎默认驻留主机内存"
+            "（不占显存，已从显存预算扣除），内存紧张时可在部署参数加"
+            " --engram-config '{\"disk_offload\":true}' 改走磁盘"
+        )
+        message = f"{message}{suffix}" if message else suffix.strip("；")
+
     return FeasibilityReport(
         model_size_gb=model_size_gb,
+        ngram_table_gb=ngram_table_gb,
         context_size=context_size,
         required_vram_gb=required_gb,
         gpu_groups=gpu_groups,
