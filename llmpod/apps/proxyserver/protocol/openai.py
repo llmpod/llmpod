@@ -88,6 +88,11 @@ class OpenAIChatAdapter(OpenAIAdapterBase):
     ) -> AsyncIterator[StreamEvent]:
         """流式 SSE 逐 chunk 整形 → StreamEvent（model 回写别名），[DONE] 收尾。"""
         async with client.stream("POST", url, content=json_payload(body), headers=headers) as resp:
+            if resp.is_error:
+                # 错误体在流关闭前读入缓存：raise_for_status 抛出后响应即关，事后
+                # 再读 .text / .json() 会抛 ResponseNotRead——错误落账（error_detail）
+                # 与上游 4xx 透传的原因文本就都拿不到了
+                await resp.aread()
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 line = line.strip()

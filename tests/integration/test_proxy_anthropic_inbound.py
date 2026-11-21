@@ -343,6 +343,31 @@ class TestAnthropicErrorEnvelope:
         assert resp.status_code == 502
         assert self._envelope(resp)["error"]["type"] == "api_error"
 
+    async def test_upstream_400_passthrough_anthropic_envelope(self, client, monkeypatch):
+        """上游 400 原码透传时仍出 Anthropic 信封，type 按状态推导、message 带上游原因。
+
+        Anthropic 错误体的 type 没有与「上游拒绝」对应的取值，400 走
+        invalid_request_error（客户端按状态码选异常类，type 只影响展示文案）。
+        """
+        c, *_ = client
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={"type": "error", "error": {"type": "invalid_request_error", "message": "prompt is too long"}},
+            )
+
+        monkeypatch.setattr(app_mod, "get_anthropic_client", lambda *a, **k: _sse_upstream(handler))
+        resp = await c.post(
+            "/v1/messages",
+            json={"model": "m1", "max_tokens": 16, "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+            headers={"x-api-key": CLIENT_KEY},
+        )
+        assert resp.status_code == 400
+        body = self._envelope(resp)
+        assert body["error"]["type"] == "invalid_request_error"
+        assert "too long" in body["error"]["message"]
+
     async def test_malformed_json_400(self, client):
         c, *_ = client
         resp = await c.post(

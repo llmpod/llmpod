@@ -74,13 +74,15 @@ def openai_error(status: int, message: str, err_type: str, code: str) -> JSONRes
 
 # Anthropic 错误体的 type 取值由 HTTP 状态推导（Anthropic 无 code 字段，只有 type）。
 # 只列本管道真的会产生的状态：准入链的 400/401/402/403/404/429/503 与上游归一后的
-# 429/504/502（见 _upstream_status）。未命中的状态回落到 api_error——客户端按状态码
-# 选异常类，type 只影响展示文案。
+# 429/504/502（见 _upstream_status）及透传的 400/413/422。未命中的状态回落到
+# api_error——客户端按状态码选异常类，type 只影响展示文案。
 _ANTHROPIC_ERROR_TYPES = {
     400: "invalid_request_error",
     401: "authentication_error",
     403: "permission_error",
     404: "not_found_error",
+    413: "request_too_large",
+    422: "invalid_request_error",
     429: "rate_limit_error",
 }
 
@@ -112,7 +114,7 @@ def error_response(protocol: str, status: int, message: str, err_type: str, code
 
 
 def upstream_error_response(e: Exception, protocol: str = "openai") -> JSONResponse:
-    """上游异常归一：429 透传、超时 504、其余 502 bad_gateway。
+    """上游异常归一：上游 4xx 原码透传（含 429）、超时 504、其余 502 bad_gateway。
 
     状态判定只走 :func:`_upstream_status`（与错误落账同源），避免两处
     isinstance 规则各自演化出现「落账 504、响应 502」的漂移。
@@ -122,13 +124,29 @@ def upstream_error_response(e: Exception, protocol: str = "openai") -> JSONRespo
         return error_response(protocol, 429, "upstream rate limited", "rate_limit_error", "engine_rate_limited")
     if status == 504:
         return error_response(protocol, 504, "upstream timeout", "api_error", "upstream_timeout")
+    if status in _UPSTREAM_PASSTHROUGH_STATUSES:
+        message = _upstream_reject_message(e, status)
+        return error_response(protocol, status, message, "invalid_request_error", "upstream_rejected")
     return error_response(protocol, 502, "upstream error", "api_error", "bad_gateway")
 
 
+_UPSTREAM_PASSTHROUGH_STATUSES = frozenset({400, 413, 422})
+
+
 def _upstream_status(e: Exception) -> int:
-    """上游失败的对外状态码（429 透传/超时 504/其余 502）；错误落账与响应归一共用。"""
-    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
-        return 429
+    """上游失败的对外状态码（429 与请求类 4xx 透传/超时 504/其余 502）；错误落账与响应归一共用。
+
+    上游 400/413/422 是对「这个请求」的拒绝（超长、参数非法、body 结构不合法），
+    换个端点大概率同样被拒：归成 502 会把客户端自己的问题误标成网关故障，带自动
+    重试的客户端（agent/SDK）会对必然再被拒的请求反复重试；原码透传让客户端第一
+    次就拿到可分类的真实原因。401/403/404 不透传——它们说的是平台侧与上游之间
+    的事（端点密钥配错、路径/模型名配错），回给客户端 401 会被理解成「客户端自己
+    的 Key 失效」，误导排障方向，仍归 502。
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        code = e.response.status_code
+        if code == 429 or code in _UPSTREAM_PASSTHROUGH_STATUSES:
+            return code
     return 504 if isinstance(e, httpx.TimeoutException) else 502
 
 
@@ -156,6 +174,27 @@ def _upstream_error_detail(e: Exception) -> str | None:
     if len(body) > 500:
         body = body[:500] + "…[truncated]"
     return body
+
+
+def _upstream_reject_message(e: Exception, status: int) -> str:
+    """上游 4xx 透传时给客户端看的原因：优先取上游错误体的 error.message 字段。
+
+    openai 系与 anthropic 系的错误体都是 ``{"error": {"message": ...}}`` 信封
+    （vLLM 同构），这段原文（如「超过最大上下文长度」）正是客户端排障需要的
+    信息；只透传这一个字段，不透传整个错误体。取不到（非 JSON / 无该字段 /
+    流式响应错误体未预读）时退回状态码短句，客户端至少保有可分类的状态码。
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        try:
+            dumped = e.response.json()
+        except Exception:
+            dumped = None
+        error = dumped.get("error") if isinstance(dumped, dict) else None
+        text = error.get("message") if isinstance(error, dict) else None
+        if isinstance(text, str) and text.strip():
+            text = text.strip()
+            return text[:300] + "…" if len(text) > 300 else text
+    return f"upstream rejected request (HTTP {status})"
 
 
 def _failure_counts_toward_cooldown(e: Exception, candidate_count: int) -> bool:

@@ -878,6 +878,97 @@ class TestRequestLogging:
         assert row.upstream_type == "local"
         assert row.error_message == "upstream HTTP 500"
 
+    async def test_upstream_400_passthrough_with_reason(self, client, monkeypatch, tmp_path):
+        """上游 400（请求级拒绝，如超上下文）→ 原码透传 + 上游原因给客户端，不再误标 502。
+
+        502 会被客户端当成网关故障盲目重试（agent 对必然再被拒的请求反复刷），
+        透传 400 与上游原文让客户端第一次就拿到可行动的原因。
+        """
+        c, db, redis, app = client
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "This model's maximum context length is 8 tokens.", "type": "BadRequestError"}},
+            )
+
+        fake_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10)
+        monkeypatch.setattr(app_mod, "get_openai_client", lambda *a, **k: fake_client)
+        _attach_logger(app, db, tmp_path)
+
+        resp = await c.post(
+            "/v1/chat/completions",
+            json={"model": "m1", "messages": [{"role": "user", "content": "hi"}]},
+            headers=AUTH,
+        )
+        assert resp.status_code == 400
+        err = resp.json()["error"]
+        assert err["code"] == "upstream_rejected"
+        assert "maximum context length" in err["message"]
+
+        await asyncio.sleep(0.05)
+        row = db.all(RequestLog)[0]
+        assert row.status == "error"
+        assert row.http_status == 400  # 落账与响应同源（同一 _upstream_status）
+        assert "maximum context length" in row.error_detail
+
+    async def test_upstream_400_stream_keeps_reason_and_detail(self, client, monkeypatch, tmp_path):
+        """流式请求的上游 400：错误体在流关闭前预读——客户端看到原因、error_detail 不丢。
+
+        流式响应的 raise_for_status 抛出后连接即关，未预读的错误体事后不可读
+        （ResponseNotRead）——此用例钉住适配器里的预读行为，防止回退成
+        「客户端只看到 opaque 文案、管理台 error_detail 全空」。
+        """
+        c, db, redis, app = client
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "This model's maximum context length is 8 tokens.", "type": "BadRequestError"}},
+            )
+
+        fake_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10)
+        monkeypatch.setattr(app_mod, "get_openai_client", lambda *a, **k: fake_client)
+        _attach_logger(app, db, tmp_path)
+
+        resp = await c.post(
+            "/v1/chat/completions",
+            json={"model": "m1", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+            headers=AUTH,
+        )
+        assert resp.status_code == 400
+        assert "maximum context length" in resp.json()["error"]["message"]
+
+        await asyncio.sleep(0.05)
+        row = db.all(RequestLog)[0]
+        assert row.http_status == 400
+        assert "maximum context length" in row.error_detail
+
+    async def test_upstream_401_stays_bad_gateway(self, client, monkeypatch, tmp_path):
+        """上游 401 不透传——它说的是端点密钥配错（平台侧问题），客户端看到 401 会
+        误判成自己的 Key 失效，仍归 502。"""
+        c, db, redis, app = client
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"error": {"message": "Incorrect API key provided"}})
+
+        fake_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10)
+        monkeypatch.setattr(app_mod, "get_openai_client", lambda *a, **k: fake_client)
+        _attach_logger(app, db, tmp_path)
+
+        resp = await c.post(
+            "/v1/chat/completions",
+            json={"model": "m1", "messages": [{"role": "user", "content": "hi"}]},
+            headers=AUTH,
+        )
+        assert resp.status_code == 502
+        assert resp.json()["error"]["code"] == "bad_gateway"
+
+        await asyncio.sleep(0.05)
+        row = db.all(RequestLog)[0]
+        assert row.http_status == 502
+        assert "Incorrect API key" in row.error_detail  # 原文照常进管理员字段
+
     async def test_upstream_timeout_returns_504_not_hang(self, client, monkeypatch, tmp_path):
         """上游死亡/黑洞（读超时）→ 快速失败 504 + error 落账，绝不无限挂起。"""
         c, db, redis, app = client
