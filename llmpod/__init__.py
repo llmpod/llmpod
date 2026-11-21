@@ -1,3 +1,3 @@
 """LLMPod: AI 推理网关平台"""
 
-__version__ = "26.11.18"
+__version__ = "26.11.21-beta"
