@@ -171,6 +171,10 @@ describe('statistics useStore', () => {
       request_body: { model: 'deepseek-v3' },
     })
     expect(getTenantRequestLog).toHaveBeenCalledWith('req-uuid-1')
+
+    const controller = new AbortController()
+    await store.getDetail('req-uuid-1', controller.signal)
+    expect(getTenantRequestLog).toHaveBeenLastCalledWith('req-uuid-1', controller.signal)
   })
 
   it('request 请求失败向上抛错(useTable onError 接管)', async () => {

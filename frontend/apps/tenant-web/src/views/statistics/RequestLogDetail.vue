@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import {
   useStore,
   logStatusMap,
@@ -12,45 +12,68 @@ import {
 const props = defineProps<{ requestId: string }>()
 
 const { getDetail } = useStore()
-const detail = ref<RequestLogDetailData>()
+/** shallowRef 避免大体积 request_body/response_body 被深层 Proxy 递归代理 */
+const detail = shallowRef<RequestLogDetailData>()
 const loading = ref(false)
+const loadFailed = ref(false)
 
-onMounted(async () => {
+let abortController: AbortController | null = null
+
+async function fetchDetail() {
+  abortController?.abort()
+  const controller = new AbortController()
+  abortController = controller
+
   loading.value = true
+  loadFailed.value = false
   try {
-    detail.value = await getDetail(props.requestId)
+    const data = await getDetail(props.requestId, controller.signal)
+    if (!controller.signal.aborted) {
+      detail.value = data
+    }
+  } catch {
+    if (!controller.signal.aborted) {
+      loadFailed.value = true
+    }
   } finally {
-    loading.value = false
+    if (!controller.signal.aborted) {
+      loading.value = false
+    }
   }
+}
+
+onMounted(() => {
+  void fetchDetail()
 })
 
-/** body 展示:JSON 格式化,非 JSON 原样;{ _raw } 取原串 */
-function formatBody(body: unknown): string {
-  if (body == null) return '—'
-  if (typeof body === 'string') {
-    try {
-      return JSON.stringify(JSON.parse(body), null, 2)
-    } catch {
-      return body
-    }
-  }
-  if (typeof body === 'object') {
-    const raw = (body as { _raw?: unknown })._raw
-    if (typeof raw === 'string') return raw
-    try {
-      return JSON.stringify(body, null, 2)
-    } catch {
-      return String(body)
-    }
-  }
-  return String(body)
-}
+onBeforeUnmount(() => {
+  abortController?.abort()
+  abortController = null
+})
 </script>
 
 <template>
-  <n-spin :show="loading">
+  <n-spin
+    :show="loading"
+    class="min-h-[12rem]"
+  >
     <div
-      v-if="detail"
+      v-if="loadFailed && !detail && !loading"
+      class="flex flex-col items-center justify-center gap-[1rem] py-[3rem]"
+    >
+      <n-empty
+        size="small"
+        description="日志详情加载失败"
+      />
+      <n-button
+        size="small"
+        @click="fetchDetail"
+      >
+        重新加载
+      </n-button>
+    </div>
+    <div
+      v-else-if="detail"
       class="flex flex-col gap-[1rem]"
     >
       <!-- 基础信息 -->
@@ -143,18 +166,18 @@ function formatBody(body: unknown): string {
 
       <!-- 请求体 -->
       <section>
-        <div class="text-small font-semibold text-strong mb-[.8rem]">
-          请求体
-        </div>
-        <pre class="m-[0] max-h-[24rem] overflow-auto rounded-md bg-fill-2 p-[1rem] text-xs leading-[1.6]">{{ formatBody(detail.request_body) }}</pre>
+        <LmVirtualText
+          title="请求体"
+          :content="detail.request_body"
+        />
       </section>
 
       <!-- 响应体 -->
       <section>
-        <div class="text-small font-semibold text-strong mb-[.8rem]">
-          响应体
-        </div>
-        <pre class="m-[0] max-h-[24rem] overflow-auto rounded-md bg-fill-2 p-[1rem] text-xs leading-[1.6]">{{ formatBody(detail.response_body) }}</pre>
+        <LmVirtualText
+          title="响应体"
+          :content="detail.response_body"
+        />
       </section>
     </div>
   </n-spin>

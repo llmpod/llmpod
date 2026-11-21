@@ -179,6 +179,10 @@ describe('bills useStore', () => {
     expect(result.request_id).toBe('req-9')
     expect(result.request_body).toEqual({ messages: [] })
     expect(result.error_detail).toBe('upstream 500: internal error')
+
+    const controller = new AbortController()
+    await store.getDetail('req-9', controller.signal)
+    expect(getRequestLog).toHaveBeenLastCalledWith('req-9', controller.signal)
   })
 
   it('formatDecimal 去尾零/空值/非法', () => {

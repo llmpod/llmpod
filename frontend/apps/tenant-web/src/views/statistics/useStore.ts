@@ -99,9 +99,12 @@ export function useStore() {
     return { data: result.items, total: result.total }
   }
 
-  /** 调用日志详情(含 request_body/response_body) */
-  const getDetail = async (requestId: string): Promise<RequestLogDetailData> => {
-    return getTenantRequestLog(requestId)
+  /** 调用日志详情(含 request_body/response_body);支持传 signal 随弹窗关闭取消请求 */
+  const getDetail = async (
+    requestId: string,
+    signal?: AbortSignal,
+  ): Promise<RequestLogDetailData> => {
+    return signal ? getTenantRequestLog(requestId, signal) : getTenantRequestLog(requestId)
   }
 
   return { request, getDetail }
