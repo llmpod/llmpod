@@ -335,7 +335,10 @@ def _summarize(
         can_fit_clusters = sorted({g.cluster_id for g in groups if g.can_fit})
         if can_fit_clusters:
             return f"集群 {can_fit_clusters} 显存够但 GPU 架构无引擎支持；其余集群显存不足，需 {required_gb} GB"
-        return f"显存不足：所有集群同构分组可用×0.9 < 所需 {required_gb} GB"
+        # 合计上限用各组总量×默认占比（不扣实时占用）：说「最多可用」留的是理论上限——
+        # 需求是估算值（size 元数据错了结论就错），结论只说平台做不出推荐，不断言绝对放不下
+        max_cap_gb = round(sum(g.total_vram_gb for g in groups) * VRAM_UTILIZATION, 1)
+        return f"模型需约 {required_gb} GB，集群全部 GPU 合计最多可用显存约 {max_cap_gb} GB，无法为其推荐部署"
     return f"可在集群 {deployable_clusters} 部署（所需 {required_gb} GB）"
 
 

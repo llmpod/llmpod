@@ -217,13 +217,15 @@ def derive_tp(
     required_vram_gb: float | None,
     arch_order: list[str],
     shape: parallel.ParallelShape | None = None,
-) -> int:
+) -> int | None:
     """从可选卡推导能跑的最小 TP（单机 nnodes=1、pp=1 前置由调用方保证；适配器未测 pp/ep）。
 
     ``eligible_cards`` 任意带 ``arch / node_id / total_vram_gb / available_vram_gb`` 属性的对象
     （可选卡 = 在线 + 引擎支持 + 有匹配镜像 + 未被占用）。按 (arch, total_vram) 分组后按节点聚合，
     逐节点问 :func:`feasible_tp_for_node`。返回所有可行组中**最小**的 tp（1 表示有单卡可行的组
-    ——能一张卡跑就不推两张）；完全无可行组时返回 1（此时模型在该集群放不下，交给后续校验报原因）。
+    ——能一张卡跑就不推两张）；无卡可选、需求未知或完全无可行组时返回 None——此时 tp 推荐
+    不成立（模型按估算口径放不下，或无从判定），调用方据此隐藏「推荐 tp=」展示，
+    真实结论交给后续校验报原因。
 
     **合法**指 tp 能切开模型权重（``parallel.suggested_tp_sizes``：attention head 与 KV head
     两个整除约束）。旧口径是纯 ``ceil(required / 每卡可用)``，能推出 tp=3 这类引擎建层期必炸的
@@ -236,7 +238,7 @@ def derive_tp(
     ``arch_order`` 只决定优先尝试顺序，结果取 min 后顺序不再影响取值。
     """
     if not eligible_cards or required_vram_gb is None:
-        return 1
+        return None
     feasible: list[int] = []
     for arch in arch_order:
         by_total: dict[float, list] = defaultdict(list)
@@ -252,7 +254,7 @@ def derive_tp(
                 if fit is not None:
                     feasible.append(fit)
     if not feasible:
-        return 1
+        return None
     return min(feasible)
 
 

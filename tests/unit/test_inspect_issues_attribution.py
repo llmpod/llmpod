@@ -259,6 +259,52 @@ def _M_LLM():
 class TestEmptyPlacementAttribution:
     """推荐调度为空的原因分流（「提高 tp」/「释放卡」两分支见 test_inspect_occupancy.py）。"""
 
+    async def test_no_fit_marks_tp_infeasible(self):
+        """模型大于集群合计上限且卡全被占用：tp 推导无解 → 响应 tp_feasible=False
+        （tp=1 只是基线占位不构成推荐，前端据此隐藏「推荐 tp=」段）；拓扑保持基线，
+        下游校验/归因照常按它跑。放不下文案的口径见 test_feasibility 的
+        TestSummarizeNoFitMessage（assess_feasibility 内部查询超出 FakeSession 能力，
+        响应级 issues 不在此断言）。
+        """
+        s = _seed(
+            Model(id=1, name="m", model_type="llm", size_gb=45.0, format="safetensors"),
+            _gpu(1, "g1"),
+            _gpu(2, "g2"),
+        )
+        # 两张卡都被运行中部署占用（复刻线上 4×32G 全占用场景）：eligible 空 → 无可行 tp
+        s.preload(
+            ModelDeployment(
+                deployment_id="dep-x",
+                cluster_id=1,
+                name="busy",
+                model_id=1,
+                engine="vllm",
+                status="running",
+                phase="RUNNING",
+                spec={},
+            )
+        )
+        for gid, uuid in [(1, "g1"), (2, "g2")]:
+            s.preload(
+                DeploymentGpuAssignment(
+                    id=gid,
+                    deployment_id="dep-x",
+                    gpu_uuid=uuid,
+                    allocated_vram_gb=19.8,
+                    gpu_memory_utilization=0.9,
+                )
+            )
+        result = await _inspect(s, topology=None)  # 不带显式拓扑（向导首屏的自动推荐请求）
+        rec = result["data"]["recommendation"]
+        assert rec["tp_feasible"] is False
+        assert rec["topology"]["tp"] == 1  # 拓扑保持基线，下游归因照旧
+
+    async def test_feasible_tp_keeps_recommendation(self):
+        """模型放得下（正向对照）：推导成立 → tp_feasible=True，展示行为不变。"""
+        s = _seed(Model(id=1, name="m", model_type="llm", size_gb=1.0, format="safetensors"), _gpu(1, "g1"))
+        result = await _inspect(s)
+        assert result["data"]["recommendation"]["tp_feasible"] is True
+
     async def test_no_schedulable_arch_for_topology(self, monkeypatch):
         """全 cann 集群 + pp=2：卡不灰（镜像在、架构受支持）但拓扑只有 nvidia 服务得了
         → arch_candidates 空，分流到「没有可用于本引擎/本拓扑的架构」。vllm 现已声明

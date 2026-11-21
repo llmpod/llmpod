@@ -15,6 +15,7 @@ from llmpod.apps.manager.deployment.feasibility import (
     _assess_groups,
     _assess_offload_nodes,
     _deployable_clusters,
+    _summarize,
     assess_engine_support,
 )
 from llmpod.apps.manager.deployment.engine.base import estimate_required_vram
@@ -175,6 +176,35 @@ class TestDeployableClusters:
         groups = _assess_groups([_g(1, "nvidia", 10.0, 0.0)], 100.0)  # cap 9 < 100
         engines = self._engines({"vllm": True})
         assert _deployable_clusters(groups, engines, 100.0) == []
+
+
+# ============ _summarize（放不下文案） ============
+
+
+class TestSummarizeNoFitMessage:
+    def _engines(self, supported_map: dict[str, bool | None]) -> list[EngineAssessment]:
+        return [EngineAssessment(engine=k, supported=v, reasons=[]) for k, v in supported_map.items()]
+
+    def test_no_fit_message_carries_total_cap(self):
+        """全线放不下：文案带「需求 / 全部 GPU 合计上限 / 无法推荐」三要素。
+
+        合计上限按各组总量×0.9（不扣实时占用）——上限是理论上限，需求是估算值，
+        结论只说平台做不出推荐，不断言绝对放不下。
+        """
+        # 4×31.84GB（用户线上 4×5090 场景）：Σtotal=127.36，×0.9 → 114.6
+        groups = _assess_groups(
+            [_g(1, "nvidia", 31.84, 0.0) for _ in range(4)],
+            175.55,
+        )
+        msg = _summarize(groups, self._engines({"vllm": True}), 175.55, [])
+        assert msg == "模型需约 175.55 GB，集群全部 GPU 合计最多可用显存约 114.6 GB，无法为其推荐部署"
+
+    def test_fit_clusters_keep_old_wording(self):
+        """显存够但架构无引擎：仍走集群点名文案（本分支不在本次改动内）。"""
+        groups = _assess_groups([_g(2, "rocm", 100.0, 0.0)], 50.0)  # cap 90 ≥ 50 → fit
+        engines = self._engines({"vllm": True})  # vllm 不支持 rocm → 无可部署集群
+        msg = _summarize(groups, engines, 50.0, [])
+        assert msg == "集群 [2] 显存够但 GPU 架构无引擎支持；其余集群显存不足，需 50.0 GB"
 
 
 # ============ _assess_offload_nodes（GGUF per-node offload） ============

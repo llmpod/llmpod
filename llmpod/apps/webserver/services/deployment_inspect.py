@@ -123,6 +123,9 @@ class InspectState:
     vram_per_gpu: float = 0.0
     arch_order: list = field(default_factory=list)
     tp_explicit: bool = False
+    # tp 推导无解（_derive_tp 产出）：无可行并行度，tp=1 基线不构成推荐——
+    # 响应层据此回 tp_feasible=False，前端隐藏「推荐 tp=」段（归因已在 issues）
+    tp_no_fit: bool = False
 
     # 集群与实时快照（realtime 在编排入口取一次，后续只消费这一份——不同阶段各查
     # 各的会出现「前一阶段认为有卡、后一阶段认为没有」的自相矛盾推荐）
@@ -599,7 +602,12 @@ def _derive_tp(c: InspectState) -> None:
             arch_order=c.arch_order,
             shape=c.shape,
         )
-        if derived > max(1, int(c.topo.tp or 1)):
+        if derived is None:
+            # 无可行并行度（含可选卡为空/需求未知）：拓扑保持 tp=1 基线——下游校验、归因、
+            # 推荐调度照常按它跑；仅置无解旗标，响应层据此告知前端 tp 推荐不成立
+            # （基线值不是建议，照旧展示就成了「推荐 tp=1(每卡约 175.55GB)」式的自相矛盾）
+            c.tp_no_fit = True
+        elif derived > max(1, int(c.topo.tp or 1)):
             log.info("inspect model=%s 推导 tp=%s（用户未显式指定）", c.request.model_id, derived)
             # with_updates 让 units/旧四数两套字段同步（model_copy 直改 tp 会与 units 漂移，
             # recommendation.topology 回读 Topology 时被冲突校验拒）
@@ -1173,6 +1181,7 @@ def _build_response(c: InspectState) -> InspectDeploymentResponse:
             image=c.recommendation.image,
             topology=Topology(**c.recommendation.topology),
             vram_per_gpu_gb=c.recommendation.vram_per_gpu_gb,
+            tp_feasible=not c.tp_no_fit,
             # 版本感知的有效词表（如 SGLang 0.4.2/0.4.6 无 --pp-size → 不含 pp）——
             # pp 门控与 SGLang 组装期硬拒同源，防前端绿灯、提交后才炸
             supported_parallel=c.adapter.supported_parallel_at(c.request.image_tag),

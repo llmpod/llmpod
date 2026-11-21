@@ -121,6 +121,14 @@ class Recommendation(BaseModel):
     image: str
     topology: Topology
     vram_per_gpu_gb: float
+    tp_feasible: bool = Field(
+        True,
+        description=(
+            "tp 推荐是否成立：用户未显式指定 tp 时按集群可选卡推导，无可行并行度"
+            "（按估算口径放不下/无卡可选/需求未知）时为 False——topology.tp 只是基线值不构成建议，"
+            "前端应隐藏「推荐 tp=」展示；显式指定 tp 或手动选卡时不做推导，恒为 True"
+        ),
+    )
     supported_parallel: list[str] = Field(
         default_factory=list,
         description="引擎声明的并行能力（tp/pp/ep 白名单；pp 门控位，未声明则 pp>1 需 force）",

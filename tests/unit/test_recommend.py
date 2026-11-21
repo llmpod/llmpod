@@ -157,13 +157,13 @@ class TestDeriveTp:
         assert derive_tp(cards, required_vram_gb=33.0, arch_order=["nvidia"]) == 1
 
     def test_infeasible_group_excluded(self):
-        """凑不够的组不参与推导：60GB 模型 + 仅 2×22GB（need=4 > 2）→ 无可行组 → 1。
+        """凑不够的组不参与推导：60GB 模型 + 仅 2×22GB（need=4 > 2）→ 无可行组 → None。
 
         复刻 review 场景：min(need, len) 会把 need=4 伪装成 tp=2——按 2 卡永远放不下，
-        推导应放弃（回 1），交给后续校验报「提高 tp 也无用」的真实原因。
+        推导应放弃（无解），交给后续校验报「提高 tp 也无用」的真实原因。
         """
         cards = [self._card("n1"), self._card("n1")]
-        assert derive_tp(cards, required_vram_gb=60.0, arch_order=["nvidia"]) == 1
+        assert derive_tp(cards, required_vram_gb=60.0, arch_order=["nvidia"]) is None
 
     def test_feasible_group_beats_infeasible(self):
         """同集群有可行组（80GB 单卡）与不可行组（22GB×2，need=4）→ 取可行组 need=1。"""
@@ -176,15 +176,15 @@ class TestDeriveTp:
             self._card("n1", arch="cann"),
             self._card("n1", arch="cann"),
         ]
-        assert derive_tp(cards, required_vram_gb=33.0, arch_order=["nvidia"]) == 1
+        assert derive_tp(cards, required_vram_gb=33.0, arch_order=["nvidia"]) is None
 
-    def test_required_none_returns_1(self):
-        """required 未知 → 不推导。"""
+    def test_required_none_returns_none(self):
+        """required 未知 → 不推导（tp 推荐不成立）。"""
         cards = [self._card("n1")]
-        assert derive_tp(cards, required_vram_gb=None, arch_order=["nvidia"]) == 1
+        assert derive_tp(cards, required_vram_gb=None, arch_order=["nvidia"]) is None
 
-    def test_empty_cards_returns_1(self):
-        assert derive_tp([], required_vram_gb=33.0, arch_order=["nvidia"]) == 1
+    def test_empty_cards_returns_none(self):
+        assert derive_tp([], required_vram_gb=33.0, arch_order=["nvidia"]) is None
 
     def test_illegal_tp_falls_back_to_next_legal_size(self):
         """显存算得下 tp=3，但 4 个 head 切不开 3 份 → 退到合法的 tp=4。
@@ -201,12 +201,12 @@ class TestDeriveTp:
     def test_no_legal_tp_gives_up_instead_of_emitting_broken_value(self):
         """组内没有合法 tp 能承担所需卡数 → 放弃推导（不推一个必炸的值）。
 
-        heads=32 / kv=6 时 tp=4 非法（6 % 4 ≠ 0），合法集只有 {1,2}；need=4 无解 → 回 1，
+        heads=32 / kv=6 时 tp=4 非法（6 % 4 ≠ 0），合法集只有 {1,2}；need=4 无解 → None，
         交给后续校验报「放不下」的真实原因。
         """
         cards = [self._card("n1") for _ in range(4)]
         shape = ParallelShape(num_attention_heads=32, num_kv_heads=6)
-        assert derive_tp(cards, required_vram_gb=60.0, arch_order=["nvidia"], shape=shape) == 1
+        assert derive_tp(cards, required_vram_gb=60.0, arch_order=["nvidia"], shape=shape) is None
 
     def test_unknown_shape_behaves_like_legacy(self):
         """形状未探测（全 None）→ 合法集退化为 1..卡数，与旧行为逐值一致。"""
