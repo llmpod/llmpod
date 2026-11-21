@@ -42,13 +42,17 @@ import {
   buildDisplayRows,
   buildTimelineRows,
   containerNameFor,
+  extractConsoleSelectionText,
   firstLoadPage,
   formatAbsoluteTime,
   formatRelativeTime,
+  htmlToPlainText,
   isSameSecond,
   mergeConsoleLines,
   mergeLogsById,
   nodeDisplayName,
+  normalizeConsoleSelection,
+  shiftConsoleSelectionPoint,
   stepTitle,
 } from '@/views/deploy/components/deploy-list/deploy-detail/logs/logUtils'
 
@@ -148,8 +152,60 @@ describe('logUtils 纯函数', () => {
     expect(mergeConsoleLines(['a', 'b'], ['a', 'b', 'e'])).toEqual(['a', 'b', 'e'])
     // 全重复
     expect(mergeConsoleLines(['a'], ['a'])).toBeNull()
-    // 全新(existing 空)
+    // 空(existing 空)
     expect(mergeConsoleLines([], ['a', 'b'])).toEqual(['a', 'b'])
+  })
+
+  it('htmlToPlainText:剥除 ansi_up HTML 标签并反转义实体,不二次反转义 &amp;lt;', () => {
+    expect(
+      htmlToPlainText(
+        '<span style="color:rgb(0,187,0)">INFO</span>: a &lt; b &amp;&amp; c &gt; &quot;d&quot; &#x27;e&#x27; &amp;lt;',
+      ),
+    ).toBe('INFO: a < b && c > "d" \'e\' &lt;')
+  })
+
+  it('normalizeConsoleSelection & extractConsoleSelectionText:正反向归一化与跨屏文本提取', () => {
+    expect(normalizeConsoleSelection(null, { index: 1, offset: 0 })).toBeNull()
+    expect(normalizeConsoleSelection({ index: 2, offset: 3 }, { index: 2, offset: 3 })).toBeNull()
+
+    // 反向框选自动归一为 start <= end
+    const backward = normalizeConsoleSelection({ index: 3, offset: 4 }, { index: 1, offset: 2 })
+    expect(backward).toEqual({
+      start: { index: 1, offset: 2 },
+      end: { index: 3, offset: 4 },
+    })
+
+    const lines = [
+      { text: 'line-000' },
+      { text: 'line-001' },
+      { text: 'line-002' },
+      { text: 'line-003' },
+      { text: 'line-004' },
+    ]
+    // 跨多行提取(首行截起点,中间行完整保留,末行截终点)
+    expect(extractConsoleSelectionText(lines, backward)).toBe('ne-001\nline-002\nline')
+
+    // 单行局部提取
+    const singleLine = normalizeConsoleSelection({ index: 2, offset: 5 }, { index: 2, offset: 8 })
+    expect(extractConsoleSelectionText(lines, singleLine)).toBe('002')
+  })
+
+  it('shiftConsoleSelectionPoint:历史前插与超限截头时平移下标并夹紧边界', () => {
+    const lenOf = () => 10
+    expect(shiftConsoleSelectionPoint({ index: 5, offset: 4 }, 10, 30, lenOf)).toEqual({
+      index: 15,
+      offset: 4,
+    })
+    // 超限截头导致原起点落到 <0 时夹紧到首行起点
+    expect(shiftConsoleSelectionPoint({ index: 3, offset: 4 }, -5, 30, lenOf)).toEqual({
+      index: 0,
+      offset: 0,
+    })
+    // 越过末行时夹紧到末行末尾
+    expect(shiftConsoleSelectionPoint({ index: 25, offset: 4 }, 10, 30, lenOf)).toEqual({
+      index: 29,
+      offset: 10,
+    })
   })
 
   it('stepTitle:文档 §4 词表映射;start 按 extra.action 细化;未知原样', () => {
@@ -659,6 +715,83 @@ describe('ContainerConsole 容器 stdout', () => {
     expect(document.body.textContent).toContain('已收 4000 行')
     expect(document.body.textContent).not.toContain('line-0005')
     expect(document.body.textContent).toContain('line-0006')
+    wrapper.unmount()
+  })
+
+  it('跨屏选中与复制:支持拖拽滚屏选区、Shift+Click 跨行扩展与 Ctrl+A 全选复制(自动剥除 ANSI)', async () => {
+    const getStream = captureStream()
+    const wrapper = mount(ContainerConsole, {
+      props: { deploymentId: 'd1', instances: [makeInstance()] },
+      attachTo: document.body,
+    })
+    await vi.waitFor(() => expect(tailContainerLog).toHaveBeenCalledTimes(1))
+    const stream = getStream()!
+    for (let index = 0; index < 10; index += 1) {
+      stream.onFrame({
+        event: 'data',
+        data: `\u001b[32mINFO\u001b[0m row-${index}`,
+      })
+    }
+    await vi.waitFor(() => expect(document.body.textContent).toContain('INFO row-9'))
+
+    const row1 = wrapper.find('[data-line-index="1"]')
+    const row6 = wrapper.find('[data-line-index="6"]')
+    const row8 = wrapper.find('[data-line-index="8"]')
+
+    // 1) 在第 1 行按下鼠标,模拟滚屏后拖拽到第 6 行释放
+    await row1.trigger('mousedown', { button: 0, clientX: 0, clientY: 10 })
+    const virtualList = wrapper.findComponent({ name: 'NVirtualList' })
+    await virtualList.trigger('scroll')
+    row6.element.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: 200, clientY: 120 }),
+    )
+    window.dispatchEvent(new MouseEvent('mouseup'))
+    await nextTick()
+
+    expect(wrapper.find('[data-line-index="1"]').attributes('data-selected')).toBe('true')
+    expect(wrapper.find('[data-line-index="4"]').attributes('data-selected')).toBe('true')
+    expect(wrapper.find('[data-line-index="6"]').attributes('data-selected')).toBe('true')
+    expect(wrapper.find('[data-line-index="7"]').attributes('data-selected')).toBeUndefined()
+
+    const copyData = new Map<string, string>()
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(copyEvent, 'clipboardData', {
+      value: {
+        setData: (type: string, val: string) => copyData.set(type, val),
+      },
+    })
+    row6.element.dispatchEvent(copyEvent)
+    expect(copyEvent.defaultPrevented).toBe(true)
+    expect(copyData.get('text/plain')).toBe(
+      ['INFO row-1', 'INFO row-2', 'INFO row-3', 'INFO row-4', 'INFO row-5', 'INFO row-6'].join(
+        '\n',
+      ),
+    )
+
+    // 2) Shift+Click 跨行扩展到第 8 行
+    await row8.trigger('mousedown', { button: 0, shiftKey: true, clientX: 200, clientY: 160 })
+    window.dispatchEvent(new MouseEvent('mouseup'))
+    row8.element.dispatchEvent(copyEvent)
+    expect(copyData.get('text/plain')).toBe(
+      [
+        'INFO row-1',
+        'INFO row-2',
+        'INFO row-3',
+        'INFO row-4',
+        'INFO row-5',
+        'INFO row-6',
+        'INFO row-7',
+        'INFO row-8',
+      ].join('\n'),
+    )
+
+    // 3) Ctrl+A 全选全部 10 行并复制
+    await row1.trigger('keydown', { key: 'a', ctrlKey: true })
+    row1.element.dispatchEvent(copyEvent)
+    expect(copyData.get('text/plain')).toBe(
+      Array.from({ length: 10 }, (_, idx) => `INFO row-${idx}`).join('\n'),
+    )
+
     wrapper.unmount()
   })
 })

@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { ArrowDownOutline, PlayOutline, StopOutline } from '@vicons/ionicons5'
+import { copyToClipboard } from '@repo/hooks'
 import { AnsiUp } from 'ansi_up'
 import type { VirtualListInst } from 'naive-ui'
 import type { DeploymentInstance } from '@/api/deployment'
 import { tailContainerLog } from '@/api/tail-log'
-import { containerNameFor } from './logUtils'
+import {
+  containerNameFor,
+  extractConsoleSelectionText,
+  htmlToPlainText,
+  normalizeConsoleSelection,
+  shiftConsoleSelectionPoint,
+  type ConsoleSelectionPoint,
+} from './logUtils'
 
 /**
  * 容器 stdout(POST /orchestration/nodes/{nid}/tasks/tail-log,文档 §4),以弹窗形式打开:
@@ -65,19 +73,507 @@ type StreamStatus = 'idle' | 'connecting' | 'running' | 'ended' | 'error'
 const status = ref<StreamStatus>('idle')
 const errorMessage = ref('')
 
-/** 控制台行:raw 留原文(expand 去重比对),html 为 ANSI 上色结果(ansi_up 已做 HTML 转义,v-html 安全) */
+/** 控制台行:raw 留原文(expand 去重比对),html 为 ANSI 上色结果(ansi_up 已做 HTML 转义,v-html 安全),text 为去 ANSI 可见纯文本 */
 interface ConsoleLine {
   key: number
   raw: string
   html: string
+  text: string
 }
 const consoleLines = shallowRef<ConsoleLine[]>([])
 let lineKeySeed = 0
 
+function createConsoleLine(raw: string): ConsoleLine {
+  const html = ansi.ansi_to_html(raw)
+  return {
+    key: (lineKeySeed += 1),
+    raw,
+    html,
+    text: htmlToPlainText(html),
+  }
+}
+
 // 滚动模型:贴底自动跟随;用户上滚/按住拖动解除跟随并累计角标;scroll 事件只负责贴底重新跟随
 const listRef = ref<VirtualListInst | null>(null)
+const consoleWrapRef = ref<HTMLElement | null>(null)
 const atBottom = ref(true)
 const pendingCount = ref(0)
+
+// 跨屏选区模型:虚拟列表滚动会卸载视口外 DOM,导致浏览器原生 Selection 丢失起点;
+// 以行下标 + 字符偏移维护逻辑选区 [selAnchor, selFocus],滚动/拖拽时实时投影到当前视口 DOM,
+// 并在 copy / Ctrl+C / Ctrl+A 时从 consoleLines 完整提取跨屏纯文本。
+const selAnchor = shallowRef<ConsoleSelectionPoint | null>(null)
+const selFocus = shallowRef<ConsoleSelectionPoint | null>(null)
+const activeSelectionRange = computed(() =>
+  normalizeConsoleSelection(selAnchor.value, selFocus.value),
+)
+let isDraggingSelection = false
+let didMoveDuringDrag = false
+let hasCrossedViewport = false
+let lastPointerX = 0
+let lastPointerY = 0
+let autoScrollDelta = 0
+let autoScrollRafId: number | null = null
+let postScrollSyncPending = false
+
+function lineTextLength(index: number): number {
+  return consoleLines.value[index]?.text.length ?? 0
+}
+
+function isLineSelected(index: number): boolean {
+  const range = activeSelectionRange.value
+  if (!range) return false
+  return index >= range.start.index && index <= range.end.index
+}
+
+function isMultiLineSelected(index: number): boolean {
+  const range = activeSelectionRange.value
+  if (!range || range.start.index === range.end.index) return false
+  return index >= range.start.index && index <= range.end.index
+}
+
+function getMountedLineElements(): HTMLElement[] {
+  const wrap = consoleWrapRef.value
+  if (!wrap) return []
+  return [...wrap.querySelectorAll<HTMLElement>('[data-line-index]')].sort(
+    (a, b) => Number(a.dataset.lineIndex) - Number(b.dataset.lineIndex),
+  )
+}
+
+function isLineMounted(index: number): boolean {
+  const wrap = consoleWrapRef.value
+  if (!wrap) return false
+  return wrap.querySelector(`[data-line-index="${index}"]`) !== null
+}
+
+function findLineElement(node: Node | null): HTMLElement | null {
+  const wrap = consoleWrapRef.value
+  if (!wrap || !node) return null
+  const el = node instanceof HTMLElement ? node : node.parentElement
+  const rowEl = el?.closest<HTMLElement>('[data-line-index]') ?? null
+  return rowEl && wrap.contains(rowEl) ? rowEl : null
+}
+
+function resolvePointFromDomNode(
+  node: Node | null,
+  domOffset: number,
+): ConsoleSelectionPoint | null {
+  const rowEl = findLineElement(node)
+  if (!rowEl || !node) return null
+  const index = Number(rowEl.dataset.lineIndex)
+  if (!Number.isFinite(index)) return null
+  const maxLen = lineTextLength(index)
+  if (node === rowEl) {
+    if (domOffset <= 0) return { index, offset: 0 }
+    if (domOffset >= rowEl.childNodes.length) return { index, offset: maxLen }
+  }
+  try {
+    const range = document.createRange()
+    range.selectNodeContents(rowEl)
+    range.setEnd(node, domOffset)
+    return { index, offset: Math.max(0, Math.min(maxLen, range.toString().length)) }
+  } catch {
+    return { index, offset: 0 }
+  }
+}
+
+function resolveDomPosition(
+  rowEl: HTMLElement,
+  targetOffset: number,
+): { node: Node; offset: number } {
+  const walker = document.createTreeWalker(rowEl, NodeFilter.SHOW_TEXT)
+  let remaining = Math.max(0, targetOffset)
+  let lastText: Text | null = null
+  let current = walker.nextNode() as Text | null
+  while (current) {
+    const len = current.nodeValue?.length ?? 0
+    if (remaining <= len) {
+      return { node: current, offset: remaining }
+    }
+    remaining -= len
+    lastText = current
+    current = walker.nextNode() as Text | null
+  }
+  if (lastText) {
+    return { node: lastText, offset: lastText.nodeValue?.length ?? 0 }
+  }
+  return { node: rowEl, offset: 0 }
+}
+
+/** 将逻辑跨屏选区投影到当前已挂载的视口 DOM 行,维持原生蓝底高亮与右键「复制」可用 */
+function syncNativeSelectionToViewport() {
+  const range = activeSelectionRange.value
+  const sel = window.getSelection?.()
+  if (!range || !sel) return
+  const mounted = getMountedLineElements()
+  if (!mounted.length) return
+  const firstIdx = Number(mounted[0]!.dataset.lineIndex)
+  const lastIdx = Number(mounted[mounted.length - 1]!.dataset.lineIndex)
+  if (range.end.index < firstIdx || range.start.index > lastIdx) {
+    sel.removeAllRanges()
+    return
+  }
+  const visStartIdx = Math.max(range.start.index, firstIdx)
+  const visStartOffset = visStartIdx === range.start.index ? range.start.offset : 0
+  const visEndIdx = Math.min(range.end.index, lastIdx)
+  const visEndOffset =
+    visEndIdx === range.end.index ? range.end.offset : lineTextLength(visEndIdx)
+
+  const startRowEl = mounted.find((el) => Number(el.dataset.lineIndex) === visStartIdx)
+  const endRowEl = mounted.find((el) => Number(el.dataset.lineIndex) === visEndIdx)
+  if (!startRowEl || !endRowEl) return
+
+  try {
+    const startPos = resolveDomPosition(startRowEl, visStartOffset)
+    const endPos = resolveDomPosition(endRowEl, visEndOffset)
+    const domRange = document.createRange()
+    domRange.setStart(startPos.node, startPos.offset)
+    domRange.setEnd(endPos.node, endPos.offset)
+    sel.removeAllRanges()
+    sel.addRange(domRange)
+  } catch {
+    // 极端卸载竞态忽略
+  }
+}
+
+function resolvePointFromCaretHit(clientX: number, clientY: number): ConsoleSelectionPoint | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+    caretRangeFromPoint?: (x: number, y: number) => Range | null
+  }
+  if (typeof doc.caretPositionFromPoint === 'function') {
+    const pos = doc.caretPositionFromPoint(clientX, clientY)
+    if (pos?.offsetNode) {
+      const point = resolvePointFromDomNode(pos.offsetNode, pos.offset)
+      if (point) return point
+    }
+  }
+  if (typeof doc.caretRangeFromPoint === 'function') {
+    const caretRange = doc.caretRangeFromPoint(clientX, clientY)
+    if (caretRange?.startContainer) {
+      const point = resolvePointFromDomNode(caretRange.startContainer, caretRange.startOffset)
+      if (point) return point
+    }
+  }
+  return null
+}
+
+function resolveOffsetOnRowElement(
+  rowEl: HTMLElement,
+  clientX: number,
+  isFocusEnd: boolean,
+): ConsoleSelectionPoint {
+  const index = Number(rowEl.dataset.lineIndex)
+  const len = lineTextLength(index)
+  const rect = rowEl.getBoundingClientRect()
+  if (rect.width > 0) {
+    if (clientX <= rect.left + 4) return { index, offset: 0 }
+    if (clientX >= rect.right - 4) return { index, offset: len }
+  }
+  if (isFocusEnd && selAnchor.value) {
+    return { index, offset: index >= selAnchor.value.index ? len : 0 }
+  }
+  return { index, offset: 0 }
+}
+
+function resolvePointFromClientXY(
+  clientX: number,
+  clientY: number,
+  isFocusEnd = true,
+): ConsoleSelectionPoint | null {
+  const caretHit = resolvePointFromCaretHit(clientX, clientY)
+  if (caretHit) return caretHit
+
+  const hitEl =
+    typeof document.elementFromPoint === 'function'
+      ? document.elementFromPoint(clientX, clientY)
+      : null
+  const hitRow = findLineElement(hitEl)
+  if (hitRow) return resolveOffsetOnRowElement(hitRow, clientX, isFocusEnd)
+
+  const mounted = getMountedLineElements()
+  if (!mounted.length) return null
+  const firstRow = mounted[0]!
+  const lastRow = mounted[mounted.length - 1]!
+  const firstRect = firstRow.getBoundingClientRect()
+  const lastRect = lastRow.getBoundingClientRect()
+
+  if (firstRect.height > 0 || lastRect.height > 0) {
+    if (clientY <= firstRect.top) {
+      return { index: Number(firstRow.dataset.lineIndex), offset: 0 }
+    }
+    for (const rowEl of mounted) {
+      const rect = rowEl.getBoundingClientRect()
+      if (clientY <= rect.bottom) {
+        return resolveOffsetOnRowElement(rowEl, clientX, isFocusEnd)
+      }
+    }
+    const lastIdx = Number(lastRow.dataset.lineIndex)
+    return { index: lastIdx, offset: lineTextLength(lastIdx) }
+  }
+
+  const fallbackRow = isFocusEnd ? lastRow : firstRow
+  return resolveOffsetOnRowElement(fallbackRow, clientX, isFocusEnd)
+}
+
+function resolvePointFromMouseEvent(
+  e: MouseEvent,
+  isFocusEnd = false,
+): ConsoleSelectionPoint | null {
+  const caretHit = resolvePointFromCaretHit(e.clientX, e.clientY)
+  if (caretHit) return caretHit
+  const targetRow = findLineElement(e.target as Node | null)
+  if (targetRow) return resolveOffsetOnRowElement(targetRow, e.clientX, isFocusEnd)
+  return resolvePointFromClientXY(e.clientX, e.clientY, isFocusEnd)
+}
+
+function getScrollContainer(): HTMLElement | null {
+  const inst = listRef.value as (VirtualListInst & { listElRef?: HTMLElement | null }) | null
+  if (inst?.listElRef) return inst.listElRef
+  return consoleWrapRef.value?.querySelector<HTMLElement>('.v-vl') ?? null
+}
+
+function stopAutoScroll() {
+  autoScrollDelta = 0
+  if (autoScrollRafId !== null) {
+    cancelAnimationFrame(autoScrollRafId)
+    autoScrollRafId = null
+  }
+}
+
+function stepAutoScroll() {
+  autoScrollRafId = null
+  if (!isDraggingSelection || autoScrollDelta === 0) return
+  const scrollEl = getScrollContainer()
+  if (scrollEl) {
+    const prevTop = scrollEl.scrollTop
+    scrollEl.scrollTop += autoScrollDelta
+    if (scrollEl.scrollTop !== prevTop) {
+      hasCrossedViewport = true
+      schedulePostScrollSelectionSync()
+    }
+  }
+  autoScrollRafId = requestAnimationFrame(stepAutoScroll)
+}
+
+function updateAutoScroll(clientY: number) {
+  const scrollEl = getScrollContainer() ?? consoleWrapRef.value
+  if (!scrollEl) return
+  const rect = scrollEl.getBoundingClientRect()
+  if (rect.height <= 0) return
+  const edgeZone = 32
+  if (clientY < rect.top + edgeZone) {
+    const ratio = Math.min(1, (rect.top + edgeZone - clientY) / (edgeZone * 1.5))
+    autoScrollDelta = -Math.ceil(4 + ratio * 22)
+  } else if (clientY > rect.bottom - edgeZone) {
+    const ratio = Math.min(1, (clientY - (rect.bottom - edgeZone)) / (edgeZone * 1.5))
+    autoScrollDelta = Math.ceil(4 + ratio * 22)
+  } else {
+    stopAutoScroll()
+    return
+  }
+  if (autoScrollRafId === null) {
+    autoScrollRafId = requestAnimationFrame(stepAutoScroll)
+  }
+}
+
+/**
+ * vueuc VirtualList 在 handleListScroll/handleListWheel 内先调 props.onScroll/onWheel,
+ * 随后才调 syncViewport() 触发 viewportItems 重算;故以微任务 + nextTick 等待新视口 DOM 挂载完毕后再对齐选区。
+ */
+function schedulePostScrollSelectionSync() {
+  if (postScrollSyncPending) return
+  postScrollSyncPending = true
+  void Promise.resolve().then(() =>
+    nextTick(() => {
+      postScrollSyncPending = false
+      if (isDraggingSelection && hasCrossedViewport) {
+        const nextFocus = resolvePointFromClientXY(lastPointerX, lastPointerY, true)
+        if (nextFocus) selFocus.value = nextFocus
+      }
+      if (activeSelectionRange.value) {
+        syncNativeSelectionToViewport()
+      }
+    }),
+  )
+}
+
+function detachWindowDragListeners() {
+  window.removeEventListener('mousemove', onWindowMouseMove)
+  window.removeEventListener('mouseup', onWindowMouseUp)
+}
+
+function clearSelection() {
+  isDraggingSelection = false
+  didMoveDuringDrag = false
+  hasCrossedViewport = false
+  stopAutoScroll()
+  detachWindowDragListeners()
+  selAnchor.value = null
+  selFocus.value = null
+}
+
+function onWindowMouseMove(e: MouseEvent) {
+  if (!isDraggingSelection) return
+  if (e.clientX !== lastPointerX || e.clientY !== lastPointerY) {
+    didMoveDuringDrag = true
+  }
+  lastPointerX = e.clientX
+  lastPointerY = e.clientY
+  updateAutoScroll(e.clientY)
+
+  if (selAnchor.value && !isLineMounted(selAnchor.value.index)) {
+    hasCrossedViewport = true
+  }
+
+  if (!hasCrossedViewport) {
+    const sel = window.getSelection?.()
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      const anchorPt = resolvePointFromDomNode(sel.anchorNode, sel.anchorOffset)
+      const focusPt = resolvePointFromDomNode(sel.focusNode, sel.focusOffset)
+      if (anchorPt && focusPt) {
+        selAnchor.value = anchorPt
+        selFocus.value = focusPt
+        return
+      }
+    }
+    const focusPt = resolvePointFromMouseEvent(e, true)
+    if (focusPt) selFocus.value = focusPt
+    return
+  }
+
+  const focusPt = resolvePointFromMouseEvent(e, true)
+  if (focusPt) {
+    selFocus.value = focusPt
+    syncNativeSelectionToViewport()
+  }
+}
+
+function onWindowMouseUp() {
+  if (!isDraggingSelection) return
+  isDraggingSelection = false
+  stopAutoScroll()
+  detachWindowDragListeners()
+
+  if (!hasCrossedViewport) {
+    const sel = window.getSelection?.()
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      const anchorPt = resolvePointFromDomNode(sel.anchorNode, sel.anchorOffset)
+      const focusPt = resolvePointFromDomNode(sel.focusNode, sel.focusOffset)
+      if (anchorPt && focusPt) {
+        selAnchor.value = anchorPt
+        selFocus.value = focusPt
+        return
+      }
+    }
+    if (!didMoveDuringDrag && selAnchor.value) {
+      // 单击不产生选区,但保留锚点供后续滚屏后 Shift+Click 跨屏扩展
+      selFocus.value = selAnchor.value
+    }
+    return
+  }
+
+  if (activeSelectionRange.value) {
+    syncNativeSelectionToViewport()
+  }
+}
+
+function onMouseDown(e: MouseEvent) {
+  atBottom.value = false
+  // 右键打开浏览器原生「复制」菜单时保持已有选区
+  if (e.button !== 0) return
+  if ((e.target as HTMLElement | null)?.closest('button')) return
+
+  lastPointerX = e.clientX
+  lastPointerY = e.clientY
+  didMoveDuringDrag = false
+
+  if (e.shiftKey && selAnchor.value) {
+    const focusPt = resolvePointFromMouseEvent(e, true)
+    if (focusPt) {
+      e.preventDefault()
+      consoleWrapRef.value?.focus({ preventScroll: true })
+      selFocus.value = focusPt
+      isDraggingSelection = true
+      didMoveDuringDrag = true
+      hasCrossedViewport = true
+      syncNativeSelectionToViewport()
+      window.addEventListener('mousemove', onWindowMouseMove)
+      window.addEventListener('mouseup', onWindowMouseUp)
+    }
+    return
+  }
+
+  const startPt = resolvePointFromMouseEvent(e, false)
+  selAnchor.value = startPt
+  selFocus.value = startPt
+  hasCrossedViewport = false
+  isDraggingSelection = startPt !== null
+  if (isDraggingSelection) {
+    window.addEventListener('mousemove', onWindowMouseMove)
+    window.addEventListener('mouseup', onWindowMouseUp)
+  }
+}
+
+function refreshSelectionFromNativeIfSingleViewport() {
+  if (hasCrossedViewport) return
+  const sel = window.getSelection?.()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
+  const anchorPt = resolvePointFromDomNode(sel.anchorNode, sel.anchorOffset)
+  const focusPt = resolvePointFromDomNode(sel.focusNode, sel.focusOffset)
+  if (anchorPt && focusPt) {
+    selAnchor.value = anchorPt
+    selFocus.value = focusPt
+  }
+}
+
+function onCopy(e: ClipboardEvent) {
+  refreshSelectionFromNativeIfSingleViewport()
+  const range = activeSelectionRange.value
+  if (!range) return
+  const text = extractConsoleSelectionText(consoleLines.value, range)
+  if (!text) return
+  e.preventDefault()
+  if (e.clipboardData) {
+    e.clipboardData.setData('text/plain', text)
+  } else {
+    void copyToClipboard(text)
+  }
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  const isMod = e.ctrlKey || e.metaKey
+  const key = e.key.toLowerCase()
+  if (isMod && key === 'a') {
+    if (!consoleLines.value.length) return
+    e.preventDefault()
+    const lastIdx = consoleLines.value.length - 1
+    selAnchor.value = { index: 0, offset: 0 }
+    selFocus.value = { index: lastIdx, offset: lineTextLength(lastIdx) }
+    hasCrossedViewport = true
+    syncNativeSelectionToViewport()
+    return
+  }
+  if (isMod && key === 'c') {
+    refreshSelectionFromNativeIfSingleViewport()
+    const range = activeSelectionRange.value
+    if (!range) return
+    // 当选区所在行已全部滚出视口时,原生 Selection 为空不会派发 copy 事件,此处直接写剪贴板
+    const sel = window.getSelection?.()
+    if (!sel || sel.isCollapsed) {
+      const text = extractConsoleSelectionText(consoleLines.value, range)
+      if (text) {
+        e.preventDefault()
+        void copyToClipboard(text)
+      }
+    }
+    return
+  }
+  if (e.key === 'Escape' && activeSelectionRange.value) {
+    clearSelection()
+    window.getSelection?.()?.removeAllRanges()
+  }
+}
 
 /**
  * scroll 事件只置真不置假:程序滚动(scrollToEnd)与行高测量的锚定 scrollBy 也会派发 scroll,
@@ -90,11 +586,25 @@ function onScroll(e: Event) {
     atBottom.value = true
     pendingCount.value = 0
   }
+  if (isDraggingSelection) {
+    didMoveDuringDrag = true
+    hasCrossedViewport = true
+  }
+  if (isDraggingSelection || activeSelectionRange.value) {
+    schedulePostScrollSelectionSync()
+  }
 }
 
 /** 用户上滚解除跟随;下滚不处理(贴底时继续跟随,距底远时本就未跟随) */
 function onUserWheel(e: WheelEvent) {
   if (e.deltaY < 0) atBottom.value = false
+  if (isDraggingSelection) {
+    didMoveDuringDrag = true
+    hasCrossedViewport = true
+    schedulePostScrollSelectionSync()
+  } else if (activeSelectionRange.value) {
+    schedulePostScrollSelectionSync()
+  }
 }
 
 /** 按住拖动(滚动条滑块/框选文本)视为离开底部的阅读意图 */
@@ -123,14 +633,28 @@ function flushAppend() {
   const buffered = appendBuffer
   appendBuffer = []
   if (!buffered.length) return
-  const fresh = buffered.map<ConsoleLine>((text) => ({
-    key: (lineKeySeed += 1),
-    raw: text,
-    html: ansi.ansi_to_html(text),
-  }))
+  const fresh = buffered.map<ConsoleLine>(createConsoleLine)
   let next = consoleLines.value.concat(fresh)
-  if (next.length > MAX_FOLLOW_LINES) next = next.slice(next.length - MAX_FOLLOW_LINES)
+  let overflow = 0
+  if (next.length > MAX_FOLLOW_LINES) {
+    overflow = next.length - MAX_FOLLOW_LINES
+    next = next.slice(overflow)
+  }
   consoleLines.value = next
+  if (overflow > 0 && (selAnchor.value || selFocus.value)) {
+    selAnchor.value = shiftConsoleSelectionPoint(
+      selAnchor.value,
+      -overflow,
+      next.length,
+      lineTextLength,
+    )
+    selFocus.value = shiftConsoleSelectionPoint(
+      selFocus.value,
+      -overflow,
+      next.length,
+      lineTextLength,
+    )
+  }
   if (atBottom.value) nextTick(scrollToEnd)
   else pendingCount.value += fresh.length
 }
@@ -157,9 +681,24 @@ function prependEarlier(texts: string[]) {
   const earlier: ConsoleLine[] = []
   for (let i = texts.length - 1; i >= 0; i -= 1) {
     const text = texts[i]!
-    earlier.push({ key: (lineKeySeed += 1), raw: text, html: ansi.ansi_to_html(text) })
+    earlier.push(createConsoleLine(text))
   }
-  consoleLines.value = earlier.concat(consoleLines.value)
+  const next = earlier.concat(consoleLines.value)
+  consoleLines.value = next
+  if (selAnchor.value || selFocus.value) {
+    selAnchor.value = shiftConsoleSelectionPoint(
+      selAnchor.value,
+      earlier.length,
+      next.length,
+      lineTextLength,
+    )
+    selFocus.value = shiftConsoleSelectionPoint(
+      selFocus.value,
+      earlier.length,
+      next.length,
+      lineTextLength,
+    )
+  }
 }
 
 function jumpToNew() {
@@ -187,6 +726,7 @@ function openStream(expand: boolean) {
   if (!inst?.assigned_node) return
   abortStream()
   if (!expand) {
+    clearSelection()
     consoleLines.value = []
     pendingCount.value = 0
     atBottom.value = true
@@ -270,7 +810,10 @@ watch([instanceId], () => {
 onMounted(() => {
   if (currentInstance.value) openStream(false)
 })
-onBeforeUnmount(abortStream)
+onBeforeUnmount(() => {
+  clearSelection()
+  abortStream()
+})
 
 const statusText = computed(() => {
   switch (status.value) {
@@ -342,7 +885,15 @@ const statusText = computed(() => {
       </span>
     </div>
 
-    <div class="relative" @pointerdown="onUserPointerDown">
+    <div
+      ref="consoleWrapRef"
+      tabindex="0"
+      class="relative outline-none"
+      @pointerdown="onUserPointerDown"
+      @mousedown="onMouseDown"
+      @keydown="onKeyDown"
+      @copy="onCopy"
+    >
       <!-- 未读角标:用户上滚/按住拖动离开底部期间到达的新行 -->
       <n-button
         v-if="pendingCount > 0"
@@ -380,8 +931,14 @@ const statusText = computed(() => {
         @scroll="onScroll"
         @wheel="onUserWheel"
       >
-        <template #default="{ item }">
-          <div class="leading-[1.8] break-all" v-html="item.html" />
+        <template #default="{ item, index }">
+          <div
+            :data-line-index="index"
+            :data-selected="isLineSelected(index) ? 'true' : undefined"
+            class="leading-[1.8] break-all"
+            :class="{ 'bg-primary-soft': isMultiLineSelected(index) }"
+            v-html="item.html"
+          />
         </template>
       </n-virtual-list>
     </div>

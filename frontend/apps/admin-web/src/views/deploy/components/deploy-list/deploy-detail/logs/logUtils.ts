@@ -65,6 +65,95 @@ export function mergeConsoleLines(existing: string[], incoming: string[]): strin
   return [...earlier, ...existing, ...freshRest]
 }
 
+/** 将 ansi_up 输出的 HTML 还原为可见纯文本(去标签 + 反转义 HTML 实体,与 DOM textContent 一一对应) */
+export function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+/** 控制台跨屏选区端点:index 为行下标(0 基),offset 为行内可见纯文本字符偏移 */
+export interface ConsoleSelectionPoint {
+  index: number
+  offset: number
+}
+
+/** 归一化后的跨屏选区范围(start 恒在 end 之前) */
+export interface ConsoleSelectionRange {
+  start: ConsoleSelectionPoint
+  end: ConsoleSelectionPoint
+}
+
+/** 归一化控制台选区:按 (index, offset) 升序排列;空选区或零长度折叠选区返回 null */
+export function normalizeConsoleSelection(
+  anchor: ConsoleSelectionPoint | null,
+  focus: ConsoleSelectionPoint | null,
+): ConsoleSelectionRange | null {
+  if (!anchor || !focus) return null
+  if (anchor.index === focus.index && anchor.offset === focus.offset) return null
+  const forward =
+    anchor.index < focus.index || (anchor.index === focus.index && anchor.offset <= focus.offset)
+  return forward ? { start: anchor, end: focus } : { start: focus, end: anchor }
+}
+
+/** 按跨屏选区范围从控制台行列表提取可见纯文本(跨虚拟列表卸载行仍完整保留中间段) */
+export function extractConsoleSelectionText(
+  lines: ReadonlyArray<{ text: string }>,
+  range: ConsoleSelectionRange | null,
+): string {
+  if (!range || !lines.length) return ''
+  const maxIndex = lines.length - 1
+  const startIndex = Math.max(0, Math.min(maxIndex, range.start.index))
+  const endIndex = Math.max(0, Math.min(maxIndex, range.end.index))
+  if (endIndex < startIndex) return ''
+
+  const startText = lines[startIndex]!.text
+  const startOffset =
+    startIndex === range.start.index
+      ? Math.max(0, Math.min(startText.length, range.start.offset))
+      : 0
+  const endText = lines[endIndex]!.text
+  const endOffset =
+    endIndex === range.end.index
+      ? Math.max(0, Math.min(endText.length, range.end.offset))
+      : endText.length
+
+  if (startIndex === endIndex) {
+    return startText.slice(startOffset, Math.max(startOffset, endOffset))
+  }
+
+  const parts: string[] = [startText.slice(startOffset)]
+  for (let index = startIndex + 1; index < endIndex; index += 1) {
+    parts.push(lines[index]!.text)
+  }
+  parts.push(endText.slice(0, endOffset))
+  return parts.join('\n')
+}
+
+/** 窗口前插历史(+delta)或超限截头(-delta)时平移选区端点下标,越界时夹紧到首尾边界 */
+export function shiftConsoleSelectionPoint(
+  point: ConsoleSelectionPoint | null,
+  delta: number,
+  totalLines: number,
+  lineLengthOf: (index: number) => number,
+): ConsoleSelectionPoint | null {
+  if (!point || totalLines <= 0) return null
+  const nextIndex = point.index + delta
+  if (nextIndex < 0) return { index: 0, offset: 0 }
+  if (nextIndex >= totalLines) {
+    const lastIndex = totalLines - 1
+    return { index: lastIndex, offset: lineLengthOf(lastIndex) }
+  }
+  return {
+    index: nextIndex,
+    offset: Math.max(0, Math.min(lineLengthOf(nextIndex), point.offset)),
+  }
+}
+
 /** 时间线行:普通日志行 */
 export type LogRow = {
   kind: 'log'
