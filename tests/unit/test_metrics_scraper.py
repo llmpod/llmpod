@@ -214,12 +214,25 @@ vllm:gpu_cache_usage_perc 0.4231
 vllm:num_requests_running 7
 # TYPE vllm:num_requests_waiting gauge
 vllm:num_requests_waiting 2
-# TYPE vllm:prefix_cache_hit_rate gauge
-vllm:prefix_cache_hit_rate 0.31
+# TYPE vllm:prefix_cache_queries_total counter
+vllm:prefix_cache_queries_total{model_name="m"} 100
+# TYPE vllm:prefix_cache_hits_total counter
+vllm:prefix_cache_hits_total{model_name="m"} 31
 """
 
 # 新版 vLLM（≥0.9.2）改名后的指标名
 VLLM_TEXT_NEW = VLLM_TEXT.replace("vllm:gpu_cache_usage_perc", "vllm:kv_cache_usage_perc")
+
+
+def _vllm_prefix_text(queries: str, hits: str) -> str:
+    """只带前缀命中两个 counter 的 vLLM /metrics 文本（值原样填入，可写多条序列）。"""
+    return (
+        "# TYPE vllm:prefix_cache_queries_total counter\n"
+        f"vllm:prefix_cache_queries_total{queries}\n"
+        "# TYPE vllm:prefix_cache_hits_total counter\n"
+        f"vllm:prefix_cache_hits_total{hits}\n"
+    )
+
 
 SGLANG_TEXT = """\
 # TYPE sglang:token_usage gauge
@@ -228,6 +241,8 @@ sglang:token_usage 0.55
 sglang:num_running_reqs 3
 # TYPE sglang:num_queue_reqs gauge
 sglang:num_queue_reqs 1
+# TYPE sglang:cache_hit_rate gauge
+sglang:cache_hit_rate 0.4
 """
 
 # llama.cpp --metrics 实测口径（b11176）：只有两个请求水位 gauge，无 KV/前缀命中指标族
@@ -249,7 +264,7 @@ def _target(instance_id="i-1", deployment_id="dep-1", engine="vllm", url="http:/
 
 class TestEngineIngest:
     def test_vllm_legacy_name_maps_to_snapshot(self):
-        """旧版 vllm:gpu_cache_usage_perc（<0.9.2）→ kv_cache_util。"""
+        """旧版 vllm:gpu_cache_usage_perc（<0.9.2）→ kv_cache_util；前缀命中率首见只建基线。"""
         s = MetricsScraper(_cfg())
         s._ingest_engine_text(_target(), VLLM_TEXT, NOW)
         snap = s._engine_snapshots["i-1"]
@@ -257,7 +272,7 @@ class TestEngineIngest:
         assert snap.kv_cache_util == pytest.approx(0.4231)
         assert snap.running_requests == 7
         assert snap.waiting_requests == 2
-        assert snap.prefix_cache_hit_rate == pytest.approx(0.31)
+        assert snap.prefix_cache_hit_rate is None
 
     def test_vllm_new_name_maps_to_snapshot(self):
         """新版 vllm:kv_cache_usage_perc（≥0.9.2 改名）同样映射（回归：旧版名会导致新版静默抓空）。"""
@@ -266,13 +281,83 @@ class TestEngineIngest:
         snap = s._engine_snapshots["i-1"]
         assert snap.kv_cache_util == pytest.approx(0.4231)
 
+    def test_vllm_prefix_hit_rate_is_windowed_counter_ratio(self):
+        """vLLM 没有命中率 gauge：按命中 / 查询两个 counter 的桶内增量之比算。
+        快照与桶落库都是当前 5 分钟窗口的命中率，不是启动以来的累计值。"""
+        s = MetricsScraper(_cfg())
+        s._ingest_engine_text(_target(), _vllm_prefix_text('{model_name="m"} 100', '{model_name="m"} 31'), NOW)
+        assert s._engine_snapshots["i-1"].prefix_cache_hit_rate is None  # 首见建基线
+        # 第二轮：Δ查询 100、Δ命中 69
+        s._ingest_engine_text(_target(), _vllm_prefix_text('{model_name="m"} 200', '{model_name="m"} 100'), NOW)
+        assert s._engine_snapshots["i-1"].prefix_cache_hit_rate == pytest.approx(0.69)
+        # 第三轮：Δ查询 20、Δ命中 5 → 桶内 74 / 120
+        s._ingest_engine_text(_target(), _vllm_prefix_text('{model_name="m"} 220', '{model_name="m"} 105'), NOW)
+        assert s._engine_snapshots["i-1"].prefix_cache_hit_rate == pytest.approx(0.6167)
+        # 空闲一轮（counter 不动）：窗口比值保持，不翻成 None
+        s._ingest_engine_text(_target(), _vllm_prefix_text('{model_name="m"} 220', '{model_name="m"} 105'), NOW)
+        assert s._engine_snapshots["i-1"].prefix_cache_hit_rate == pytest.approx(0.6167)
+        row = s._engine_row(s._bucket_start, s._engine_buckets["i-1"])
+        # 比值没有「峰值」可言：avg / max 同为桶内比值
+        assert row.prefix_cache_hit_rate_avg == pytest.approx(0.6167)
+        assert row.prefix_cache_hit_rate_max == pytest.approx(0.6167)
+
+    def test_vllm_prefix_counters_engine_restart(self):
+        """引擎重启 counter 归零：按「从零开始」口径，增量 = 本次值。"""
+        s = MetricsScraper(_cfg())
+        s._ingest_engine_text(_target(), _vllm_prefix_text('{model_name="m"} 100', '{model_name="m"} 50'), NOW)
+        s._ingest_engine_text(_target(), _vllm_prefix_text('{model_name="m"} 3', '{model_name="m"} 1'), NOW)
+        assert s._engine_snapshots["i-1"].prefix_cache_hit_rate == pytest.approx(1 / 3, abs=1e-4)
+
+    def test_vllm_prefix_counters_summed_across_dp_engines(self):
+        """数据并行时每个引擎一条 engine_index 序列：实例总量是各序列之和。"""
+        s = MetricsScraper(_cfg())
+        text = (
+            "# TYPE vllm:prefix_cache_queries_total counter\n"
+            'vllm:prefix_cache_queries_total{engine_index="0"} 10\n'
+            'vllm:prefix_cache_queries_total{engine_index="1"} 30\n'
+            "# TYPE vllm:prefix_cache_hits_total counter\n"
+            'vllm:prefix_cache_hits_total{engine_index="0"} 5\n'
+            'vllm:prefix_cache_hits_total{engine_index="1"} 3\n'
+        )
+        s._ingest_engine_text(_target(), text, NOW)
+        text2 = text.replace("} 10\n", "} 20\n").replace("} 30\n", "} 40\n").replace("} 5\n", "} 10\n").replace("} 3\n", "} 5\n")
+        s._ingest_engine_text(_target(), text2, NOW)
+        # Δ查询 = 10 + 10，Δ命中 = 5 + 2
+        assert s._engine_snapshots["i-1"].prefix_cache_hit_rate == pytest.approx(0.35)
+
+    def test_vllm_prefix_legacy_counter_names(self):
+        """0.9 之前的名字 gpu_prefix_cache_* 同样认；新旧名并存导出（0.10）时只认新名，不叠计。"""
+        legacy = _vllm_prefix_text('{model_name="m"} 100', '{model_name="m"} 31').replace(
+            "vllm:prefix_cache_", "vllm:gpu_prefix_cache_"
+        )
+        s = MetricsScraper(_cfg())
+        s._ingest_engine_text(_target(), legacy, NOW)
+        s._ingest_engine_text(_target(), legacy.replace("} 100\n", "} 200\n").replace("} 31\n", "} 100\n"), NOW)
+        assert s._engine_snapshots["i-1"].prefix_cache_hit_rate == pytest.approx(0.69)
+
+        both = legacy + _vllm_prefix_text('{model_name="m"} 100', '{model_name="m"} 31')
+        s = MetricsScraper(_cfg())
+        s._ingest_engine_text(_target(), both, NOW)
+        both2 = both.replace("} 100\n", "} 200\n").replace("} 31\n", "} 100\n")
+        s._ingest_engine_text(_target(), both2, NOW)
+        # 若两条 family 都收：Δ查询 200、Δ命中 138 → 比值仍是 0.69，所以再断言桶内增量只记了一份
+        assert s._engine_buckets["i-1"].prefix_queries == 100
+        assert s._engine_buckets["i-1"].prefix_hits == 69
+        assert s._engine_snapshots["i-1"].prefix_cache_hit_rate == pytest.approx(0.69)
+
     def test_sglang_mapping(self):
+        """SGLang 自报命中率 gauge：快照与桶统计照旧走 gauge 口径。"""
         s = MetricsScraper(_cfg())
         s._ingest_engine_text(_target(engine="sglang"), SGLANG_TEXT, NOW)
+        s._ingest_engine_text(_target(engine="sglang"), SGLANG_TEXT.replace("0.4\n", "0.6\n"), NOW)
         snap = s._engine_snapshots["i-1"]
         assert snap.kv_cache_util == pytest.approx(0.55)
         assert snap.running_requests == 3
         assert snap.waiting_requests == 1
+        assert snap.prefix_cache_hit_rate == pytest.approx(0.6)
+        row = s._engine_row(s._bucket_start, s._engine_buckets["i-1"])
+        assert row.prefix_cache_hit_rate_avg == pytest.approx(0.5)
+        assert row.prefix_cache_hit_rate_max == pytest.approx(0.6)
 
     def test_llamacpp_mapping(self):
         """llamacpp 只有请求水位两个 gauge（含 counter 不入快照）；KV/前缀命中上游
@@ -733,6 +818,44 @@ class TestScraperFixes:
         monkeypatch.setattr(db_mod, "get_db_context", _fake_ctx)
         out = await s._discover_engine_targets()
         assert set(out) == {"i-head"}
+
+    async def test_discovery_clears_counter_baselines_of_offline_instance(self, monkeypatch):
+        """实例下线：发现轮除了清快照，连它的引擎 counter 差分基线一起清——否则同名实例 id
+        复现时会拿旧值算增量（首见本该只建基线）。"""
+        s = MetricsScraper(_cfg())
+        s._ingest_engine_text(_target(instance_id="i-1"), _vllm_prefix_text('{model_name="m"} 100', '{model_name="m"} 50'), NOW)
+        s._ingest_engine_text(
+            _target(instance_id="i-2", url="http://10.0.0.6:8000/metrics"), _vllm_prefix_text('{model_name="m"} 9', '{model_name="m"} 9'), NOW
+        )
+        s._ingest_engine_text(
+            _target(instance_id="i-2", url="http://10.0.0.6:8000/metrics"), "# TYPE vllm:num_preemptions_total counter\nvllm:num_preemptions_total 3\n", NOW
+        )
+        assert ("i-2", "prefix_cache_queries") in s._engine_counter_last
+        assert ("i-2", "num_preemptions") in s._engine_counter_last
+
+        live = SimpleNamespace(
+            instance_id="i-1", deployment_id="d", status="RUNNING", endpoint="http://10.0.0.5:8000", spec={"port": 8000}
+        )
+        rows = [(live, "10.0.0.5", "vllm")]
+
+        import contextlib
+
+        import llmpod.db as db_mod
+
+        class _Db:
+            async def execute(self, _stmt):
+                return SimpleNamespace(all=lambda: rows)
+
+        @contextlib.asynccontextmanager
+        async def _fake_ctx():
+            yield _Db()
+
+        monkeypatch.setattr(db_mod, "get_db_context", _fake_ctx)
+        out = await s._discover_engine_targets()
+        assert set(out) == {"i-1"}
+        assert "i-2" not in s._engine_snapshots
+        assert not [k for k in s._engine_counter_last if k[0] == "i-2"]
+        assert ("i-1", "prefix_cache_queries") in s._engine_counter_last
 
     def test_ring_maxlen_covers_retention_at_1s_interval(self):
         """环深满足保留时长全覆盖：1s 间隔下 2h 需要 ≥7200 点（旧 4000 上限会截成 66min）。"""

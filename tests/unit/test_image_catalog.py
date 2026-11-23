@@ -175,6 +175,7 @@ class TestResolve:
             "0.29.0": "vllm/vllm-openai:v0.29.0",
             "0.30.0": "vllm/vllm-openai:v0.30.0",
             "0.32.0": "vllm/vllm-openai:v0.32.0",
+            "0.34.0": "vllm/vllm-openai:v0.34.0",
         }
         for version, image in expected.items():
             assert (
@@ -255,9 +256,48 @@ class TestResolve:
             "0.25.0",
             "0.27.0",
             "0.32.0",
+            "0.34.0",
         ):
             vocab = image_catalog.engine_vocab("vllm", version)
             assert vocab is not None and vocab.pooling_flags == "runner_convert" and vocab.multinode is True
+
+    def test_vllm_0340_single_cuda_build_with_compat_gates(self):
+        """vLLM 0.34.0 上游只发 CUDA 13.0 构建（Docker Hub 无 cu129 变体）：驱动 ≥580 原生
+        可用，575-579 没有镜像；R535/R570 数据中心卡走官方兼容开关（同一镜像），GeForce 不适用。"""
+        assert (
+            image_catalog.pick_image(engine="vllm", arch="nvidia", driver_version="595.84", engine_version="0.34.0")
+            == "vllm/vllm-openai:v0.34.0"
+        )
+        assert image_catalog.pick_image(engine="vllm", arch="nvidia", driver_version="575.64", engine_version="0.34.0") is None
+        for driver in ("535.288.01", "570.211.01"):
+            entry = image_catalog.pick_entry(
+                engine="vllm",
+                arch="nvidia",
+                gpu_model="NVIDIA A100-SXM4-80GB",
+                driver_version=driver,
+                engine_version="0.34.0",
+            )
+            assert entry is not None and entry.image == "vllm/vllm-openai:v0.34.0"
+            assert entry.params["env"]["VLLM_ENABLE_CUDA_COMPATIBILITY"] == "1"
+            assert entry.gpu_model_required and entry.driver_required
+        assert (
+            image_catalog.pick_image(
+                engine="vllm",
+                arch="nvidia",
+                gpu_model="NVIDIA GeForce RTX 2080 Ti",
+                driver_version="535.288.01",
+                engine_version="0.34.0",
+            )
+            is None
+        )
+
+    def test_vllm_0340_registers_engram_parsers(self):
+        """0.34.0 是 --engram-config disk_offload 可用的最低版本；平台会注入的解析器名
+        （hermes 兜底、Qwen3/Qwen4Exp 的 qwen3_coder + qwen3）按该版源码核实都在。"""
+        vocab = image_catalog.engine_vocab("vllm", "0.34.0")
+        assert vocab is not None
+        assert {"hermes", "qwen3_coder"} <= set(vocab.tool_parsers)
+        assert "qwen3" in vocab.reasoning_parsers
 
     def test_vllm_cuda129_forward_compat_expands_supported_driver_branches(self):
         versions = (

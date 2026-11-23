@@ -149,8 +149,7 @@ class VLLMAdapter(EngineAdapter):
         ),
         ParamSuggestion(name="--kv-transfer-config", hint="KV 连接器 JSON 配置"),
         # ---- n-gram 嵌入表（Qwen4Exp PLE）----
-        # disk_offload 键上游 v0.34.0（2026-11-14 发布）才加，flag 本身 v0.30.0 才有；
-        # catalog 现收的最高版本 0.32.0 及更早镜像带上它会因未知键 / 未知 flag 拒启
+        # disk_offload 键与 flag 本身都要 v0.34.0 镜像（catalog 已收；更早镜像带上会拒启）
         ParamSuggestion(
             name="--engram-config",
             hint="n-gram嵌入表驻留位置",

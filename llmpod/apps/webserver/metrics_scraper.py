@@ -94,13 +94,17 @@ _HOT_DIM_LABELS = (
 # 引擎原始指标名 → 归一名（白名单映射；未列出的引擎指标不采集）。
 # vLLM ≥0.9.2 用 kv_cache_usage_perc，旧版叫 gpu_cache_usage_perc，两者都接受；
 # SGLang 指标名来自 sglang 0.5.x 实测。TGI 暂无公认 /metrics 口径，留空。
+# vLLM 没有前缀命中率 gauge，只有命中数 / 查询数两个 counter（见 _ENGINE_RATE_COUNTERS）。
 _ENGINE_METRIC_MAP: dict[str, tuple[tuple[str, str], ...]] = {
     "vllm": (
         ("vllm:kv_cache_usage_perc", "kv_cache_util"),
         ("vllm:gpu_cache_usage_perc", "kv_cache_util"),
         ("vllm:num_requests_running", "running_requests"),
         ("vllm:num_requests_waiting", "waiting_requests"),
-        ("vllm:prefix_cache_hit_rate", "prefix_cache_hit_rate"),
+        ("vllm:prefix_cache_queries", "prefix_cache_queries"),
+        ("vllm:prefix_cache_hits", "prefix_cache_hits"),
+        ("vllm:gpu_prefix_cache_queries", "prefix_cache_queries"),
+        ("vllm:gpu_prefix_cache_hits", "prefix_cache_hits"),
         ("vllm:num_preemptions", "num_preemptions"),
     ),
     "sglang": (
@@ -115,6 +119,20 @@ _ENGINE_METRIC_MAP: dict[str, tuple[tuple[str, str], ...]] = {
         ("llamacpp:requests_processing", "running_requests"),
         ("llamacpp:requests_deferred", "waiting_requests"),
     ),
+}
+
+# 改名后旧名仍并存导出（值相同）的指标族：旧名 → 新名。vLLM 0.9 把 gpu_prefix_cache_*
+# 改成 prefix_cache_*，0.10 两条都还在导出；两者映射到同一归一名，同轮都认会叠计
+_ENGINE_RENAMED_FAMILIES = {
+    "vllm:gpu_prefix_cache_queries": "vllm:prefix_cache_queries",
+    "vllm:gpu_prefix_cache_hits": "vllm:prefix_cache_hits",
+}
+
+# 引擎 → (查询数 counter 归一名, 命中数 counter 归一名)。前缀命中率按这对 counter 的
+# 桶内增量之比算：实时快照与桶落库都是「当前 5 分钟窗口」的命中率，不是启动以来的累计值
+# （累计值几乎不动，看不出开关前缀缓存前后的差别）。首见只建基线、窗口内无查询 → None
+_ENGINE_RATE_COUNTERS: dict[str, tuple[str, str]] = {
+    "vllm": ("prefix_cache_queries", "prefix_cache_hits"),
 }
 
 # 引擎 gauge 归一名 → metric_engine_rollup 列名（avg/max 成对）
@@ -141,6 +159,20 @@ def _map_engine_metric(engine: str, name: str) -> str | None:
         if src == name:
             return dst
     return None
+
+
+def _family_sum(family) -> float:
+    """一个指标族里全部样本值之和（非有限值按缺失跳过）。
+
+    counter 族在数据并行时带 engine_index 标签、每个引擎一条序列，求和才是实例总量；
+    单引擎就是它本身的值。
+    """
+    total = 0.0
+    for sample in family.samples:
+        val = _finite_or_none(sample.value)
+        if val is not None:
+            total += val
+    return total
 
 
 def _bucket_floor(ts: datetime) -> datetime:
@@ -187,7 +219,9 @@ class EngineSnapshot:
     ``ok=False`` 表示最近一轮抓取失败（引擎重启中/端口未就绪），其余字段无效；
     从未抓到过（新实例/已下线）不出现在缓存里，由路由侧兜底 ok=False。
     ``fetched_at`` 是墙上时钟（响应侧算 age_ms 标注数据新鲜度用）。引擎名不
-    入快照——响应侧从 ModelDeployment.engine（权威来源）取。
+    入快照——响应侧从 ModelDeployment.engine（权威来源）取。``prefix_cache_hit_rate``
+    对只给命中/查询 counter 的引擎（vLLM）是当前 5 分钟桶内的增量之比，桶内还没查询为 None；
+    对直接导出命中率 gauge 的引擎（SGLang）是引擎自报值。
     """
 
     instance_id: str
@@ -313,7 +347,8 @@ class _EngineAccum:
     """一个引擎实例在当前桶内的 gauge 统计（metric_engine_rollup 的内存形态）。
 
     gauge 记桶内 avg（sum/count）与 max；``samples`` 是桶内成功抓取次数，用于
-    区分「真的没变」与「没抓到」；``preemptions`` 是 counter 的桶内增量。
+    区分「真的没变」与「没抓到」；``preemptions`` 是 counter 的桶内增量。前缀命中数 /
+    查询数同样记桶内增量，命中率 = 两者之比（见 prefix_hit_rate）。
     """
 
     instance_id: str
@@ -321,6 +356,8 @@ class _EngineAccum:
     engine: str
     samples: int = 0
     preemptions: int = 0
+    prefix_hits: int = 0
+    prefix_queries: int = 0
     sums: dict[str, float] = field(default_factory=dict)
     maxes: dict[str, float] = field(default_factory=dict)
     counts: dict[str, int] = field(default_factory=dict)
@@ -336,6 +373,12 @@ class _EngineAccum:
 
     def max_of(self, name: str) -> float | None:
         return round(self.maxes[name], 4) if name in self.maxes else None
+
+    def prefix_hit_rate(self) -> float | None:
+        """桶内前缀命中率 = 桶内命中增量 / 查询增量；引擎不给这对 counter 或桶内无查询 → None。"""
+        if self.prefix_queries <= 0:
+            return None
+        return round(self.prefix_hits / self.prefix_queries, 4)
 
 
 @dataclass
@@ -374,9 +417,9 @@ class MetricsScraper:
         self._engine_targets: dict[str, _EngineTarget] = {}
         # 引擎实时快照：instance_id -> EngineSnapshot（实时面板直读；未抓到无条目）
         self._engine_snapshots: dict[str, EngineSnapshot] = {}
-        # 引擎抢占 counter 差分基线：instance_id -> 上次值。独立于 _last（不参与
+        # 引擎 counter 差分基线：(instance_id, 归一名) -> 上次值。独立于 _last（不参与
         # 每桶修剪——引擎按慢档抓时键会隔桶才出现，进了修剪链路会永远首见归零）
-        self._engine_preempt_last: dict[str, float] = {}
+        self._engine_counter_last: dict[tuple[str, str], float] = {}
         # 引擎桶累计：instance_id -> _EngineAccum（当前桶）；翻转入独立落库队列
         self._engine_buckets: dict[str, _EngineAccum] = {}
         self._engine_flush_queue: deque[tuple[datetime, dict[str, _EngineAccum]]] = deque()
@@ -608,7 +651,8 @@ class MetricsScraper:
         stale = set(self._engine_snapshots) - set(out)
         for sid in stale:
             self._engine_snapshots.pop(sid, None)
-            self._engine_preempt_last.pop(sid, None)
+            for key in [k for k in self._engine_counter_last if k[0] == sid]:
+                del self._engine_counter_last[key]
         # 健康记账只留「现存 proxy URL ∪ 现存引擎实例」——下线实例的失败
         # 计数不清会让历史故障永远挂在 scrape-health 上
         keep_health = set(self._targets) | set(out)
@@ -755,10 +799,22 @@ class MetricsScraper:
         """
         self._ensure_bucket(now)
         gauges: dict[str, float] = {}
+        # 归一名 → 本次抓到的 counter 累计值（实例内各引擎序列求和）
+        counters: dict[str, float] = {}
+        rate_counters = _ENGINE_RATE_COUNTERS.get(t.engine, ())
         try:
-            for family in text_string_to_metric_families(text):
+            families = list(text_string_to_metric_families(text))
+            family_names = {family.name for family in families}
+            for family in families:
                 mapped = _map_engine_metric(t.engine, family.name)
                 if mapped is None:
+                    continue
+                # 新旧名并存导出时只认新名（值相同，两条都收会叠计）
+                renamed_to = _ENGINE_RENAMED_FAMILIES.get(family.name)
+                if renamed_to is not None and renamed_to in family_names:
+                    continue
+                if mapped in rate_counters:
+                    counters[mapped] = counters.get(mapped, 0.0) + _family_sum(family)
                     continue
                 for sample in family.samples:
                     val = _finite_or_none(sample.value)
@@ -766,23 +822,8 @@ class MetricsScraper:
                         gauges[mapped] = val
         except Exception as e:
             log.warning("engine metrics parse failed (instance=%s): %r", t.instance_id, e)
-            snap = self._engine_snapshots.get(t.instance_id)
-            if snap is not None:
-                snap.ok = False
+            self._mark_engine_snapshot_stale(t.instance_id)
             return
-
-        snap = EngineSnapshot(
-            instance_id=t.instance_id,
-            deployment_id=t.deployment_id,
-            ok=True,
-            kv_cache_util=gauges.get("kv_cache_util"),
-            running_requests=gauges.get("running_requests"),
-            waiting_requests=gauges.get("waiting_requests"),
-            prefix_cache_hit_rate=gauges.get("prefix_cache_hit_rate"),
-            num_preemptions=gauges.get("num_preemptions"),
-            fetched_at=now,
-        )
-        self._engine_snapshots[t.instance_id] = snap
 
         # 桶累计：gauge 记 avg/max（avg 看常态、max 看峰值），samples 区分
         # 「没变」与「没抓到」；抢占是 counter，按实例差分出桶内增量（引擎重启
@@ -796,18 +837,64 @@ class MetricsScraper:
             )
             self._engine_buckets[t.instance_id] = acc
         acc.samples += 1
+        # 前缀命中率：引擎只给命中 / 查询两个 counter 的，先把本轮增量累进桶再取桶内比值
+        rate = self._accumulate_prefix_rate(t.instance_id, acc, rate_counters, counters)
+
+        snap = EngineSnapshot(
+            instance_id=t.instance_id,
+            deployment_id=t.deployment_id,
+            ok=True,
+            kv_cache_util=gauges.get("kv_cache_util"),
+            running_requests=gauges.get("running_requests"),
+            waiting_requests=gauges.get("waiting_requests"),
+            prefix_cache_hit_rate=rate if rate is not None else gauges.get("prefix_cache_hit_rate"),
+            num_preemptions=gauges.get("num_preemptions"),
+            fetched_at=now,
+        )
+        self._engine_snapshots[t.instance_id] = snap
+
         for name in _ENGINE_GAUGE_COLUMNS:
             val = gauges.get(name)
             if val is not None:
                 acc.add_gauge(name, val)
         preempts = gauges.get("num_preemptions")
         if preempts is not None:
-            acc.preemptions += self._diff_engine_preemption(t.instance_id, preempts)
+            acc.preemptions += self._diff_engine_counter(t.instance_id, "num_preemptions", preempts)
 
-    def _diff_engine_preemption(self, instance_id: str, value: float) -> int:
-        """引擎抢占 counter 差分（回绕按从零开始口径）。"""
-        last = self._engine_preempt_last.get(instance_id)
-        self._engine_preempt_last[instance_id] = value
+    def _mark_engine_snapshot_stale(self, instance_id: str) -> None:
+        """解析失败：有旧快照就翻 ok=False 保留上次值；从未成功过则不建条目。"""
+        snap = self._engine_snapshots.get(instance_id)
+        if snap is not None:
+            snap.ok = False
+
+    def _accumulate_prefix_rate(
+        self,
+        instance_id: str,
+        acc: _EngineAccum,
+        rate_counters: tuple[str, ...],
+        counters: dict[str, float],
+    ) -> float | None:
+        """把本轮命中 / 查询 counter 的增量累进桶，返回桶内前缀命中率。
+
+        引擎不给这对 counter（未收录 / 本轮没导出）或桶内还没有查询 → None，由调用方
+        回落 gauge 口径。差分基线按 (instance_id, 归一名) 各记一份，实例下线时一并清。
+        """
+        if len(rate_counters) != 2:
+            return None
+        queries_name, hits_name = rate_counters
+        queries = counters.get(queries_name)
+        hits = counters.get(hits_name)
+        if queries is None or hits is None:
+            return None
+        acc.prefix_queries += self._diff_engine_counter(instance_id, queries_name, queries)
+        acc.prefix_hits += self._diff_engine_counter(instance_id, hits_name, hits)
+        return acc.prefix_hit_rate()
+
+    def _diff_engine_counter(self, instance_id: str, name: str, value: float) -> int:
+        """引擎 counter 差分（回绕按从零开始口径）。"""
+        key = (instance_id, name)
+        last = self._engine_counter_last.get(key)
+        self._engine_counter_last[key] = value
         if last is None:
             return 0
         delta = value - last if value >= last else value
@@ -1250,6 +1337,9 @@ class MetricsScraper:
         """引擎桶累计 → MetricEngineRollup ORM 行（gauge avg/max 成对）。"""
         from llmpod.models import MetricEngineRollup
 
+        # 引擎只给命中 / 查询 counter 的（vLLM）：桶内命中率是桶内增量之比，没有「峰值」
+        # 可言，avg/max 同值；给 gauge 的引擎（SGLang）照旧走 gauge 统计
+        rate = acc.prefix_hit_rate()
         return MetricEngineRollup(
             bucket_start=bucket_start,
             instance_id=acc.instance_id,
@@ -1263,8 +1353,8 @@ class MetricsScraper:
             running_requests_max=acc.max_of("running_requests"),
             waiting_requests_avg=acc.avg("waiting_requests"),
             waiting_requests_max=acc.max_of("waiting_requests"),
-            prefix_cache_hit_rate_avg=acc.avg("prefix_cache_hit_rate"),
-            prefix_cache_hit_rate_max=acc.max_of("prefix_cache_hit_rate"),
+            prefix_cache_hit_rate_avg=rate if rate is not None else acc.avg("prefix_cache_hit_rate"),
+            prefix_cache_hit_rate_max=rate if rate is not None else acc.max_of("prefix_cache_hit_rate"),
         )
 
 
