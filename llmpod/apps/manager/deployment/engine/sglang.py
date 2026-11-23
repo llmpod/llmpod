@@ -75,7 +75,7 @@ class SGLangAdapter(EngineAdapter):
     # 较新版本取值）；HiCache 三件套（开关 + hicache-size 或 hicache-ratio）须同时添加。
     param_suggestions = [
         ParamSuggestion(name="--dtype", hint="计算精度", choices=["auto", "half", "bfloat16", "float16"]),
-        ParamSuggestion(name="--trust-remote-code", hint="信任远程代码（自定义模型架构）"),
+        ParamSuggestion(name="--trust-remote-code", hint="信任远程代码"),
         ParamSuggestion(name="--quantization", hint="量化方案", choices=["awq", "gptq", "fp8", "marlin"]),
         ParamSuggestion(name="--attention-backend", hint="注意力后端", choices=["flashinfer", "triton", "torch_sdpa"]),
         # ---- tool calling / 推理输出解析器 ----
@@ -83,7 +83,7 @@ class SGLangAdapter(EngineAdapter):
         # （SGLang 词表与 vLLM 不同：如 deepseek-r1 带连字符、Qwen2.5 系为 qwen25）。
         ParamSuggestion(
             name="--tool-call-parser",
-            hint="工具调用解析器；默认 auto（按 chat template 检测）。须匹配模型家族，可自行输入其它值",
+            hint="工具调用解析器",
             choices=[
                 "qwen25",
                 "qwen3_coder",
@@ -98,47 +98,32 @@ class SGLangAdapter(EngineAdapter):
         ),
         ParamSuggestion(
             name="--reasoning-parser",
-            hint="推理内容解析器；默认 auto（按 chat template 检测）。不设时思考过程会混进正文",
+            hint="推理内容解析器",
             choices=["qwen3", "deepseek-r1", "deepseek-v3", "glm45", "kimi_k2", "mistral", "gpt-oss"],
         ),
         ParamSuggestion(
             name="--sampling-backend",
-            hint="采样后端（flashinfer 异常时回退 pytorch）",
+            hint="采样后端",
             choices=["flashinfer", "pytorch"],
         ),
         # ---- 前缀缓存（RadixAttention 默认开启）----
-        ParamSuggestion(
-            name="--disable-radix-cache",
-            hint="关闭 RadixAttention 前缀缓存（默认开启；无前缀复用场景可关省开销）",
-        ),
+        ParamSuggestion(name="--disable-radix-cache", hint="关闭前缀缓存"),
         ParamSuggestion(
             name="--radix-eviction-policy",
             hint="radix 树淘汰策略",
             choices=["lru", "lfu", "slru", "priority"],
         ),
-        ParamSuggestion(
-            name="--page-size",
-            hint="页大小（tokens），影响缓存粒度与碎片率；一般不动",
-        ),
+        ParamSuggestion(name="--page-size", hint="页大小（tokens）"),
         # ---- KV cache 量化 ----
         ParamSuggestion(
             name="--kv-cache-dtype",
-            hint="KV cache 存储精度：fp8 系列使 KV 容量约翻倍；异常时退回 auto",
+            hint="KV cache 存储精度",
             choices=["auto", "fp8_e4m3", "fp8_e5m2", "bf16"],
         ),
         # ---- KV cache 卸载至主机内存（HiCache 层级缓存）----
-        ParamSuggestion(
-            name="--enable-hierarchical-cache",
-            hint="HiCache 总开关：GPU↔主机内存分级 KV 缓存；须配 --hicache-size 或 --hicache-ratio",
-        ),
-        ParamSuggestion(
-            name="--hicache-size",
-            hint="host 内存 KV 池固定大小（GB，设置后覆盖 --hicache-ratio）；须配 --enable-hierarchical-cache",
-        ),
-        ParamSuggestion(
-            name="--hicache-ratio",
-            hint="host KV 池大小 = GPU KV 池 × 此比例（默认 2.0；与 --hicache-size 二选一）",
-        ),
+        ParamSuggestion(name="--enable-hierarchical-cache", hint="HiCache 分级缓存开关"),
+        ParamSuggestion(name="--hicache-size", hint="host 内存 KV 池大小（GB）"),
+        ParamSuggestion(name="--hicache-ratio", hint="host KV 池 = GPU KV 池 × 此比例"),
         ParamSuggestion(
             name="--hicache-write-policy",
             hint="HiCache 写策略",
@@ -146,18 +131,15 @@ class SGLangAdapter(EngineAdapter):
         ),
         ParamSuggestion(
             name="--hicache-io-backend",
-            hint="GPU↔CPU KV 传输 IO 后端",
+            hint="GPU↔CPU KV 传输后端",
             choices=["kernel", "direct", "kernel_ascend"],
         ),
         ParamSuggestion(
             name="--hicache-mem-layout",
-            hint="host 内存池布局（一般不动）",
+            hint="host 内存池布局",
             choices=["page_first", "layer_first"],
         ),
-        ParamSuggestion(
-            name="--hicache-storage-backend",
-            hint="高级：L3 持久存储后端（file/mooncake/nixl/hf3fs/aibrix 等），可另配 extra-config JSON",
-        ),
+        ParamSuggestion(name="--hicache-storage-backend", hint="L3 持久存储后端"),
     ]
 
     # KV cache 精度支持矩阵：前端 Step2 高级参数下拉 + 显存估算折算同源。
@@ -185,7 +167,7 @@ class SGLangAdapter(EngineAdapter):
             label="BF16",
             dtype_bytes=2.0,
             args=["--kv-cache-dtype", "bf16"],
-            hint="显式指定 BF16 存储（占用与默认同档）",
+            hint="显式 BF16 存储",
         ),
     ]
 

@@ -90,14 +90,14 @@ class LlamaCppAdapter(EngineAdapter):
             label="Q8_0",
             dtype_bytes=1.0,
             args=["--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--flash-attn"],
-            hint="KV 约减半；质量损失可忽略，量化 V 需 flash-attn（已一并加入）",
+            hint="KV 约减半；精度损失可忽略",
         ),
         KVCacheDtypeOption(
             value="q4_0",
             label="Q4_0",
             dtype_bytes=0.5,
             args=["--cache-type-k", "q4_0", "--cache-type-v", "q4_0", "--flash-attn"],
-            hint="KV 约四分之一；长上下文精度损失较明显，量化 V 需 flash-attn（已一并加入）",
+            hint="KV 约四分之一；精度损失较明显",
         ),
     ]
 

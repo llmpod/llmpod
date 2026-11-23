@@ -186,6 +186,40 @@ class TestValidateCommandForTopology:
             get_adapter("vllm"),
         )
 
+    def test_broken_engram_config_rejected(self):
+        """--engram-config 的 JSON 值丢引号（编辑往返拆碎）同样在预检期拦下。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        broken = "vllm serve {model_path} --port {port} --engram-config {disk_offload:true}"
+        with pytest.raises(LLMPodValidationError) as exc:
+            validate_command_for_topology(broken, topology, get_adapter("vllm"))
+        assert "不是合法 JSON" in str(exc.value)
+        assert "--engram-config" in str(exc.value)
+
+    def test_quoted_engram_config_accepted(self):
+        """引号完整的 --engram-config JSON 值照常通过。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        good = "vllm serve {model_path} --port {port} --engram-config '{\"disk_offload\":true}'"
+        validate_command_for_topology(good, topology, get_adapter("vllm"))
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "--speculative-config",
+            "--mm-processor-kwargs",
+            "--default-chat-template-kwargs",
+            "--limit-mm-per-prompt",
+            "--override-generation-config",
+        ],
+    )
+    def test_new_json_flags_rejected_when_unquoted(self, flag):
+        """本轮新增的 JSON 值 flag 丢引号同样在预检期拦下（报错带 flag 名与正确写法）。"""
+        topology = Topology(copies=[UnitTemplate(nnodes=1)])
+        broken = f"vllm serve {{model_path}} --port {{port}} {flag} {{method: ngram}}"
+        with pytest.raises(LLMPodValidationError) as exc:
+            validate_command_for_topology(broken, topology, get_adapter("vllm"))
+        assert "不是合法 JSON" in str(exc.value)
+        assert flag in str(exc.value)
+
     def test_engine_without_json_flags_skips_check(self):
         """未声明 JSON flag 的引擎不做该校验（守卫只对声明引擎生效）。"""
         topology = Topology(copies=[UnitTemplate(nnodes=1)])

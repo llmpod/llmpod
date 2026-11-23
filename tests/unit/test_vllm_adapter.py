@@ -121,6 +121,40 @@ class TestGenerateStartArgs:
         assert args.count("--compilation-config") == 1
         assert args[args.index("--compilation-config") + 1] == '{"cudagraph_mode":"PIECEWISE"}'
 
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            ["--optimization-level", "1"],
+            ["-O", "1"],
+            ["-O0"],
+            ["-O=1"],
+        ],
+    )
+    def test_user_optimization_level_suppresses_cudagraph_default(self, adapter, extra):
+        """用户给了编译档位（长名 / 短名 / 连写）：平台不再补 FULL_DECODE_ONLY 的
+        compilation-config——补了会用显式值盖掉所选档位的 cudagraph_mode。"""
+        entry = image_catalog.ImageEntry(id="t", engine="vllm", arch="nvidia", engine_version="0.27.1", image="x")
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            entry,
+            {"extra_args": extra},
+        )
+        assert "--compilation-config" not in args
+        assert "--max-num-seqs" in args
+
+    def test_short_compilation_config_alias_suppresses_cudagraph_default(self, adapter):
+        """-cc 是 --compilation-config 的短写：用户用它时平台同样不重复注入。"""
+        entry = image_catalog.ImageEntry(id="t", engine="vllm", arch="nvidia", engine_version="0.27.1", image="x")
+        args = adapter.assemble_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            entry,
+            {"extra_args": ["-cc", '{"cudagraph_mode":"PIECEWISE"}']},
+        )
+        assert "--compilation-config" not in args
+        assert args.count("-cc") == 1
+
     def test_task_generate_no_flag(self, adapter):
         """task=generate（默认）：无池化 flag / 无 tool-calling 之外的注入（回归守卫：防重新引入已弃用的 --task）。"""
         args = adapter.generate_start_args(
@@ -560,6 +594,26 @@ class TestToolCalling:
             tool, reasoning = adapter.parsers_for(arch)
             assert (tool, reasoning) == ("qwen3_coder", "qwen3"), arch
 
+    def test_qwen4exp_family_gets_qwen3_parsers(self, adapter):
+        """Qwen4Exp（Qwen3.8-Flash 一族，PLE n-gram 表）沿用 Qwen3 的思考与工具调用
+        语法（chat template 同用 enable_thinking 开关），给同一对解析器；VL 变体
+        （ForConditionalGeneration）前缀同样命中。漏掉会让思考内容整段混进正文。"""
+        for arch in ("Qwen4ExpForCausalLM", "Qwen4ExpForConditionalGeneration"):
+            assert adapter.parsers_for(arch) == ("qwen3_coder", "qwen3"), arch
+        args = adapter.generate_start_args(
+            InstanceSpec(
+                model_path="/m",
+                served_model_name="m",
+                port=8000,
+                nnodes=1,
+                model_architecture="Qwen4ExpForCausalLM",
+            ),
+            Topology(tp=1),
+            {},
+        )
+        assert args[args.index("--tool-call-parser") + 1] == "qwen3_coder"
+        assert args[args.index("--reasoning-parser") + 1] == "qwen3"
+
     def test_parsers_for_unknown_architecture(self, adapter):
         assert adapter.parsers_for(None) == ("hermes", None)
         assert adapter.parsers_for("") == ("hermes", None)
@@ -608,9 +662,78 @@ class TestToolCalling:
         assert tool.choices and reasoning.choices
         # 兜底值必须在候选里，否则「默认值不在列表」会让用户困惑
         assert tool.default == adapter.default_tool_call_parser in tool.choices
-        # 家族专属值在位：Qwen3 是本次要照顾的正主
+        # 家族专属值在位：Qwen3 / Qwen4Exp 是要照顾的正主
         assert {"qwen3_coder", "deepseek_v3", "glm45"} <= set(tool.choices)
         assert {"qwen3", "deepseek_r1"} <= set(reasoning.choices)
+
+    def test_engram_config_offered_as_suggestion(self, adapter):
+        """--engram-config 出现在参数建议里且默认值是合法 JSON（Qwen4Exp PLE 表
+        驻留位置开关，预检 message 提示过的那条参数要能在前端一键加进来）。"""
+        by_name = {s.name: s for s in adapter.param_suggestions}
+        assert "--engram-config" in by_name
+        engram = by_name["--engram-config"]
+        assert json.loads(engram.default) == {"disk_offload": True}
+        # JSON 值 flag 须登记进预检校验名单，丢了引号的半截 JSON 在创建期拦下
+        assert "--engram-config" in adapter.command_json_value_flags
+
+    def test_prompt_tokens_details_injected_for_generate(self, adapter):
+        """generate 任务恒注入 --enable-prompt-tokens-details：vLLM 默认不往 usage 里报
+        cached_tokens，而平台的缓存命中计价 / 调用日志 / 指标都读这个字段。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1),
+            Topology(tp=1),
+            {},
+        )
+        assert "--enable-prompt-tokens-details" in args
+
+    def test_prompt_tokens_details_absent_for_pooling(self, adapter):
+        """embed / classify 是一次前向、没有前缀缓存可命中，不带该 flag（与 tool-calling 同一分支）。"""
+        for task in ("embed", "classify"):
+            args = adapter.generate_start_args(
+                InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1, task=task),
+                Topology(tp=1),
+                {},
+            )
+            assert "--enable-prompt-tokens-details" not in args, task
+
+    def test_prompt_tokens_details_injected_on_cann(self, adapter):
+        """cann 路径的 generate 分支同样带（计费口径与架构无关）。"""
+        args = adapter.generate_start_args(
+            InstanceSpec(model_path="/m", served_model_name="m", port=8000, nnodes=1, gpu_arch="cann"),
+            Topology(tp=1, max_model_len=8192),
+            {},
+        )
+        assert "--enable-prompt-tokens-details" in args
+
+    def test_new_json_chips_have_valid_defaults(self, adapter):
+        """新增 JSON 值 chip：默认值必须是合法 JSON，且 flag 登记进完整命令 JSON 预检名单。"""
+        by_name = {s.name: s for s in adapter.param_suggestions}
+        for name in (
+            "--default-chat-template-kwargs",
+            "--speculative-config",
+            "--mm-processor-kwargs",
+            "--limit-mm-per-prompt",
+            "--override-generation-config",
+        ):
+            assert name in by_name, name
+            json.loads(by_name[name].default)
+            assert name in adapter.command_json_value_flags, name
+
+    def test_new_plain_chips_present(self, adapter):
+        """非 JSON 的新增 chip 到位；取值列表是上游该参数的合法枚举名。"""
+        by_name = {s.name: s for s in adapter.param_suggestions}
+        assert by_name["--attention-backend"].choices == ["FLASH_ATTN", "FLASHINFER", "TRITON_ATTN", "FLEX_ATTENTION"]
+        assert by_name["--optimization-level"].choices == ["0", "1", "2", "3"]
+        assert by_name["--performance-mode"].choices == ["balanced", "interactivity", "throughput"]
+        assert by_name["--scheduling-policy"].choices == ["fcfs", "priority"]
+        assert by_name["--generation-config"].choices == ["auto", "vllm"]
+        for name in (
+            "--disable-custom-all-reduce",
+            "--stream-interval",
+            "--no-enable-chunked-prefill",
+            "--max-logprobs",
+        ):
+            assert name in by_name, name
 
     def test_absent_for_embed(self, adapter):
         """task=embed（embedding 模型）→ 不注入 tool calling（无 chat 工具端点）。"""

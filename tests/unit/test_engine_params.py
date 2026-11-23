@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from llmpod.apps.manager.deployment.assess import check_protected_overlap
@@ -48,6 +49,15 @@ class TestVllmParamDecls:
     def test_param_suggestion_model(self):
         p = ParamSuggestion(name="--x", hint="h", default="1", choices=["1", "2"])
         assert p.model_dump() == {"name": "--x", "hint": "h", "default": "1", "choices": ["1", "2"]}
+
+    def test_json_default_suggestions_are_prechecked(self):
+        """默认值是 JSON 的 chip，flag 必须在完整命令 JSON 预检名单里（对账：漏登记时这里先红），
+        且默认值本身是合法 JSON。"""
+        json_chips = [p for p in VLLMAdapter.param_suggestions if (p.default or "").lstrip().startswith("{")]
+        assert json_chips, "vLLM 应当有 JSON 默认值的建议项"
+        for chip in json_chips:
+            assert chip.name in VLLMAdapter.command_json_value_flags, chip.name
+            assert json.loads(chip.default) is not None, chip.name
 
 
 class TestCheckProtectedOverlap:

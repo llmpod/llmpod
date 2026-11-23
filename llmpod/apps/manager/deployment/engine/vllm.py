@@ -33,9 +33,12 @@ _CUDAGRAPH_MODE_MIN_VERSION = (0, 11, 0)
 # 用户把健康检查超时调得更大时随之放大。
 _ENGINE_READY_TIMEOUT_FLOOR_S = 3600
 
-# 合并结果里已有任一 CUDA graph 开关时，平台不再补 --compilation-config：
-# 同时给 --enforce-eager 会让 vLLM 语义冲突拒启。
-_CUDAGRAPH_FLAGS = {"--compilation-config", "-O", "--enforce-eager"}
+# 合并结果里已有任一 CUDA graph / 编译档位开关时，平台不再补 --compilation-config：
+# 同时给 --enforce-eager 会让 vLLM 语义冲突拒启；用户给了 --optimization-level 时再补
+# 这条等于用显式值盖掉所选档位的 cudagraph_mode（vLLM 只给未显式设置的字段套档位默认值）。
+# -O 是 --optimization-level 的短写（0.12 起；连写 -O0 / -O3 由 assemble_args 归并），
+# -cc 是 --compilation-config 的短写。
+_CUDAGRAPH_FLAGS = {"--compilation-config", "-cc", "-O", "--optimization-level", "--enforce-eager"}
 
 
 class VLLMAdapter(EngineAdapter):
@@ -105,59 +108,126 @@ class VLLMAdapter(EngineAdapter):
     multinode_command_placeholders = ["headless"]
     # 吃 JSON 值的引擎 flag：完整命令模式下值丢了引号会在引擎启动期崩，预检期先拦
     # （--compilation-config 的短写 -O 允许纯数字档位，由用户自行保证）
-    command_json_value_flags = {"--compilation-config", "--hf-overrides"}
+    command_json_value_flags = {
+        "--compilation-config",
+        "--hf-overrides",
+        "--engram-config",
+        "--speculative-config",
+        "--mm-processor-kwargs",
+        "--default-chat-template-kwargs",
+        "--limit-mm-per-prompt",
+        "--override-generation-config",
+    }
 
     param_suggestions = [
-        ParamSuggestion(name="--trust-remote-code", hint="信任远程代码（自定义模型架构）"),
+        ParamSuggestion(name="--trust-remote-code", hint="信任远程代码"),
         ParamSuggestion(name="--quantization", hint="量化方案", choices=["awq", "gptq", "fp8"]),
         ParamSuggestion(name="--dtype", hint="计算精度", choices=["auto", "half", "bfloat16", "float16"]),
-        ParamSuggestion(name="--enforce-eager", hint="禁用 CUDA graph（省显存、降吞吐）"),
+        ParamSuggestion(name="--enforce-eager", hint="禁用 CUDA graph"),
         # ---- 前缀缓存 ----
-        ParamSuggestion(
-            name="--enable-prefix-caching",
-            hint="启用前缀缓存（新版本默认已开；旧镜像默认关闭时需显式加）",
-        ),
-        ParamSuggestion(
-            name="--no-enable-prefix-caching",
-            hint="关闭前缀缓存（新版本默认开启；无前缀复用场景可关省开销）",
-        ),
+        ParamSuggestion(name="--enable-prefix-caching", hint="启用前缀缓存"),
+        ParamSuggestion(name="--no-enable-prefix-caching", hint="关闭前缀缓存"),
         ParamSuggestion(
             name="--prefix-caching-hash-algo",
-            hint="前缀块哈希算法（长前缀场景换 xxhash 可降 CPU 开销）",
+            hint="前缀块哈希算法",
             choices=["sha256", "xxhash", "sha256_cbor", "xxhash_cbor"],
         ),
-        ParamSuggestion(name="--prefix-match-unit", hint="前缀命中的最小 token 粒度（tokens）"),
+        ParamSuggestion(name="--prefix-match-unit", hint="前缀命中最小 token 数"),
         # ---- KV cache 量化 ----
         ParamSuggestion(
             name="--kv-cache-dtype",
-            hint="KV cache 存储精度：fp8 系列使 KV 容量约翻倍（310P NPU 不支持）；异常时退回 auto",
+            hint="KV cache 存储精度",
             choices=["auto", "fp8", "fp8_e5m2", "fp8_e4m3"],
         ),
-        ParamSuggestion(
-            name="--kv-cache-dtype-skip-layers",
-            hint="跳过量化的层（层索引或类型名如 sliding_window，逗号分隔；较新版本参数）",
-        ),
+        ParamSuggestion(name="--kv-cache-dtype-skip-layers", hint="跳过量化的层"),
         # ---- KV cache 卸载至 CPU 内存 ----
-        ParamSuggestion(
-            name="--kv-offloading-size",
-            hint="KV 卸载至 CPU 内存的缓冲区大小（GiB，不设=禁用卸载）；需 vLLM ≥0.11",
-        ),
+        ParamSuggestion(name="--kv-offloading-size", hint="KV 卸载至 CPU 内存（GiB）"),
         ParamSuggestion(
             name="--kv-offloading-backend",
-            hint="KV 卸载后端，须与 --kv-offloading-size 成对使用；选 lmcache 时另填 LMCACHE_* 环境变量（Env 栏）",
+            hint="KV 卸载后端",
             choices=["native", "lmcache"],
         ),
+        ParamSuggestion(name="--kv-transfer-config", hint="KV 连接器 JSON 配置"),
+        # ---- n-gram 嵌入表（Qwen4Exp PLE）----
+        # disk_offload 键上游 v0.34.0（2026-11-14 发布）才加，flag 本身 v0.30.0 才有；
+        # catalog 现收的最高版本 0.32.0 及更早镜像带上它会因未知键 / 未知 flag 拒启
         ParamSuggestion(
-            name="--kv-transfer-config",
-            hint="高级：KV 连接器 JSON 配置（如 LMCacheConnectorV1 / PD 分离）；会关闭 hybrid KV cache manager",
+            name="--engram-config",
+            hint="n-gram嵌入表驻留位置",
+            default='{"disk_offload":true}',
         ),
+        # ---- 思考模式 / 投机解码 ----
+        # chat template 渲染的默认入参（与请求级 chat_template_kwargs 合并，请求值优先）；
+        # enable_thinking 是 Qwen3 / Qwen4Exp 系的思考开关，vLLM 的 qwen3 推理解析器也靠它。
+        # JSON 值 flag：完整命令模式丢了引号由 command_json_value_flags 预检拦下。
+        ParamSuggestion(
+            name="--default-chat-template-kwargs",
+            hint="思考模式默认开关",
+            default='{"enable_thinking": false}',
+        ),
+        # 投机解码：ngram 按提示里的 n-gram 猜下一段、不需要草稿模型，任何模型都能开；
+        # eagle / mtp 还要草稿模型路径，平台只挂主模型目录。num_speculative_tokens 是每步猜的 token 数
+        ParamSuggestion(
+            name="--speculative-config",
+            hint="投机解码配置",
+            default='{"method":"ngram","num_speculative_tokens":5}',
+        ),
+        # ---- 注意力 / 编译 / 调度 ----
+        # 注意力后端名是 vLLM 的 AttentionBackendEnum 成员名（0.13 起才有该 flag）
+        ParamSuggestion(
+            name="--attention-backend",
+            hint="注意力后端",
+            choices=["FLASH_ATTN", "FLASHINFER", "TRITON_ATTN", "FLEX_ATTENTION"],
+        ),
+        # 编译与 CUDA graph 档位（-O 短写）：0=不编译不捕获、1=Piecewise 图、2/3=全量图（上游默认 2）。
+        # 用户选了档位，平台就不再补 FULL_DECODE_ONLY 的 compilation-config（见 _CUDAGRAPH_FLAGS）
+        ParamSuggestion(name="--optimization-level", hint="编译与 CUDA graph 档位", choices=["0", "1", "2", "3"]),
+        # 0.17 起：interactivity 小批量低延迟（细粒度 CUDA graph）、throughput 高并发吞吐
+        ParamSuggestion(
+            name="--performance-mode",
+            hint="性能取向",
+            choices=["balanced", "interactivity", "throughput"],
+        ),
+        ParamSuggestion(name="--scheduling-policy", hint="调度策略", choices=["fcfs", "priority"]),
+        # 多卡 NCCL 走自定义 all-reduce，个别机型/驱动组合会卡死在通信上，用它排除
+        ParamSuggestion(name="--disable-custom-all-reduce", hint="关闭自定义 all-reduce"),
+        # 流式多少个 token 吐一个 chunk（默认 1）；调大减少 SSE 帧数换吞吐
+        ParamSuggestion(name="--stream-interval", hint="流式输出间隔（token 数）"),
+        # 分块预填充默认开；关掉后 max_num_batched_tokens 必须不小于 max_model_len，否则拒启
+        ParamSuggestion(name="--no-enable-chunked-prefill", hint="关闭分块预填充"),
+        # ---- 多模态 ----
+        # HF 预处理器入参：max_pixels 是 2080Ti 跑 Qwen3.6-35B 的实测可用值（默认值高得多）
+        ParamSuggestion(
+            name="--mm-processor-kwargs",
+            hint="多模态预处理参数",
+            default='{"max_pixels": 1003520}',
+        ),
+        # 每个请求每种模态的输入条数上限。V1 引擎默认 999，但 V0（默认走 V0 的旧镜像）
+        # 每种模态只许 1 条——多图请求在旧镜像上必须显式给
+        ParamSuggestion(
+            name="--limit-mm-per-prompt",
+            hint="每请求多模态输入上限",
+            default='{"image": 16, "video": 2}',
+        ),
+        # ---- 采样 ----
+        # 采样默认值的来源：auto=按模型 generation_config.json、vllm=忽略它用 vLLM 内置值
+        ParamSuggestion(name="--generation-config", hint="采样默认值来源", choices=["auto", "vllm"]),
+        # 覆盖模型 generation_config.json 里的采样默认值（temperature / top_p / repetition_penalty …）
+        ParamSuggestion(
+            name="--override-generation-config",
+            hint="覆盖模型默认采样参数",
+            default='{"temperature": 0.7}',
+        ),
+        # 请求 logprobs 的上限（默认 20）；客户端要更多 top logprobs 时调高
+        ParamSuggestion(name="--max-logprobs", hint="logprobs 上限", default="20"),
         # ---- tool calling / 推理输出解析器 ----
-        # 平台已按模型家族给默认值（Qwen3 系 → qwen3_coder + qwen3，其余 → hermes 且不设推理
-        # 解析器，见 _FAMILY_PARSERS）；这里列的是**手动微调**用的常用值，前端是 AutoComplete，
-        # 可自行输入完整集合里的其它值。写错的名字会让 vLLM 启动期抛 KeyError 直接拒启。
+        # 平台已按模型家族给默认值（Qwen3 / Qwen4Exp 系 → qwen3_coder + qwen3，其余 → hermes
+        # 且不设推理解析器，见 _FAMILY_PARSERS）；这里列的是**手动微调**用的常用值，前端是
+        # AutoComplete，可自行输入完整集合里的其它值。写错的名字会让 vLLM 启动期抛 KeyError
+        # 直接拒启。
         ParamSuggestion(
             name="--tool-call-parser",
-            hint="工具调用解析器；Qwen3 系默认 qwen3_coder、其余默认 hermes，同名给出时以你的值为准。须匹配模型家族（下列为常用值，可自行输入）",
+            hint="工具调用解析器",
             default="hermes",
             choices=[
                 "hermes",
@@ -178,7 +248,7 @@ class VLLMAdapter(EngineAdapter):
         ),
         ParamSuggestion(
             name="--reasoning-parser",
-            hint="推理内容解析器；Qwen3 系默认注入 qwen3，同名给出时以你的值为准。不设时思考过程会混进正文（下列为常用值，可自行输入）",
+            hint="推理内容解析器",
             choices=[
                 "qwen3",
                 "deepseek_r1",
@@ -192,17 +262,11 @@ class VLLMAdapter(EngineAdapter):
             ],
         ),
         # ---- 显存/调度常用 ----
-        ParamSuggestion(name="--block-size", hint="paged KV 块大小（tokens），影响碎片率与前缀命中粒度"),
+        ParamSuggestion(name="--block-size", hint="KV 块大小（tokens）"),
         ParamSuggestion(name="--max-num-seqs", hint="单实例并发序列上限"),
         ParamSuggestion(name="--max-num-batched-tokens", hint="单个 batch 的 token 上限"),
-        ParamSuggestion(
-            name="--cpu-offload-gb",
-            hint="权重卸载至 CPU 的空间（GiB/卡；注意是权重非 KV cache，以速度换容量）",
-        ),
-        ParamSuggestion(
-            name="--kv-cache-memory-bytes",
-            hint="直接指定每卡 KV cache 字节预算（如 2G）；设置后忽略显存占比推算，与显存预留口径冲突，慎用",
-        ),
+        ParamSuggestion(name="--cpu-offload-gb", hint="权重卸载至 CPU（GiB/卡）"),
+        ParamSuggestion(name="--kv-cache-memory-bytes", hint="每卡 KV cache 字节预算"),
     ]
 
     # KV cache 精度支持矩阵：前端 Step2 高级参数下拉 + 显存估算折算同源。
@@ -216,14 +280,14 @@ class VLLMAdapter(EngineAdapter):
             label="FP8 E4M3",
             dtype_bytes=1.0,
             args=["--kv-cache-dtype", "fp8_e4m3"],
-            hint="KV 约减半；动态范围小、精度更高，需 CUDA 11.8+；310P NPU 不支持",
+            hint="KV 约减半；精度更高（310P 不支持）",
         ),
         KVCacheDtypeOption(
             value="fp8_e5m2",
             label="FP8 E5M2",
             dtype_bytes=1.0,
             args=["--kv-cache-dtype", "fp8_e5m2"],
-            hint="KV 约减半；动态范围大、精度略低，需 CUDA 11.8+；310P NPU 不支持",
+            hint="KV 约减半；动态范围大（310P 不支持）",
         ),
     ]
 
@@ -244,17 +308,24 @@ class VLLMAdapter(EngineAdapter):
     # hermes 自 0.7.x 起注册在册（各版本 registry 均有），是全版本安全的兜底。
     default_tool_call_parser = "hermes"
     # 家族专属解析器（架构前缀小写 → (tool-call, reasoning)）。只收录有明确依据的家族：
-    # Qwen3 把 ``<think>`` 写在 **prompt** 里、模型输出只剩 ``</think>``，因此它的思考内容
-    # 必须靠 ``--reasoning-parser qwen3`` 单独切出来，用通用 hermes + 不设推理解析器会让思考
-    # 混进正文。反过来给非 Qwen3 模型塞 qwen3 解析器更有害——vLLM 的语法机起始即 reasoning 态
-    # （``vllm/parser/qwen3.py`` 的 ``initial_state``），输出里没有 think 标签时整段正文会被
-    # 判成 reasoning、``content`` 返回 null（见 vLLM 自带用例 WITHOUT_THINK）。所以按架构门控，
-    # 未知家族一律走通用兜底且不设推理解析器。
+    # Qwen3 / Qwen4Exp 把 ``<think>`` 写在 **prompt** 里、模型输出只剩 ``</think>``，因此它
+    # 们的思考内容必须靠 ``--reasoning-parser qwen3`` 单独切出来，用通用 hermes + 不设推理
+    # 解析器会让思考混进正文。反过来给非 Qwen3 模型塞 qwen3 解析器更有害——vLLM 的语法机
+    # 起始即 reasoning 态（``vllm/parser/qwen3.py`` 的 ``initial_state``），输出里没有
+    # think 标签时整段正文会被判成 reasoning、``content`` 返回 null（见 vLLM 自带用例
+    # WITHOUT_THINK）。所以按架构门控，未知家族一律走通用兜底且不设推理解析器。
     # 名字是否存在于目标镜像的 registry 由 ``inference_images.json`` 的 ``engine_versions``
     # 词表判定（版本词表是文件不是代码：上游各版本增删/改名解析器，改数据即可）；
     # 词表里没有的名字逐项回落：工具解析器退 hermes、推理解析器不设（思考混正文是能力
     # 缺失，起不来才是事故）。
-    _FAMILY_PARSERS: tuple[tuple[str, str, str | None], ...] = (("qwen3", "qwen3_coder", "qwen3"),)
+    # Qwen4Exp（Qwen3.8-Flash 一族，带 PLE n-gram 嵌入表）沿用 Qwen3 的思考与工具调用
+    # 语法——chat template 同用 enable_thinking 开关，vLLM 也未注册独立的 qwen4 解析器，
+    # 故与 Qwen3 给同一对；前缀 qwen4exp 覆盖 Qwen4ExpForCausalLM 与 VL 变体
+    # （Qwen4ExpForConditionalGeneration）。
+    _FAMILY_PARSERS: tuple[tuple[str, str, str | None], ...] = (
+        ("qwen3", "qwen3_coder", "qwen3"),
+        ("qwen4exp", "qwen3_coder", "qwen3"),
+    )
 
     def parsers_for(self, architecture: str | None, engine_version: str | None = None) -> tuple[str, str | None]:
         """``(tool-call-parser, reasoning-parser)``：未知家族 → 通用兜底 + 不设推理解析器。
@@ -421,6 +492,8 @@ class VLLMAdapter(EngineAdapter):
         if category in (ModelType.EMBEDDING, ModelType.RERANK):
             args += self._pooling_args(task, engine_version)
         else:
+            # 与 nvidia 路径同一理由：让 usage 带 cached_tokens（见 generate_start_args）
+            args.append("--enable-prompt-tokens-details")
             ctx = int(topology.max_model_len) if topology.max_model_len else 4096
             args += ["--max-model-len", str(ctx)]
         args += self._vram_percent_args(instance)
@@ -491,13 +564,15 @@ class VLLMAdapter(EngineAdapter):
         - ``--compilation-config {"cudagraph_mode": "FULL_DECODE_ONLY"}``：只捕获 decode
           图、prefill 不捕获，换更快的冷启动（代价是 prefill/mixed 少一层 piecewise
           图）。该键 vLLM 0.11 起才有，版本未知一律不补——未知键会被拒启，宁可少
-          优化。已有任一 CUDA graph 开关（用户或镜像声明）时也不补。
+          优化。已有任一 CUDA graph / 编译档位开关（用户或镜像声明）时也不补。
         """
         args = super().assemble_args(instance, topology, image_entry, engine_params)
         flags: set[str] = set()
         for token in args:
             if token.startswith("-"):
-                flags.add(token.split("=", 1)[0])
+                # -O0 / -O3 / -O=2 连写形态归并到 -O（vLLM 没有别的 -O 开头短 flag）
+                name = "-O" if token.startswith("-O") else token.split("=", 1)[0]
+                flags.add(name)
         if "--max-num-seqs" not in flags:
             args += ["--max-num-seqs", str(DEFAULT_MAX_NUM_SEQS)]
         engine_version = image_entry.engine_version if image_entry else None
@@ -578,6 +653,11 @@ class VLLMAdapter(EngineAdapter):
         if category in (ModelType.EMBEDDING, ModelType.RERANK):
             args += self._pooling_args(task, engine_version)
         else:
+            # usage 里带 prompt_tokens_details.cached_tokens：vLLM 默认不带，而平台的缓存
+            # 命中计价 / 调用日志 / 指标都读这个字段——不给就一直按「未上报」记成空。
+            # flag 自 0.6.6 起就有；V1 引擎 0.9.1 起才真往外报（更早版本带了也只是
+            # 多个不生效的开关，无害），所以不分版本恒注入。
+            args.append("--enable-prompt-tokens-details")
             # 默认启用 tool calling（仅 generate 任务；embed/classify 无 chat 工具端点）。
             # --enable-auto-tool-choice 仅在请求带 tools 时才注入 schema，普通 chat 不受影响。
             # 解析器默认按模型家族给（Qwen3 系走自己的 XML 与思考格式，见 _FAMILY_PARSERS，
