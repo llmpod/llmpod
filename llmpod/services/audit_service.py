@@ -500,6 +500,7 @@ _ACTION_LABELS: dict[str, str] = {
     "logout": "登出",
     "upgrade": "升级",
     "upgrade_batch": "批量升级",
+    "restart": "重启",
     "bootstrap": "节点引导",
     "probe": "探测",
     "fetch_models": "拉取模型清单",

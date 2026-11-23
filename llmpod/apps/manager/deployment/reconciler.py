@@ -890,6 +890,59 @@ async def _backfill_ready(deployment_id: str, irows: list[Instance], latest: dic
         await db.flush()
 
 
+# 自愈审计里 last_error 的截断上限：只留定位用的头部信息，防多 MB 崩溃栈灌爆审计行
+_RESTART_AUDIT_ERROR_CHARS = 200
+
+
+async def _audit_runtime_restart(
+    dep: ModelDeployment, *, driven: list[Instance], reset_siblings: list[Instance]
+) -> None:
+    """运行期自愈重启落系统审计（actor=system，admin 审计页可见）。
+
+    运行中部署出现异常分片（容器崩溃/启动失败遗留/节点失联遗留）时，自愈会整份重启
+    引擎——这是「引擎正常运行一段时间后突然被重建」的唯一自动化入口，此前该动作只有
+    存在同引擎已就绪分片时才有一行进程日志，单分片场景一行不留，事后排查既定不了重建
+    时刻也定不了原因。审计明细带本轮新建启动 attempt 的异常分片（含状态与崩溃原因）
+    与被一并预停重置的已就绪分片，与 deploy_log 的实例生命周期行互补。
+
+    审计经独立 session 落库（write_audit 自身兜底不抛），审计缺失不阻断自愈主流程；
+    进程未接 PG（单测桩环境）时无处可写，直接跳过。
+    """
+    from llmpod.db.pg import AsyncSessionLocal
+
+    if AsyncSessionLocal is None:
+        return
+    from llmpod.services.audit_service import write_audit
+
+    detail: dict = {
+        "trigger": "runtime_self_heal",
+        "deployment_name": dep.name,
+        "engine": dep.engine,
+        "driven": [
+            {
+                "instance_id": r.instance_id,
+                "rank": r.rank,
+                "node_id": r.assigned_node,
+                "status": r.status,
+                "last_error": (r.last_error or "")[:_RESTART_AUDIT_ERROR_CHARS],
+            }
+            for r in driven
+        ],
+    }
+    if reset_siblings:
+        detail["reset_siblings"] = [
+            {"instance_id": r.instance_id, "rank": r.rank, "node_id": r.assigned_node} for r in reset_siblings
+        ]
+    await write_audit(
+        actor_type="system",
+        action="restart",
+        resource_type="model_deployment",
+        resource_id=dep.deployment_id,
+        result="success",
+        detail=detail,
+    )
+
+
 async def reconcile_runtime_instances(deployment_id: str) -> None:
     """RUNNING 部署的运行期自愈：异常分片按**引擎整份重启**（指数退避）驱动到 READY。
 
@@ -1055,7 +1108,26 @@ async def reconcile_runtime_instances(deployment_id: str) -> None:
     )
     drive = pending_first if first_booting else pending_first + [r for r in second_group if r.instance_id in drive_pool]
     if drive:
-        await _ensure_start_tasks(dep, model, config, adapter, drive)
+        # 审计只在「本轮新建了启动 attempt」时落一行：在途 task 的后续扫描轮与 PENDING
+        # 重发不会重建容器（node 侧对运行中容器幂等短路），逐轮落行会把一次重启刷成
+        # 几十条。兄弟分片的旧 task 刚被取消、不在驱动前快照键内，天然按新 attempt 计。
+        before_latest = {rk: max(rows, key=lambda t: t.attempt) for rk, rows in tasks_by_key.items()}
+        latest_after = await _ensure_start_tasks(dep, model, config, adapter, drive)
+        if latest_after is not None:
+            new_attempt_keys: set[str] = set()
+            for rk, t in latest_after.items():
+                prev = before_latest.get(rk)
+                if prev is None or t is None or prev.id != t.id:
+                    new_attempt_keys.add(rk)
+            if new_attempt_keys:
+                drive_inst_ids = {r.instance_id for r in drive}
+                await _audit_runtime_restart(
+                    dep,
+                    driven=[
+                        r for r in drivable if r.instance_id in drive_inst_ids and _start_key(r) in new_attempt_keys
+                    ],
+                    reset_siblings=siblings,
+                )
 
 
 # ---- 失败收敛 ----

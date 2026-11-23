@@ -665,3 +665,100 @@ class TestControllerRuntimeScan:
     @staticmethod
     async def _noop_advance(deployment_id):
         return None
+
+
+def _patch_audit(monkeypatch, entries):
+    """桩系统审计写入（捕获 write_audit 入参）并放行「进程未接 PG」守卫。"""
+
+    async def _fake(**kw):
+        entries.append(kw)
+
+    monkeypatch.setattr("llmpod.services.audit_service.write_audit", _fake)
+    monkeypatch.setattr("llmpod.db.pg.AsyncSessionLocal", object())
+
+
+class TestRuntimeRestartAudit:
+    """运行期自愈重启的系统审计（actor=system）：重建时刻与原因在 admin 审计页可查。"""
+
+    async def test_restart_round_writes_audit(self, monkeypatch):
+        """新建启动 attempt 的轮次落一行审计：action=restart，明细带异常分片状态与原因。"""
+        session = FakeSession()
+        _dep(session)
+        _model(session)
+        i1 = _inst(session, status="CRASHED")
+        i1.last_error = "容器异常退出（exit=137）"
+        _patch_db(monkeypatch, session)
+        calls: list[list[str]] = []
+        _patch_ensure(monkeypatch, calls)
+        entries: list[dict] = []
+        _patch_audit(monkeypatch, entries)
+
+        await reconciler.reconcile_runtime_instances("dep1")
+
+        assert calls == [["i1"]]
+        assert len(entries) == 1
+        row = entries[0]
+        assert row["actor_type"] == "system"
+        assert row["action"] == "restart"
+        assert row["resource_type"] == "model_deployment"
+        assert row["resource_id"] == "dep1"
+        detail = row["detail"]
+        assert detail["trigger"] == "runtime_self_heal"
+        assert detail["deployment_name"] == "d"
+        assert detail["engine"] == "vllm"
+        assert detail["driven"] == [
+            {
+                "instance_id": "i1",
+                "rank": 0,
+                "node_id": "n1",
+                "status": "CRASHED",
+                "last_error": "容器异常退出（exit=137）",
+            }
+        ]
+        assert "reset_siblings" not in detail  # 单分片无连坐重置
+
+    async def test_full_restart_lists_reset_siblings(self, monkeypatch):
+        """整份重启：被预停重置的已就绪分片单列在 reset_siblings；死分片本轮被
+        head-first 门控延后（driven 为空也照落——重置动作已实际发生）。"""
+        session = FakeSession()
+        _dep(session)
+        _model(session)
+        # 同引擎 eng-1 的三机分片：head READY + worker CRASHED + worker READY
+        _inst(session, "i1", rank=0, status="READY")
+        _inst(session, "i2", rank=1, node_rank=1, status="CRASHED", node="n2")
+        _inst(session, "i3", rank=2, node_rank=2, status="READY", node="n3")
+        _patch_db(monkeypatch, session)
+        calls: list[list[str]] = []
+        _patch_ensure(monkeypatch, calls)
+        entries: list[dict] = []
+        _patch_audit(monkeypatch, entries)
+
+        await reconciler.reconcile_runtime_instances("dep1")
+
+        assert calls == [["i1"]]
+        assert len(entries) == 1
+        detail = entries[0]["detail"]
+        assert detail["driven"] == []
+        assert [s["instance_id"] for s in detail["reset_siblings"]] == ["i1", "i3"]
+
+    async def test_backoff_window_no_audit(self, monkeypatch):
+        """退避窗内不驱动（不新建 attempt）→ 不落审计。"""
+        import datetime as _dt
+
+        session = FakeSession()
+        _dep(session)
+        _model(session)
+        _inst(session, status="CRASHED")
+        _start_task(session, rank=0, status="FAILED", attempt=1)
+        t = next(iter(session._store.get(Task, {}).values()))
+        t.finished_at = _dt.datetime.now(_dt.timezone.utc)  # 刚失败 → 退避窗内
+        _patch_db(monkeypatch, session)
+        calls: list[list[str]] = []
+        _patch_ensure(monkeypatch, calls)
+        entries: list[dict] = []
+        _patch_audit(monkeypatch, entries)
+
+        await reconciler.reconcile_runtime_instances("dep1")
+
+        assert calls == []  # 退避窗内不重试
+        assert entries == []
