@@ -10,13 +10,20 @@
 [![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?logo=docker&logoColor=white)](docs/usage/deployment.md)
 [![QQ 交流群：836253774](https://img.shields.io/badge/QQ交流群-836253774-12B7F5)](https://qm.qq.com/q/o9aWnbPMnS)
 
-[官网](https://llmpod.ai/) · [功能特性](#功能特性) · [快速开始](#快速开始) · [文档](#文档) · [QQ 交流群](https://qm.qq.com/q/o9aWnbPMnS)
+[官网](https://llmpod.ai/) · [产品预览](#产品预览) · [功能特性](#功能特性) · [快速开始](#快速开始) · [文档](#文档) · [QQ 交流群](https://qm.qq.com/q/o9aWnbPMnS)
 
 </div>
 
 LLMPod 帮助个人、团队和企业将自有算力上的模型交付为可用的推理服务。从接入服务器、导入模型，到部署、在线调试、发布 API，再到管理租户、配额和消费记录，都可以在同一个平台完成。
 
 **让模型跑起来，让业务接得上，让资源和用量看得清。**
+
+<p align="center">
+  <a href="docs/images/readme/cluster-topology.webp">
+    <img src="docs/images/readme/cluster-topology.webp" alt="LLMPod 集群资源拓扑：两个在线节点、GPU 与运行中的模型部署及推理引擎" width="1440" />
+  </a>
+</p>
+<p align="center"><sub>从集群、节点和 GPU，到模型部署与推理引擎，统一查看资源与服务的关联。</sub></p>
 
 ## 适用场景
 
@@ -26,6 +33,33 @@ LLMPod 帮助个人、团队和企业将自有算力上的模型交付为可用�
 | 为知识库应用提供模型能力 | 部署对话、Embedding 和 Rerank 模型，为应用提供生成、向量化与重排序接口 |
 | 多个团队共享模型与算力 | 集中管理计算资源，按租户区分成员、模型访问范围、调用配额和消费记录 |
 | 统一管理自建与外部模型 | 将本地推理服务和已有外部模型端点发布到同一网关，统一接入和观察调用情况 |
+
+## 产品预览
+
+从选择算力、发布服务，到在线验证与调用计量，在同一个平台完成。点击图片查看完整界面。
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/images/readme/model-deployment.webp"><img src="docs/images/readme/model-deployment.webp" alt="部署向导中的 GPU 显存评估、占用状态与算力选择" width="720" /></a>
+      <p><strong>可视化部署</strong><br />评估显存需求，选择计算节点与 GPU。</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/images/readme/model-publishing.webp"><img src="docs/images/readme/model-publishing.webp" alt="已发布模型的上游绑定、协议、权重与优先级" width="720" /></a>
+      <p><strong>统一模型发布</strong><br />管理服务别名、上游绑定与路由配置。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/images/readme/playground.webp"><img src="docs/images/readme/playground.webp" alt="Playground 在线调试中本地模型返回的真实中文回答" width="720" /></a>
+      <p><strong>在线调试</strong><br />直接在浏览器中验证模型的实际响应。</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/images/readme/request-metering.webp"><img src="docs/images/readme/request-metering.webp" alt="真实调用的计量详情：输入与输出 Token、响应耗时和请求明细" width="720" /></a>
+      <p><strong>调用计量与追踪</strong><br />查看 Token 用量、响应耗时与请求明细。</p>
+    </td>
+  </tr>
+</table>
 
 ## 功能特性
 
@@ -86,16 +120,6 @@ LLMPod 帮助个人、团队和企业将自有算力上的模型交付为可用�
 - **模型切换**：选择已发布的对话模型测试效果；租户可使用自己的 API Key 验证实际访问权限和调用情况。
 - **推理展示**：展示模型返回的回答与思考内容；具备视觉能力的模型可进行图文输入测试，具体能力取决于模型与引擎。
 
-### 监控、日志与运维
-
-同时观察算力使用和模型服务表现，从请求记录追踪到具体部署。
-
-- **运行看板**：查看集群、节点、设备、部署副本与推理引擎状态，结合拓扑了解资源分布。
-- **调用指标**：统计请求量、成功与失败情况、响应延迟、首 Token 延迟和 Token 用量，按模型、租户等维度观察使用情况。
-- **调用日志**：为每次转发记录调用明细；可在系统设置中开启请求与响应内容快照，日志存储支持按时间或按大小轮转，控制磁盘占用。
-- **问题排查**：提供请求日志、部署与容器日志、审计日志，追踪调用异常和管理操作。
-- **指标接入**：提供 Prometheus 格式的 API 网关指标接口，便于接入已有监控系统。
-
 ## 快速开始
 
 ### 1. 安装平台
@@ -106,8 +130,6 @@ LLMPod 帮助个人、团队和企业将自有算力上的模型交付为可用�
 curl -fsSL https://llmpod.ai/src/download/install.sh -o install.sh && sudo bash install.sh
 ```
 
-需要自行配置 Docker Compose、固定版本或升级现有部署时，请参阅 [Docker 部署指南](docs/usage/deployment.md)。
-
 ### 2. 接入算力并部署模型
 
 1. 登录平台管理端，创建或选择集群。
@@ -117,10 +139,6 @@ curl -fsSL https://llmpod.ai/src/download/install.sh -o install.sh && sudo bash 
 5. 创建租户并登录租户工作台，生成 API Key，按需设置模型访问范围与配额。调用计费模型时，需确保租户余额充足。
 
 管理端负责平台配置，推理请求发送到独立的 API 网关。使用仓库中的 [Docker 配置模板](docker/.env.example) 时，管理端默认端口为 `18080`，API 网关为 `18090`；实际地址以部署配置为准。
-
-## API 接入
-
-支持 OpenAI Chat Completions、Embeddings 和 Anthropic Messages 等接口。使用已发布的模型别名与 LLMPod API Key 接入业务应用，接口列表与调用示例见 [API 接入说明](docs/usage/api.md)。
 
 ## 文档
 

@@ -1,0 +1,79 @@
+{
+  "captured_at": "2026-11-24",
+  "timezone": "Asia/Shanghai",
+  "ui_version": "26.11.21-beta",
+  "service_version": "26.11.21-beta",
+  "capture_tool": "agent-browser",
+  "viewports": {
+    "cluster-topology": [
+      1440,
+      720
+    ],
+    "others": [
+      1440,
+      900
+    ]
+  },
+  "redaction": "仅在浏览器显示层将节点主机名和内网 IP 替换为 worker-01/worker-02 与文档示例地址；未改写业务记录、状态、计量或回答。",
+  "routes": {
+    "cluster-topology": "/admin/node-pool?topology=1",
+    "model-deployment": "/admin/deploy?tab=list（新建部署，选择算力；未提交）",
+    "model-publishing": "/admin/model-release（查看已发布模型的供应商抽屉）",
+    "playground": "/admin/playground",
+    "request-metering": "/admin/bills（按模型别名筛选，查看本次调用详情）"
+  },
+  "verification": {
+    "note": "对话上方的“你好”是产品内置示例；下方解释大模型推理服务的问题及回答为本轮实际调用。",
+    "request_id": "27410a4b656e430c9b2fa49e19d066e0",
+    "http_status": 200,
+    "prompt_tokens": 57,
+    "completion_tokens": 57,
+    "total_tokens": 114,
+    "latency_ms": 233,
+    "billing_note": "本次为未定价的本地模型调用，不将费用字段为空描述为已发生收费。"
+  },
+  "assets": [
+    {
+      "file": "cluster-topology.webp",
+      "width": 1440,
+      "height": 720,
+      "sha256": "f0264b243e5e3b8345ccf38fdc7fa2c1286b6c4abd1cef9b04c15e2f2ec2f05b"
+    },
+    {
+      "file": "model-deployment.webp",
+      "width": 1440,
+      "height": 900,
+      "sha256": "c8ce77f27d9b7a1d6f6d62708f02bbafa6a461709ae4c1e2490d1cd6f13da9d3"
+    },
+    {
+      "file": "model-publishing.webp",
+      "width": 1440,
+      "height": 900,
+      "sha256": "807642ffaa77e8785e3ca4ccafdcb03cf57f33f7e9061fd2c5d2e3aeddc355c6"
+    },
+    {
+      "file": "playground.webp",
+      "width": 1440,
+      "height": 900,
+      "sha256": "f8c91cf044b344176ae57f5b07fe2cf8e4dc48a261f4b9773e5ad489b928098e"
+    },
+    {
+      "file": "request-metering.webp",
+      "width": 1440,
+      "height": 900,
+      "sha256": "664e24c031054835c6c1ce5670fd8bf0f94ccaeb67f830e2305341dcecd930a3"
+    }
+  ],
+  "display": "README 直接展示完整原图，保留原始宽高比；仅随正文或表格列宽等比缩小，不裁剪、不放大。",
+  "refreshed_at": "2026-11-24T18:34:50+08:00",
+  "capture_layout": {
+    "cluster-topology": {
+      "sidebar": "expanded",
+      "sidebar_width": 212
+    },
+    "others": {
+      "sidebar": "collapsed",
+      "sidebar_width": 56
+    }
+  }
+}
